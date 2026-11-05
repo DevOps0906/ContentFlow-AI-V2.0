@@ -11,6 +11,16 @@
 
 `apps/web`에 실행 가능한 로컬 대시보드가 있다. 템플릿은 사이드바 메뉴와 콘텐츠 작성 화면에서 선택한다. 서버 인증·AI 생성·CMS·광고 데이터 연결과 설치형 스킨은 후속이다. 기획 정본은 [PRD v2.1](docs/01-planning/PRD.md), 상세 실행안은 [수익화·템플릿 기획](docs/01-planning/MONETIZATION_STRATEGY.md)이다.
 
+## 화면 미리보기
+
+![ContentFlow 대시보드](docs/07-design/screens/10-dashboard-data.png)
+
+<sub>샘플 글 6개를 넣은 대시보드(1440px). 샘플은 캡처용이며 저장소에 포함되지 않는다. 더 많은 화면은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).</sub>
+
+| 콘텐츠 목록 | 승인된 글의 편집기 |
+|---|---|
+| ![목록](docs/07-design/screens/11-content-list-data.png) | ![편집기](docs/07-design/screens/12-editor-approved.png) |
+
 ## 진행 현황 (2026-11-06 기준)
 
 작업 표 14개 중 10개는 문서/로컬 구현 완료, 2개는 부분 완료(시각 검증·AI 실키 검증), 2개는 모델 확인·로그인/DB 연동 대기다. 작업 항목 기준 약 71%, 서비스 출시 기준 약 30~35%로 어림한다(산정은 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)). 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
