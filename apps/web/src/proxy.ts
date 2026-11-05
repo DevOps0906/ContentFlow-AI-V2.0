@@ -6,7 +6,7 @@ import { sessionCookieOptions, supabaseEnv } from "@/lib/supabase";
 // Refreshes the Supabase session cookie and keeps anonymous visitors out. Without Supabase
 // configured the app runs in local (browser-only) mode and this does nothing.
 // API routes re-check the caller themselves; this is not the only gate.
-const OPEN_PATHS = ["/login", "/api/health", "/api/session", "/api/auth/"];
+const OPEN_PATHS = ["/login", "/auth/callback", "/api/health", "/api/session", "/api/auth/"];
 
 export async function proxy(req: NextRequest) {
   const env = supabaseEnv();

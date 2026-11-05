@@ -92,7 +92,19 @@ test("keyword ↔ article link ignores case, spacing and width, newest first", a
   const old = ideaFromKeyword("Next.js  포트 오류", { now: "2026-11-01T00:00:00Z" });
   const recent = ideaFromKeyword("next.js 포트 오류", { now: "2026-11-05T00:00:00Z" });
   const other = ideaFromKeyword("다른 키워드");
-  const got = linkedArticles("ＮＥＸＴ.js 포트 오류", [old, other, recent]);
+  const got = linkedArticles({ id: "k1", phrase: "ＮＥＸＴ.js 포트 오류" }, [old, other, recent]);
   assert.deepEqual(got.map((x) => x.id), [recent.id, old.id]);
-  assert.deepEqual(linkedArticles("없는 키워드", [old, recent, other]), []);
+  assert.deepEqual(linkedArticles({ id: "k2", phrase: "없는 키워드" }, [old, recent, other]), []);
+});
+test("links by keyword id when present, phrase only for articles without an id", async () => {
+  const { ideaFromKeyword, linkedArticles } = await import("../src/lib/keywords");
+  const kw = { id: "k-1", phrase: "포트 오류" };
+  const byId = ideaFromKeyword("포트 오류", { keywordId: "k-1" });
+  const renamed = ideaFromKeyword("다른 문구로 바뀜", { keywordId: "k-1" });
+  const otherId = ideaFromKeyword("포트 오류", { keywordId: "k-2" });
+  const legacy = ideaFromKeyword("포트  오류");
+  const got = linkedArticles(kw, [byId, renamed, otherId, legacy]).map((a) => a.id).sort();
+  assert.deepEqual(got, [byId.id, renamed.id, legacy.id].sort());
+  assert.equal(byId.keywordId, "k-1");
+  assert.equal(ideaFromKeyword("x").keywordId, undefined);
 });

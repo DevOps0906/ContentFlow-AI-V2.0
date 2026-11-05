@@ -5,6 +5,7 @@ import { useWorkspace, download } from "./workspace";
 import { LEGACY_STORAGE_KEY, loadArticles, STORAGE_KEY } from "@/lib/content";
 import { PageHeading } from "./shell";
 import { useIntegrations } from "./integrations";
+import { TeamPanel } from "./team-panel";
 import { ConfirmDialog } from "./dialog";
 export function Settings() {
   const { articles, clear, mode, email, importLocal } = useWorkspace();
@@ -75,6 +76,16 @@ export function Settings() {
               ? `로그인됨 · ${email ?? ""}`
               : "미설정 · SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY 필요"}
           </dd>
+          {mode === "account" && (
+            <>
+              <dt>비밀번호</dt>
+              <dd>
+                <a className="view-link" href="/reset">
+                  비밀번호 변경
+                </a>
+              </dd>
+            </>
+          )}
           <dt>광고 API</dt>
           <dd>미연결</dd>
         </dl>
@@ -83,6 +94,12 @@ export function Settings() {
           이동하기 전에 백업하고, 민감한 원고는 저장하지 마세요.
         </p>
       </section>
+      {mode === "account" && (
+        <section className="panel settings-panel" aria-labelledby="team-title">
+          <h2 id="team-title">팀과 역할</h2>
+          <TeamPanel />
+        </section>
+      )}
       <section className="panel settings-panel">
         <h2>콘텐츠 백업</h2>
         <p>

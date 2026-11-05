@@ -1,5 +1,7 @@
 import { buildMessages, parseCompletion, validateAiRequest } from "@/lib/ai";
-import { aiConfig, json, rateLimited, readJson, sameOrigin } from "@/lib/server";
+import { aiConfig, json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
+import { getAccount } from "@/lib/supabase";
+import { canEdit } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +10,14 @@ export async function POST(req: Request) {
   const config = aiConfig();
   if (!config)
     return json({ error: "AI가 연결되지 않았습니다. OPENAI_API_KEY를 설정해주세요." }, 503);
-  if (rateLimited("ai", 10, 60_000))
+  // The proxy already turns anonymous visitors away; the route checks again and spends API
+  // credits only for people who may edit.
+  const account = await getAccount();
+  if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
+  if (account.mode === "account" && !canEdit(account.role))
+    return json({ error: "AI 초안은 편집 권한이 있는 멤버만 만들 수 있습니다." }, 403);
+  const limitKey = account.mode === "account" ? `ai:${account.user.id}` : "ai:local";
+  if (await sharedLimited(account.mode === "account" ? account.supabase : null, limitKey, 10, 60_000))
     return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   let request;
   try {

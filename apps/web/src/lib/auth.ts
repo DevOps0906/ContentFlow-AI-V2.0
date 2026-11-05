@@ -23,3 +23,25 @@ export function safeNext(next: string | null | undefined): string {
   if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
   return next;
 }
+export function parseEmail(input: unknown): string {
+  const email = (input as { email?: unknown } | null)?.email;
+  const e = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!EMAIL.test(e) || e.length > 254) throw new Error("이메일 형식이 올바르지 않습니다.");
+  return e;
+}
+export function parseNewPassword(input: unknown): string {
+  const p = (input as { password?: unknown } | null)?.password;
+  if (typeof p !== "string" || p.length < 8 || p.length > 72)
+    throw new Error("비밀번호는 8자 이상 72자 이하로 입력해주세요.");
+  return p;
+}
+
+/**
+ * Origin used in e-mail links. APP_URL wins when set (behind a proxy the Host header can be
+ * wrong); otherwise the caller's origin, which the same-origin check has already matched.
+ */
+export function appOrigin(req: Request, env = process.env): string {
+  const configured = env.APP_URL?.trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  return new URL(req.headers.get("origin") ?? req.url).origin;
+}

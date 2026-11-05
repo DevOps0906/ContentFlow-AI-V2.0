@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCredentials, safeNext } from "../src/lib/auth";
+import { appOrigin, parseCredentials, parseEmail, parseNewPassword, safeNext } from "../src/lib/auth";
 import {
   articleToFields,
   dbError,
@@ -74,9 +74,14 @@ test("row ↔ article mapping keeps remote info but never writes it from the bro
     state: article.status,
     updated_at: article.updatedAt,
     remote: article.remote ?? null,
+    keyword_id: null,
   };
   assert.deepEqual(rowToArticle(row), article);
   assert.deepEqual(rowToArticle({ ...row, remote: null }).remote, undefined);
+  assert.equal(rowToArticle({ ...row, keyword_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7" }).keywordId, "7c9e6679-7425-40de-944b-e07fc1f90ae7");
+  assert.equal(articleToFields({ ...article, keywordId: "7c9e6679-7425-40de-944b-e07fc1f90ae7" }).keyword_id, "7c9e6679-7425-40de-944b-e07fc1f90ae7");
+  assert.ok(!("keyword_id" in articleToFields(article)), "a save without a link never clears it");
+  assert.ok(!("keyword_id" in articleToFields({ ...article, keywordId: "not-a-uuid" })));
   const fields = articleToFields(article);
   assert.ok(!("remote" in fields));
   assert.ok(!("id" in fields) && !("workspace_id" in fields) && !("owner_id" in fields));
@@ -95,6 +100,7 @@ test("import resets reviewed/approved/published content and drops remote info", 
   const imported = toImportable(article);
   assert.equal(imported.status, "drafting");
   assert.equal(imported.remote, undefined);
+  assert.equal(toImportable({ ...article, keywordId: "browser-local-id" }).keywordId, undefined);
   assert.equal(toImportable({ ...article, status: "idea" }).status, "idea");
   assert.equal(toImportable({ ...article, status: "approval_pending" }).status, "drafting");
   const fresh = toImportable({ ...article, id: "demo-1" });
@@ -108,4 +114,14 @@ test("database errors map to safe user messages", () => {
   const other = dbError({ code: "XX000", message: "relation secret_table does not exist" });
   assert.equal(other.status, 500);
   assert.ok(!other.message.includes("secret_table"));
+});
+test("password reset input is validated and e-mail links use a trusted origin", () => {
+  assert.equal(parseEmail({ email: " A@B.co " }), "a@b.co");
+  for (const bad of [null, {}, { email: 1 }, { email: "nope" }, { email: `${"a".repeat(250)}@b.co` }]) assert.throws(() => parseEmail(bad));
+  assert.equal(parseNewPassword({ password: "12345678" }), "12345678");
+  for (const bad of [null, {}, { password: "short" }, { password: "x".repeat(73) }, { password: 12345678 }]) assert.throws(() => parseNewPassword(bad));
+  const req = (origin: string | null) => new Request("http://internal:3000/api/auth/reset", { method: "POST", headers: origin ? { origin } : {} });
+  assert.equal(appOrigin(req("https://app.example.com"), {} as NodeJS.ProcessEnv), "https://app.example.com");
+  assert.equal(appOrigin(req("https://evil.example"), { APP_URL: "https://app.example.com/" } as unknown as NodeJS.ProcessEnv), "https://app.example.com");
+  assert.equal(appOrigin(req(null), {} as NodeJS.ProcessEnv), "http://internal:3000");
 });

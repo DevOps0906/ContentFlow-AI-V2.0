@@ -1,6 +1,6 @@
 import { dbError, articleToFields, isUuid, toImportable } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
-import { json, rateLimited, readJson, sameOrigin } from "@/lib/server";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: "허용되지 않은 요청입니다." }, 403);
   const account = await getAccount();
   if (account.mode !== "account") return json({ error: "로그인이 필요합니다." }, 401);
-  if (rateLimited(`import:${account.user.id}`, 5, 60_000))
+  if (await sharedLimited(account.supabase, `import:${account.user.id}`, 5, 60_000))
     return json({ error: "요청이 너무 잦습니다." }, 429);
   let list: unknown;
   try {

@@ -1,6 +1,7 @@
 import { dbError } from "@/lib/articles-db";
 import { KEYWORD_COLUMNS, parseNewKeywords, rowToKeyword, type KeywordRow } from "@/lib/keywords-db";
-import { json, rateLimited, readJson, sameOrigin } from "@/lib/server";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
+import { fetchAll } from "@/lib/paging";
 import { getAccount } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -9,15 +10,22 @@ export async function GET() {
   const account = await getAccount();
   if (account.mode === "local") return json({ error: "로컬 모드입니다." }, 404);
   if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
-  const { data, error } = await account.supabase
-    .from("keywords")
-    .select(KEYWORD_COLUMNS)
-    .eq("workspace_id", account.workspaceId)
-    .order("priority", { ascending: true })
-    .order("created_at", { ascending: true })
-    .limit(5000);
-  if (error) return json({ error: "키워드를 불러오지 못했습니다." }, 500);
-  return json({ keywords: (data as KeywordRow[]).map(rowToKeyword) });
+  try {
+    // max_rows is 1000: read in pages. id is the final tie-break so pages never overlap.
+    const rows = await fetchAll<KeywordRow>((from, to) =>
+      account.supabase
+        .from("keywords")
+        .select(KEYWORD_COLUMNS)
+        .eq("workspace_id", account.workspaceId)
+        .order("priority", { ascending: true })
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    return json({ keywords: rows.map(rowToKeyword) });
+  } catch {
+    return json({ error: "키워드를 불러오지 못했습니다." }, 500);
+  }
 }
 
 /** Adds keywords. Duplicates (already stored) are skipped by the database, never overwritten. */
@@ -26,7 +34,7 @@ export async function POST(req: Request) {
   const account = await getAccount();
   if (account.mode === "local") return json({ error: "로컬 모드입니다." }, 404);
   if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
-  if (rateLimited(`kw:${account.user.id}`, 30, 60_000))
+  if (await sharedLimited(account.supabase, `kw:${account.user.id}`, 30, 60_000))
     return json({ error: "요청이 너무 잦습니다." }, 429);
   let items;
   try {

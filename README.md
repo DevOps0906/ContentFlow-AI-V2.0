@@ -4,12 +4,12 @@
 >
 > 키워드 리서치 → 출처 기반 작성 → AI 교차 검수 → 사람 승인 → 플랫폼별 발행 → 검색/광고 수익 분석
 
-**상태:** 기획 v2.1 + 로컬 프런트엔드 v0.1 (서비스 출시 전) · **최종 정리:** 2026-11-06
+**상태:** 기획 v2.1 + 로컬·계정 대시보드 v0.1 (서비스 출시 전) · **최종 정리:** 2026-11-06
 
 **최초 출시 제안:** WordPress 초안 + 티스토리 수동 패키지 · **후속 대상:** Blogger, 네이버, 자체 블로그
 **기술 설계:** Next.js · React · TypeScript · Tailwind CSS · shadcn/ui · Supabase/PostgreSQL · n8n · OpenAI API · Claude API · Tiptap (React Flow는 후속)
 
-`apps/web`에 실행 가능한 로컬 대시보드가 있다. 템플릿은 사이드바 메뉴와 콘텐츠 작성 화면에서 선택한다. Supabase를 설정하면 이메일 로그인과 DB 저장(상태 규칙을 DB 트리거가 강제), 설정하지 않으면 이 브라우저에만 저장한다. AI 초안·WordPress 초안 전송은 서버 키를 설정했을 때만 동작한다. 광고 데이터 연결, 팀 초대, 설치형 스킨은 후속이다. 기획 정본은 [PRD v2.1](docs/01-planning/PRD.md), 상세 실행안은 [수익화·템플릿 기획](docs/01-planning/MONETIZATION_STRATEGY.md)이다.
+`apps/web`에 실행 가능한 로컬 대시보드가 있다. 템플릿은 사이드바 메뉴와 콘텐츠 작성 화면에서 선택한다. Supabase를 설정하면 이메일 로그인과 DB 저장(상태 규칙을 DB 트리거가 강제), 설정하지 않으면 이 브라우저에만 저장한다. AI 초안·WordPress 초안 전송은 서버 키를 설정했을 때만 동작한다. 계정 모드에서는 팀 초대·역할·워크스페이스 전환과 수익 보고서 DB 저장을 지원한다. 광고 API 연결과 설치형 스킨은 후속이다. 기획 정본은 [PRD v2.1](docs/01-planning/PRD.md), 상세 실행안은 [수익화·템플릿 기획](docs/01-planning/MONETIZATION_STRATEGY.md)이다.
 
 ## 화면 미리보기
 
@@ -23,26 +23,29 @@
 
 ## 진행 현황 (2026-11-06 기준)
 
-작업 표 19개 중 15개는 구현 완료, 2개는 부분 완료(시각 검증·AI 실키 검증), 2개는 모델 확인·광고 API/팀 기능 대기다. 작업 항목 기준 약 79%, 서비스 출시 기준 약 50%로 어림한다(산정은 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)). 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
+최근 추가된 기능은 팀·권한 관리, 인증 메일 콜백과 비밀번호 재설정, 수익 DB 저장, 키워드↔글 ID 연결, AI 검수 의견이다. 아래 표는 현재 코드 기준이며, 기존 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)의 작업 수·완성도는 이번 추가분 이전 평가다. 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
 
 | 영역 | 현재 상태 | 제한 사항 |
 |---|---|---|
 | 대시보드 | 개요·콘텐츠·템플릿·수익 분석·설정, 3구간 CSS | 작성/목록 화면만 스크린샷 확인; 저장된 글 상태·키보드·저장 실패는 미확인 |
 | 템플릿 | 10종 카드, 검색/분류, 콘텐츠 화면 선택 | 글쓰기 골격이며 스킨·AI 생성 아님 |
-| 키워드·제목 랩 | `/keywords`: CSV 가져오기(중복 건너뜀, 오류 행 보고), 규칙 기반 제목 후보 5개, 키워드/제목 후보에서 `아이디어` 단계 글 만들기, 연결된 글 상태 표시. **계정 모드는 DB 저장**(마이그레이션 0003, 중복·5,000개 상한을 DB가 강제), 브라우저 키워드 가져오기 | 로컬 모드는 브라우저 저장. 검색량·경쟁도 없음; AI 아님. 글과의 연결은 키워드 문구 일치(ID 연결 아님) |
+| 키워드·제목 랩 | `/keywords`: CSV 가져오기(중복 건너뜀, 오류 행 보고), 규칙 기반 제목 후보 5개, 키워드/제목 후보에서 `아이디어` 단계 글 만들기, 연결된 글 상태 표시. **계정 모드는 DB 저장**(마이그레이션 0003, 중복·5,000개 상한을 DB가 강제), 브라우저 키워드 가져오기 | 로컬 모드는 브라우저 저장. 검색량·경쟁도 없음; AI 아님. 새 글은 키워드 ID로 연결하며, ID가 없는 기존 글만 문구 일치로 연결 |
 | 상태 모델 | `lib/lifecycle.ts`: 16단계 전이 규칙, DB enum 일치 테스트. 편집기 진행 패널·목록 5단계 그룹 필터·대시보드에 연결 | 발행 중/발행 실패/초안 생성됨은 "CMS 연동 전"으로 비활성 표시. 게시는 수동 게시 후 운영자 확인 |
 | 콘텐츠 | 생성/수정/검색/삭제, JSON 백업. 로그인 시 DB 저장(기기 간 동기화), 미설정 시 브라우저 저장(키 v2, v1은 읽을 때 변환·원본 보존). 설정에서 브라우저 데이터를 계정으로 가져오기 | 가져온 글은 승인 기록이 없어 초안으로 들어옴. JSON 가져오기·실시간 동기화 없음 |
-| 검수/승인 | 검수 요청 시 본문·근거 URL 형식 검사 → 승인 대기 또는 수정 필요, 확인 체크 후 수동 승인. **검수 점검 패널**: 차단 항목(DB와 동일 규칙) + 차단하지 않는 경고 8종(제목 길이, 소제목/빈 섹션, 짧은 본문, 키워드 누락, 보장 표현, 예시/로컬 근거 주소, 같은 제목·키워드 중복) | 규칙 기반이라 사실/권리는 확인하지 않음(두 번째 모델 검수 없음); 승인·게시 이후라도 내용 변경 시 초안 작성으로 복귀 |
+| 검수/승인 | 검수 요청 시 본문·근거 URL 형식 검사 → 승인 대기 또는 수정 필요, 확인 체크 후 수동 승인. **검수 점검 패널**: 차단 항목(DB와 동일 규칙) + 차단하지 않는 경고 8종(제목 길이, 소제목/빈 섹션, 짧은 본문, 키워드 누락, 보장 표현, 예시/로컬 근거 주소, 같은 제목·키워드 중복) | 규칙 기반 점검은 사실/권리를 확인하지 않음. AI 검수 의견을 별도로 요청할 수 있으나 자동 승인하지 않음; 승인·게시 이후라도 내용 변경 시 초안 작성으로 복귀 |
 | 내보내기 | 승인 이후 단계 원고만 HTML escape 후 다운로드, 승인 → 내보내기 준비 전환 | 외부 자동 발행·이미지 ZIP 없음 |
-| 수익 분석 | `/analytics`: AdSense 등 보고서 CSV 가져오기(한/영 헤더, 예상·확정 구분, 통화), 기간별 요약, 페이지별 수익을 WordPress 글 주소와 연결. 예상/확정·통화를 합산하지 않고, 사이트 합계와 페이지 행 이중 집계 차단, 재가져오기 중복 건너뜀, 없는 값은 N/A | 수익 데이터는 **브라우저에만 저장**(계정에 저장 안 됨). 보고서 API·Search Console·GA4 연동과 제작 원가 장부 없음. 주소가 다른 페이지는 글에 임의 배분하지 않음 |
+| 수익 분석 | `/analytics`: AdSense 등 보고서 CSV 가져오기(한/영 헤더, 예상·확정 구분, 통화), 기간별 요약, 페이지별 수익을 WordPress 글 주소와 연결. 예상/확정·통화를 합산하지 않고, 사이트 합계와 페이지 행 이중 집계 차단, 재가져오기 중복 건너뜀, 없는 값은 N/A | 계정 모드는 워크스페이스 DB 저장·브라우저 데이터 가져오기 지원(소유자/관리자만 가져오기·삭제); 로컬 모드는 브라우저 저장. 보고서 API·Search Console·GA4 연동과 제작 원가 장부 없음. 주소가 다른 페이지는 글에 임의 배분하지 않음 |
 | Codex 팀 | NOMAD 도구·역할 5종·프로젝트 설정 추가 | 루나-6.1 정확한 ID 대기, 비활성 상태 |
-| DB/RLS | `0001` 코어 스키마 + `0002` 글 본문 컬럼과 **상태 전이 트리거**(허용 전이만, 수정 시 승인 해제, 승인 시 불변 스냅샷·승인 기록·감사 로그). RLS/트리거 테스트(`supabase/tests/run.ps1`), 로컬 Supabase에 적용 | 클라우드 프로젝트 없음(로컬 전용). 팀 초대·워크스페이스 전환 화면 없음 |
+| DB/RLS | `0001` 코어 스키마 + `0002` 글 본문 컬럼과 **상태 전이 트리거**(허용 전이만, 수정 시 승인 해제, 승인 시 불변 스냅샷·승인 기록·감사 로그). RLS/트리거 테스트(`supabase/tests/run.ps1`), 로컬 Supabase에 적용 | 클라우드 프로젝트 없음(로컬 전용). `0003` 키워드, `0004` 팀·역할, `0005` 키워드 ID·수익, `0006` 공유 호출 제한 추가. 운영 DB에는 별도 적용 필요 |
+| 팀·권한 | 설정에서 초대·수락·거절·취소, 역할 변경·멤버 내보내기·탈퇴, 워크스페이스 전환. owner/admin/editor/reviewer/viewer 권한을 UI·API·DB에 적용 | 초대 메일은 발송하지 않음. 초대한 이메일로 가입·인증·로그인 후 설정에서 확인 |
+| AI 검수 의견 | `POST /api/ai/review`: 근거 없는 주장·사실 오류·권리·출처·표현 점검 의견. `QA_MODEL`로 검수 모델 지정, 작성 모델과 같으면 표시 | `OPENAI_API_KEY` 필요. 의견은 저장·상태 변경·자동 승인하지 않음. 실키 호출 미검증 |
+| 대량 조회·호출 제한 | 글·키워드·수익을 페이지별 조회해 기본 1,000행 제한 대응. 계정/인증 요청은 DB 공유 호출 제한 사용 | DB 제한 함수 실패 시 프로세스 메모리 제한으로 대체 |
 | AI 초안 | `POST /api/ai/generate`: 키워드·템플릿으로 OpenAI 호환 API 호출, 소제목 고정, `[확인 필요]` 표시 | `OPENAI_API_KEY` 설정 시에만 동작. 실제 OpenAI 호출은 미검증(가짜 서버로 검증). 초안은 승인 전 사람이 확인 |
 | WordPress | `POST /api/wordpress/draft`: 승인된 글을 **초안으로만** 생성, 재시도 시 같은 초안 갱신, 게시된 글은 덮어쓰지 않음. 계정 모드는 글 ID만 받아 DB의 상태·본문을 사용하고 동시 전송을 막음 | 실제 WordPress(Docker) 컨테이너로 생성·갱신·동시 전송·게시글 보호 검증. 게시는 직접 |
 | Docker | `Dockerfile`(standalone, non-root), `docker-compose.yml`(읽기 전용 FS, 127.0.0.1 바인딩) | 이미지 327MB, healthcheck 통과 |
-| 로그인/권한 | Supabase Auth 이메일 로그인(`/login`), httpOnly 세션 쿠키, `proxy.ts` 접근 제어, API는 서버에서 재확인, 같은 출처 검사·호출 제한. 브라우저는 Supabase와 직접 통신하지 않음 | 이메일 확인·비밀번호 재설정·소셜 로그인 없음. 로컬 스택은 이메일 확인을 끔. 역할(editor/reviewer 등) 화면은 없고 DB 규칙만 적용 |
+| 로그인/권한 | Supabase Auth 이메일 로그인(`/login`), httpOnly 세션 쿠키, `proxy.ts` 접근 제어, API는 서버에서 재확인, 같은 출처 검사·호출 제한. 브라우저는 Supabase와 직접 통신하지 않음 | 가입 확인 콜백·비밀번호 재설정 구현. 로컬 스택은 이메일 확인을 끔; 운영 메일·리다이렉트 설정과 실제 메일 흐름 검증 필요. 소셜 로그인 없음 |
 
-### 작업 진행률
+### 기존 작업 묶음 (이번 추가분 이전 평가)
 
 | 작업 묶음 | 완료/전체 | 판단 근거 |
 |---|---|---|
@@ -71,7 +74,8 @@
 
 - [ ] 부 에이전트의 정확한 모델 ID 확인 후 팀 활성화
 - [ ] 실제 브라우저에서 모바일/태블릿/데스크톱 검증
-- [ ] 팀 초대·역할 화면, 이메일 확인/비밀번호 재설정, 수익 데이터의 DB 저장, 키워드↔글 ID 연결
+- [x] 팀 초대·역할 화면, 인증 메일 콜백/비밀번호 재설정, 수익 DB 저장, 키워드↔글 ID 연결
+- [ ] 새 팀·인증·수익·AI 검수 흐름의 브라우저 검증과 운영 메일 설정
 - [ ] 실제 OpenAI 키로 AI 초안 호출 검증
 
 ### Docker · Supabase · 연동 실행
@@ -81,7 +85,8 @@
 | 웹 이미지 빌드·실행 | `docker compose up -d --build` → `http://127.0.0.1:3410` (`WEB_PORT`로 변경) |
 | 환경 변수 | `.env.example`을 `.env`로 복사해 채움 (git 제외). 키는 서버에서만 읽음 |
 | 로컬 Supabase | `npx supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor` · 포트 60321~ (`supabase/config.toml`), 중지 `npx supabase stop` |
-| AI 초안 | `OPENAI_API_KEY`(필수), `OPENAI_MODEL`, `OPENAI_BASE_URL`(호환 API) |
+| AI 초안·검수 | `OPENAI_API_KEY`(필수), `OPENAI_MODEL`, `OPENAI_BASE_URL`(호환 API), `QA_MODEL`(선택; 생략 시 작성 모델과 동일) |
+| 인증 메일 | `APP_URL`에 공개 앱 주소 설정, Supabase의 Site URL·허용 redirect URL에 `/auth/callback` 등록, 운영 SMTP 설정. 비밀번호 복구는 `/login` → 메일 → `/reset` |
 | WordPress | `WP_BASE_URL`(https, 로컬만 http), `WP_USERNAME`, `WP_APP_PASSWORD`(애플리케이션 비밀번호) |
 | 로그인(DB 저장) | `.env`에 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` 설정 → 비로그인은 `/login`으로 이동. 미설정이면 로컬 모드. 컨테이너에서는 `host.docker.internal`, https 운영에서는 `COOKIE_SECURE=true`, 가입 차단은 `ALLOW_SIGNUP=false` |
 | DB 마이그레이션 | `npx supabase migration up` (새 환경은 `npx supabase db reset`) |
@@ -98,9 +103,11 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 콘텐츠 목록 | `/content` | [PRD](docs/01-planning/PRD.md) | [content-list](apps/web/src/components/content-list.tsx) |
 | 콘텐츠 작성 | `/content/new?template=T02` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [editor](apps/web/src/components/editor.tsx) |
 | 저장 원고 편집 | `/content/{id}` | [DB](docs/03-database/DATABASE_SCHEMA.md) | [동적 라우트](apps/web/src/app/content/[id]/page.tsx) |
+| 키워드·제목 랩 | `/keywords` | [PRD](docs/01-planning/PRD.md) | [keywords](apps/web/src/components/keywords.tsx) |
+| 비밀번호 재설정 | `/reset` (메일 링크 경유) | [PRD](docs/01-planning/PRD.md) | [reset-form](apps/web/src/components/reset-form.tsx) |
 | 템플릿 라이브러리 | `/templates` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [catalog](apps/web/src/components/catalog.tsx) |
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
-| 설정/백업 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) |
+| 설정/백업·팀 관리 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) |
 
 [전체 문서](docs/README.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
@@ -122,8 +129,8 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 배포 빌드 | `npm run build` |
 | production 실행 | `npm start` |
 | CI | Web checks; Markdown 변경 시 PDF 문서 빌드 |
-| 검증 결과 | 타입·테스트 65개·빌드·Docker 이미지 통과; DB 규칙 테스트(키워드 포함); 키워드→글 브라우저 e2e 28건(계정)·25건(로컬), 키워드 API e2e 17건, 수익 CSV 브라우저 e2e 17건; DB 규칙 테스트 통과; 로그인 e2e 37건·WordPress e2e 16건; 의존성 high 이상 취약점 0(`@supabase/ssr`·`supabase-js` 추가 후 `npm audit`, 모두 MIT) |
-| 미검증 | 키보드 조작, 저장 실패 화면, 이메일 확인 메일 흐름, 실제 OpenAI 호출, https 운영 환경 |
+| 검증 결과 | 현재 타입·테스트 83개·production build·DB 규칙 테스트(0001~0006) 통과; 이전 검증: Docker 이미지; DB 규칙 테스트(키워드 포함); 키워드→글 브라우저 e2e 28건(계정)·25건(로컬), 키워드 API e2e 17건, 수익 CSV 브라우저 e2e 17건; DB 규칙 테스트 통과; 로그인 e2e 37건·WordPress e2e 16건; 의존성 high 이상 취약점 0(`@supabase/ssr`·`supabase-js` 추가 후 `npm audit`, 모두 MIT) |
+| 미검증 | 키보드 조작, 저장 실패 화면, 새 팀·비밀번호 복구·AI 검수 화면의 브라우저 흐름, 이메일 확인 메일 흐름, 실제 OpenAI 호출, https 운영 환경 |
 
 ## Codex 멀티에이전트 구성
 

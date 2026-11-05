@@ -1,5 +1,5 @@
 import { parseCredentials } from "@/lib/auth";
-import { json, rateLimited, readJson, sameOrigin } from "@/lib/server";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { serverClient } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
-  if (rateLimited("signup", 10, 60_000))
+  if (await sharedLimited(supabase, "signup:all", 10, 60_000))
     return json({ error: "시도가 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   const { data, error } = await supabase.auth.signUp(creds);
   if (error) return json({ error: "계정을 만들지 못했습니다. 이미 가입된 이메일일 수 있어요." }, 400);

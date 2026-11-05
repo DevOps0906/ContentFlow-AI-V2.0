@@ -1,7 +1,8 @@
 import { ARTICLE_COLUMNS, isUuid, rowToArticle, type ArticleRow } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
 import { sendDraft, type WpConfig } from "@/lib/wordpress";
-import { json, rateLimited, readJson, sameOrigin, wpConfig } from "@/lib/server";
+import { json, readJson, sameOrigin, sharedLimited, wpConfig } from "@/lib/server";
+import { canEdit } from "@/lib/team";
 import { getAccount } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -16,10 +17,13 @@ export async function POST(req: Request) {
       { error: "WordPress가 연결되지 않았습니다. WP_BASE_URL, WP_USERNAME, WP_APP_PASSWORD를 설정해주세요." },
       503,
     );
-  if (rateLimited("wp", 20, 60_000))
-    return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   const account = await getAccount();
   if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
+  if (account.mode === "account" && !canEdit(account.role))
+    return json({ error: "WordPress 전송은 편집 권한이 있는 멤버만 할 수 있습니다." }, 403);
+  const limitKey = account.mode === "account" ? `wp:${account.user.id}` : "wp:local";
+  if (await sharedLimited(account.mode === "account" ? account.supabase : null, limitKey, 20, 60_000))
+    return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   let body: unknown;
   try {
     body = await readJson(req);

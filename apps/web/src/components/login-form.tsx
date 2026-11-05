@@ -4,7 +4,7 @@ import { Sparkles } from "lucide-react";
 import { safeNext } from "@/lib/auth";
 
 export function LoginForm() {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -13,6 +13,8 @@ export function LoginForm() {
   const [available, setAvailable] = useState<{ signup: boolean } | "local" | null>(null);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("error") === "link")
+      setError("링크가 만료되었거나 이미 사용됐어요. 다시 요청해주세요.");
     fetch("/api/session")
       .then((r) => r.json())
       .then((s) => setAvailable(s.mode === "local" ? "local" : { signup: s.signup !== false }))
@@ -26,6 +28,17 @@ export function LoginForm() {
     setError("");
     setInfo("");
     try {
+      if (mode === "forgot") {
+        const r = await fetch("/api/auth/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const d = (await r.json().catch(() => ({}))) as { error?: string };
+        if (!r.ok) setError(d.error ?? "요청에 실패했습니다.");
+        else setInfo("입력한 이메일로 가입된 계정이 있다면 비밀번호 재설정 메일을 보냈어요. 메일의 링크를 눌러주세요.");
+        return;
+      }
       const res = await fetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,11 +79,13 @@ export function LoginForm() {
             contentflow<span className="brand-dot">.</span>
           </span>
         </div>
-        <h1>{mode === "login" ? "로그인" : "계정 만들기"}</h1>
+        <h1>{mode === "login" ? "로그인" : mode === "signup" ? "계정 만들기" : "비밀번호 재설정"}</h1>
         <p className="page-description">
           {mode === "login"
             ? "내 워크스페이스의 콘텐츠를 이어서 작업하세요."
-            : "이메일로 계정을 만들면 콘텐츠가 데이터베이스에 저장돼요."}
+            : mode === "signup"
+              ? "이메일로 계정을 만들면 콘텐츠가 데이터베이스에 저장돼요."
+              : "가입한 이메일을 입력하면 재설정 링크를 보내드려요."}
         </p>
         {available === "local" && (
           <p role="status" className="metric-note">
@@ -89,6 +104,7 @@ export function LoginForm() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
+          {mode !== "forgot" && (
           <div className="field">
             <label htmlFor="password">비밀번호</label>
             <input
@@ -102,6 +118,7 @@ export function LoginForm() {
             />
             {mode === "signup" && <small>8자 이상 72자 이하</small>}
           </div>
+          )}
           {error && (
             <p role="alert" className="validation-list">
               {error}
@@ -117,10 +134,36 @@ export function LoginForm() {
             type="submit"
             disabled={busy || available === "local"}
           >
-            {busy ? "처리 중…" : mode === "login" ? "로그인" : "가입하기"}
+            {busy ? "처리 중…" : mode === "login" ? "로그인" : mode === "signup" ? "가입하기" : "재설정 메일 보내기"}
           </button>
         </form>
-        {signupOk && (
+        {mode === "login" && (
+          <button
+            className="login-switch"
+            type="button"
+            onClick={() => {
+              setMode("forgot");
+              setError("");
+              setInfo("");
+            }}
+          >
+            비밀번호를 잊으셨나요?
+          </button>
+        )}
+        {mode === "forgot" && (
+          <button
+            className="login-switch"
+            type="button"
+            onClick={() => {
+              setMode("login");
+              setError("");
+              setInfo("");
+            }}
+          >
+            로그인으로 돌아가기
+          </button>
+        )}
+        {mode !== "forgot" && signupOk && (
           <button
             className="login-switch"
             type="button"

@@ -21,6 +21,7 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
+import { canEdit } from "@/lib/team";
 import { useWorkspace } from "./workspace";
 
 const nav = [
@@ -219,6 +220,9 @@ export function PageHeading({
   );
 }
 export function NewContentButton() {
+  const { role } = useWorkspace();
+  // Viewers and reviewers can not create content; the database would refuse it anyway.
+  if (role !== null && !canEdit(role)) return null;
   return (
     <Link className="button primary" href="/content/new">
       <Plus size={17} />새 콘텐츠

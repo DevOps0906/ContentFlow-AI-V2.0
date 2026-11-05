@@ -1,5 +1,5 @@
 import { parseCredentials } from "@/lib/auth";
-import { json, rateLimited, readJson, sameOrigin } from "@/lib/server";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { serverClient } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
-  if (rateLimited(`login:${creds.email}`, 8, 60_000))
+  if (await sharedLimited(supabase, `login:${creds.email}`, 8, 60_000))
     return json({ error: "시도가 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   const { error } = await supabase.auth.signInWithPassword(creds);
   // Same message for unknown user and wrong password: no account enumeration.

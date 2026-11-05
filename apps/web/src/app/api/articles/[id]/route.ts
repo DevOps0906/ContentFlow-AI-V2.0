@@ -47,6 +47,8 @@ export async function PUT(req: Request, ctx: Ctx) {
     .maybeSingle();
   if (existing.error) return json({ error: "저장소 처리 중 오류가 발생했습니다." }, 500);
 
+  if (article.keywordId !== undefined && !isUuid(article.keywordId))
+    return json({ error: "잘못된 키워드 ID입니다." }, 400);
   const fields = articleToFields(article);
   const result = existing.data
     ? await account.supabase

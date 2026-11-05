@@ -21,6 +21,8 @@ export type Article = {
   updatedAt: string;
   /** Draft created in WordPress. Kept so a retry updates it instead of duplicating. */
   remote?: { postId: number; url: string; syncedAt: string };
+  /** Keyword this article was created from (links by id; falls back to the phrase if absent). */
+  keywordId?: string;
 };
 export const STORAGE_KEY = "contentflow.articles.v2";
 /** v1 stored the 3-step status. It is read for migration and never overwritten. */
@@ -39,7 +41,12 @@ function hasArticleFields(a: Record<string, unknown>) {
 export function isArticle(value: unknown): value is Article {
   if (!value || typeof value !== "object") return false;
   const a = value as Record<string, unknown>;
-  return hasArticleFields(a) && isLifecycleState(a.status) && isRemote(a.remote);
+  return (
+    hasArticleFields(a) &&
+    isLifecycleState(a.status) &&
+    isRemote(a.remote) &&
+    (a.keywordId === undefined || (typeof a.keywordId === "string" && a.keywordId.length <= 64))
+  );
 }
 function isRemote(value: unknown) {
   if (value === undefined) return true;

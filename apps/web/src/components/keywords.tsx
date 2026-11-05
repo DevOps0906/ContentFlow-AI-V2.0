@@ -22,6 +22,7 @@ export function Keywords() {
   const [error, setError] = useState("");
   const [report, setReport] = useState<ImportResult | null>(null);
   const [selected, setSelected] = useState("");
+  const [selectedKeyword, setSelectedKeyword] = useState<Keyword | null>(null);
   const [titles, setTitles] = useState<TitleCandidate[]>([]);
   const [message, setMessage] = useState("");
   const file = useRef<HTMLInputElement>(null);
@@ -150,7 +151,9 @@ export function Keywords() {
     }
   }
 
-  function makeTitles(phrase: string) {
+  function makeTitles(keyword: Keyword) {
+    const phrase = keyword.phrase;
+    setSelectedKeyword(keyword);
     setSelected(phrase);
     setMessage("");
     try {
@@ -162,13 +165,13 @@ export function Keywords() {
   }
 
   /** Creates an article at the `idea` stage; the editor takes it from there. */
-  async function createIdea(phrase: string, title?: string) {
+  async function createIdea(keyword: Pick<Keyword, "id" | "phrase">, title?: string) {
     if (creating) return;
-    setCreating(phrase + (title ?? ""));
+    setCreating(keyword.id + (title ?? ""));
     setMessage("");
     setCreated(null);
     try {
-      const stored = await save(ideaFromKeyword(phrase, { title }));
+      const stored = await save(ideaFromKeyword(keyword.phrase, { title, keywordId: keyword.id }));
       setCreated({ id: stored.id, title: stored.title || stored.keyword });
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "글을 만들지 못했습니다.");
@@ -300,7 +303,7 @@ export function Keywords() {
                     .sort((a, b) => a.priority - b.priority)
                     .slice(0, 200)
                     .map((k) => {
-                      const linked = linkedArticles(k.phrase, articles);
+                      const linked = linkedArticles(k, articles);
                       return (
                       <tr key={k.id}>
                         <td>{k.phrase}</td>
@@ -322,7 +325,7 @@ export function Keywords() {
                           <button
                             className="button secondary"
                             disabled={!!creating || !ready}
-                            onClick={() => createIdea(k.phrase)}
+                            onClick={() => createIdea(k)}
                             aria-label={`${k.phrase} 글 만들기`}
                           >
                             <FilePlus2 size={14} /> {linked.length ? "글 추가" : "글 만들기"}
@@ -330,7 +333,7 @@ export function Keywords() {
                           <button
                             className="button secondary"
                             aria-pressed={selected === k.phrase}
-                            onClick={() => makeTitles(k.phrase)}
+                            onClick={() => makeTitles(k)}
                           >
                             제목 후보
                           </button>
@@ -368,7 +371,7 @@ export function Keywords() {
                 <button
                   className="button secondary"
                   disabled={!!creating}
-                  onClick={() => createIdea(selected, t.title)}
+                  onClick={() => selectedKeyword && createIdea(selectedKeyword, t.title)}
                 >
                   <FilePlus2 size={14} /> 이 제목으로 글 만들기
                 </button>

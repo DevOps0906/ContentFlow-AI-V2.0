@@ -138,13 +138,13 @@ export function parseKeywords(raw: string | null): Keyword[] {
 }
 
 /**
- * Articles that came from (or share) a keyword. The link is the normalized phrase stored in
- * `Article.keyword`, so it works in local and account mode without a schema change.
+ * Articles that came from a keyword. An article created from a keyword carries its id and is
+ * matched by id; older articles without an id fall back to the normalized phrase.
  */
-export function linkedArticles(phrase: string, articles: Article[]): Article[] {
-  const key = normalizePhrase(phrase);
+export function linkedArticles(keyword: Pick<Keyword, "id" | "phrase">, articles: Article[]): Article[] {
+  const key = normalizePhrase(keyword.phrase);
   return articles
-    .filter((a) => normalizePhrase(a.keyword) === key)
+    .filter((a) => (a.keywordId ? a.keywordId === keyword.id : normalizePhrase(a.keyword) === key))
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
@@ -154,7 +154,7 @@ export function linkedArticles(phrase: string, articles: Article[]): Article[] {
  */
 export function ideaFromKeyword(
   phrase: string,
-  opts: { title?: string; templateId?: string; id?: string; now?: string } = {},
+  opts: { title?: string; templateId?: string; id?: string; now?: string; keywordId?: string } = {},
 ): Article {
   const keyword = phrase.trim();
   if (!keyword) throw new Error("키워드가 비어 있습니다.");
@@ -170,5 +170,6 @@ export function ideaFromKeyword(
     sourceUrl: "",
     status: "idea",
     updatedAt: opts.now ?? new Date().toISOString(),
+    ...(opts.keywordId ? { keywordId: opts.keywordId } : {}),
   };
 }

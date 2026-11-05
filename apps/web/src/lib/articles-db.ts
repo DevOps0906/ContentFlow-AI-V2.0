@@ -4,7 +4,7 @@ import type { LifecycleState } from "./lifecycle";
 import { afterEdit } from "./lifecycle";
 
 export const ARTICLE_COLUMNS =
-  "id,title,keyword,template_id,platform,body,source_url,state,updated_at,remote";
+  "id,title,keyword,template_id,platform,body,source_url,state,updated_at,remote,keyword_id";
 
 export type ArticleRow = {
   id: string;
@@ -17,6 +17,7 @@ export type ArticleRow = {
   state: LifecycleState;
   updated_at: string;
   remote: Article["remote"] | null;
+  keyword_id: string | null;
 };
 
 export function rowToArticle(r: ArticleRow): Article {
@@ -32,12 +33,18 @@ export function rowToArticle(r: ArticleRow): Article {
     updatedAt: r.updated_at,
   };
   if (r.remote) a.remote = r.remote;
+  if (r.keyword_id) a.keywordId = r.keyword_id;
   return a;
 }
 
-/** Editable columns. `remote` is deliberately absent: only the WordPress route sets it. */
+/**
+ * Editable columns. `remote` is deliberately absent: only the WordPress route sets it.
+ * `keyword_id` is written only when the article carries one (the database checks that the
+ * keyword belongs to the same workspace); it is never cleared by a save that omits it.
+ */
 export function articleToFields(a: Article) {
   return {
+    ...(a.keywordId !== undefined && isUuid(a.keywordId) ? { keyword_id: a.keywordId } : {}),
     title: a.title,
     keyword: a.keyword,
     template_id: a.templateId,
@@ -61,8 +68,10 @@ export function parseIncomingArticle(body: unknown): Article {
  * `drafting` and has to be reviewed and approved again. Invalid ids are replaced.
  */
 export function toImportable(a: Article): Article {
-  const { remote: _remote, ...rest } = a;
+  // Browser-local ids (remote draft, keyword) mean nothing in the account.
+  const { remote: _remote, keywordId: _keywordId, ...rest } = a;
   void _remote;
+  void _keywordId;
   return {
     ...rest,
     id: isUuid(a.id) ? a.id : crypto.randomUUID(),

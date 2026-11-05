@@ -4,6 +4,7 @@
 import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { WORKSPACE_COOKIE_NAME, type Role } from "./team";
 
 export type SupabaseEnv = { url: string; key: string };
 
@@ -42,41 +43,46 @@ export async function serverClient(): Promise<SupabaseClient | null> {
   });
 }
 
+
 export type Account =
   | { mode: "local" }
   | { mode: "anonymous" }
-  | { mode: "account"; supabase: SupabaseClient; user: User; workspaceId: string };
+  | { mode: "account"; supabase: SupabaseClient; user: User; workspaceId: string; role: Role };
 
 /**
  * Resolves who is calling. `local` means no Supabase is configured (browser-only mode);
  * `anonymous` means configured but not logged in. The user is verified with the Auth
- * server (getUser), never trusted from the cookie alone.
+ * server (getUser), never trusted from the cookie alone. The active workspace comes from a
+ * cookie but is only honoured if the user is really a member of it.
  */
 export async function getAccount(): Promise<Account> {
   const supabase = await serverClient();
   if (!supabase) return { mode: "local" };
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) return { mode: "anonymous" };
-  const workspaceId = await ensureWorkspace(supabase, data.user);
-  return { mode: "account", supabase, user: data.user, workspaceId };
+  const ws = await activeWorkspace(supabase, data.user);
+  return { mode: "account", supabase, user: data.user, workspaceId: ws.id, role: ws.role };
 }
 
-/** First workspace of the user; created on first login (the DB trigger adds the owner membership). */
-export async function ensureWorkspace(supabase: SupabaseClient, user: User): Promise<string> {
+export type MembershipRow = { workspace_id: string; role: Role };
+
+async function activeWorkspace(supabase: SupabaseClient, user: User): Promise<{ id: string; role: Role }> {
   const found = await supabase
     .from("memberships")
-    .select("workspace_id")
+    .select("workspace_id, role")
     .eq("user_id", user.id)
-    .order("created_at", { ascending: true })
-    .limit(1);
+    .order("created_at", { ascending: true });
   if (found.error) throw new Error("워크스페이스를 확인하지 못했습니다.");
-  if (found.data?.[0]) return found.data[0].workspace_id as string;
-  // The id is generated here: INSERT ... RETURNING would be filtered by the SELECT policy
-  // before the membership trigger has made the user a member.
+  const list = (found.data ?? []) as MembershipRow[];
+  const wanted = (await cookies()).get(WORKSPACE_COOKIE_NAME)?.value;
+  const hit = list.find((m) => m.workspace_id === wanted) ?? list[0];
+  if (hit) return { id: hit.workspace_id, role: hit.role };
+  // First login: the id is generated here because INSERT ... RETURNING would be filtered by
+  // the SELECT policy before the membership trigger has made the user a member.
   const id = crypto.randomUUID();
   const created = await supabase
     .from("workspaces")
     .insert({ id, name: "나의 워크스페이스", owner_id: user.id });
   if (created.error) throw new Error("워크스페이스를 만들지 못했습니다.");
-  return id;
+  return { id, role: "owner" };
 }

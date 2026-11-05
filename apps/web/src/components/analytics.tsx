@@ -31,7 +31,9 @@ function single(summaries: Summary[], status: RevenueStatus, pick: (s: Summary) 
 }
 
 export function Analytics() {
-  const { articles, mode } = useWorkspace();
+  const { articles, mode, ready: wsReady } = useWorkspace();
+  const [canImport, setCanImport] = useState(true);
+  const [localCount, setLocalCount] = useState(0);
   const [rows, setRows] = useState<RevenueRow[]>([]);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -43,14 +45,67 @@ export function Analytics() {
   const [confirmClear, setConfirmClear] = useState(false);
   const file = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    try {
-      setRows(parseRevenue(localStorage.getItem(REVENUE_STORAGE_KEY)));
-    } catch {
-      setError("저장된 수익 데이터를 읽을 수 없습니다. 원본 데이터는 덮어쓰지 않았습니다.");
+  const readLocal = () => parseRevenue(localStorage.getItem(REVENUE_STORAGE_KEY));
+  async function api(url: string, init?: RequestInit) {
+    const res = await fetch(url, { ...init, headers: init?.body ? { "Content-Type": "application/json" } : undefined });
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) throw new Error((data?.error as string) ?? `요청에 실패했습니다(${res.status}).`);
+    return data ?? {};
+  }
+  async function loadAccount() {
+    const d = await api("/api/revenue");
+    setRows(d.rows as RevenueRow[]);
+    setCanImport(d.canImport === true);
+  }
+  /** Sends rows to the account in chunks. The database decides what is a duplicate. */
+  async function sendRows(list: RevenueRow[]) {
+    let added = 0;
+    let duplicates = 0;
+    for (let i = 0; i < list.length; i += 1000) {
+      const r = await api("/api/revenue", { method: "POST", body: JSON.stringify({ rows: list.slice(i, i + 1000) }) });
+      added += Number(r.added ?? 0);
+      duplicates += Number(r.duplicates ?? 0);
     }
-    setReady(true);
-  }, []);
+    return { added, duplicates };
+  }
+
+  useEffect(() => {
+    if (!wsReady) return;
+    (async () => {
+      if (mode === "account") {
+        try {
+          await loadAccount();
+          try {
+            setLocalCount(readLocal().length);
+          } catch {
+            setLocalCount(0);
+          }
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "수익 데이터를 불러오지 못했습니다.");
+        }
+      } else {
+        try {
+          setRows(readLocal());
+        } catch {
+          setError("저장된 수익 데이터를 읽을 수 없습니다. 원본 데이터는 덮어쓰지 않았습니다.");
+        }
+      }
+      setReady(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsReady, mode]);
+
+  /** Copies browser-stored rows into the account (the browser copy is kept). */
+  async function importLocalRows() {
+    setMessage("");
+    try {
+      const r = await sendRows(readLocal());
+      await loadAccount();
+      setMessage(`브라우저의 수익 ${r.added}행을 계정으로 가져왔어요(이미 있어서 건너뜀 ${r.duplicates}행).`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
+    }
+  }
 
   function persist(next: RevenueRow[]) {
     if (error) return false;
@@ -69,6 +124,13 @@ export function Analytics() {
     if (!f) return;
     try {
       const result = importRevenue(await f.text(), rows, { source, status, currency });
+      if (mode === "account") {
+        const fresh = result.rows.slice(rows.length);
+        const sent = fresh.length ? await sendRows(fresh) : { added: 0, duplicates: 0 };
+        await loadAccount();
+        setReport({ ...result, added: sent.added, duplicates: result.duplicates + sent.duplicates });
+        return;
+      }
       if (result.added > 0 && !persist(result.rows)) return;
       setReport(result);
     } catch (e) {
@@ -95,7 +157,7 @@ export function Analytics() {
       <div className="notice-banner">
         <Info size={17} />
         <div>
-          <b>수익 데이터는 이 브라우저에만 저장돼요{mode === "account" ? " (계정에 저장되지 않음)" : ""}.</b>{" "}
+          <b>{mode === "account" ? "수익 데이터는 내 계정(데이터베이스)에 저장돼요." : "수익 데이터는 이 브라우저에만 저장돼요."}</b>{" "}
           직접 가져온 보고서의 값만 계산하며, 없는 값은 0이 아니라 N/A로 표시합니다. 광고 승인이나 수익 증가를
           보장하지 않습니다.
         </div>
@@ -155,9 +217,21 @@ export function Analytics() {
           aria-label="수익 보고서 CSV 파일 선택"
           onChange={(e) => onFile(e.target.files?.[0])}
         />
-        <button className="button primary" disabled={!ready || !!error} onClick={() => file.current?.click()}>
+        <button
+          className="button primary"
+          disabled={!ready || !!error || (mode === "account" && !canImport)}
+          onClick={() => file.current?.click()}
+        >
           <FileUp size={16} /> CSV 파일 선택
         </button>
+        {mode === "account" && !canImport && (
+          <p className="metric-note">수익 데이터는 소유자·관리자만 가져오거나 삭제할 수 있어요. 지금은 볼 수만 있어요.</p>
+        )}
+        {mode === "account" && canImport && localCount > 0 && (
+          <button className="button secondary" style={{ marginLeft: 8 }} onClick={importLocalRows}>
+            브라우저 수익 {localCount}행 가져오기
+          </button>
+        )}
         {report && (
           <div role="status" className="success-message">
             {report.added}행 추가 · 중복 {report.duplicates}행 건너뜀 · 오류 {report.invalid.length}행
@@ -269,23 +343,36 @@ export function Analytics() {
               </p>
             </section>
           )}
-          <button className="button danger" onClick={() => setConfirmClear(true)}>
-            <Trash2 size={15} /> 가져온 수익 데이터 삭제
-          </button>
+          {(mode !== "account" || canImport) && (
+            <button className="button danger" onClick={() => setConfirmClear(true)}>
+              <Trash2 size={15} /> 가져온 수익 데이터 삭제
+            </button>
+          )}
         </>
       )}
       {confirmClear && (
         <ConfirmDialog
           title="가져온 수익 데이터를 모두 삭제할까요?"
-          description="이 브라우저에 저장된 보고서 행이 삭제됩니다. 원본 CSV 파일은 영향을 받지 않으며, 다시 가져올 수 있습니다."
+          description={
+            mode === "account"
+              ? "이 워크스페이스에 저장된 모든 보고서 행이 삭제됩니다. 원본 CSV 파일은 영향을 받지 않으며, 다시 가져올 수 있습니다."
+              : "이 브라우저에 저장된 보고서 행이 삭제됩니다. 원본 CSV 파일은 영향을 받지 않으며, 다시 가져올 수 있습니다."
+          }
           danger
           confirmLabel="모두 삭제"
           onCancel={() => setConfirmClear(false)}
-          onConfirm={() => {
-            if (persist([])) {
+          onConfirm={async () => {
+            try {
+              if (mode === "account") {
+                await api("/api/revenue", { method: "DELETE" });
+                setRows([]);
+              } else if (!persist([])) return;
               setConfirmClear(false);
               setReport(null);
               setMessage("");
+            } catch (e) {
+              setConfirmClear(false);
+              setMessage(e instanceof Error ? e.message : "삭제하지 못했습니다.");
             }
           }}
         />

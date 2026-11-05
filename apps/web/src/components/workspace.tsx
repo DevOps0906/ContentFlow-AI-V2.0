@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { Role } from "@/lib/team";
 import {
   type Article,
   LEGACY_STORAGE_KEY,
@@ -29,6 +30,8 @@ type Workspace = {
   error: string;
   mode: Mode | null;
   email: string | null;
+  /** Role in the active workspace. `null` in local mode (the browser owner can do everything). */
+  role: Role | null;
   /** Stores the article and resolves to what was stored. Throws an Error with a user message. */
   save: (a: Article) => Promise<Article>;
   remove: (id: string) => Promise<boolean>;
@@ -84,6 +87,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const [mode, setMode] = useState<Mode | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [role, setRole] = useState<Role | null>(null);
 
   const loadAccount = useCallback(async () => {
     const { articles: list } = await api<{ articles: Article[] }>("/api/articles");
@@ -93,7 +97,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      let session: { mode: Mode; user?: { email: string } | null } = { mode: "local" };
+      let session: { mode: Mode; user?: { email: string; role?: Role } | null } = { mode: "local" };
       try {
         const res = await fetch("/api/session");
         if (res.ok) session = await res.json();
@@ -104,6 +108,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setMode(session.mode);
       if (session.mode === "account") {
         setEmail(session.user?.email ?? null);
+        setRole(session.user?.role ?? null);
         if (session.user) {
           try {
             await loadAccount();
@@ -280,6 +285,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         error,
         mode,
         email,
+        role,
         save,
         remove,
         clear,

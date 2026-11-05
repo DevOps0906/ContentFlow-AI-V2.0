@@ -36,6 +36,8 @@ import { ConfirmDialog } from "./dialog";
 import { PhaseSteps, StatusBadge } from "./status-badge";
 import { postJson, useIntegrations } from "./integrations";
 import { runQa } from "@/lib/qa";
+import { kindLabels, type ReviewFinding } from "@/lib/review";
+import { canDecide, canEdit, roleLabels } from "@/lib/team";
 
 function actionLabel(from: LifecycleState, to: LifecycleState) {
   switch (to) {
@@ -129,7 +131,10 @@ function EditorForm({
   templateId: string;
 }) {
   const router = useRouter();
-  const { articles, save, sendWordpress, error } = useWorkspace();
+  const { articles, save, sendWordpress, error, role, mode } = useWorkspace();
+  // Local mode has one user who can do everything; in an account the role decides.
+  const editable = role === null || canEdit(role);
+  const decider = role === null || canDecide(role);
   const [form, setForm] = useState<Article>(
     () =>
       initial ?? {
@@ -152,6 +157,9 @@ function EditorForm({
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState<"ai" | "wp" | "save" | null>(null);
   const [aiOverwrite, setAiOverwrite] = useState(false);
+  const [review, setReview] = useState<{ findings: ReviewFinding[]; model: string; sameModel: boolean } | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState("");
   const integrations = useIntegrations();
   const aiReady = !!integrations?.ai.configured;
   const cmsConnected =
@@ -169,7 +177,14 @@ function EditorForm({
       );
   // Unsaved edits void any review/approval until the operator saves and reviews again.
   const currentStatus = dirty ? afterEdit(form.status) : form.status;
-  const actions = localActions(currentStatus, { cmsConnected });
+  const allActions = localActions(currentStatus, { cmsConnected });
+  // Editors can not approve; reviewers can only approve or send back what waits for approval;
+  // viewers get nothing. The database enforces the same, this just avoids offering dead buttons.
+  const actions = allActions.filter((a) => {
+    if (!editable) return decider && currentStatus === "approval_pending" && (a.to === "approved" || a.to === "needs_revision");
+    if (a.to === "approved") return decider;
+    return true;
+  });
   const qa = runQa(form, articles);
   const canExport = !dirty && isApprovedContent(form);
   useEffect(() => {
@@ -260,6 +275,21 @@ function EditorForm({
       setErrors([e instanceof Error ? e.message : "AI 초안을 만들지 못했습니다."]);
     } finally {
       setBusy(null);
+    }
+  }
+  async function crossReview() {
+    if (reviewing || dirty) return;
+    setReviewing(true);
+    setReviewError("");
+    setReview(null);
+    try {
+      // Account mode sends only the id (the server reads the saved article); local mode sends it all.
+      const payload = mode === "account" ? { id: form.id } : form;
+      setReview(await postJson("/api/ai/review", payload));
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : "AI 검수를 하지 못했습니다.");
+    } finally {
+      setReviewing(false);
     }
   }
   /** Runs a store/server call and reports its failure in the form. */
@@ -377,6 +407,7 @@ function EditorForm({
             <label htmlFor="title">콘텐츠 제목</label>
             <input
               id="title"
+              disabled={!editable}
               className="title-input"
               placeholder="어떤 이야기를 들려줄까요?"
               value={form.title}
@@ -388,6 +419,7 @@ function EditorForm({
               <label htmlFor="template">글쓰기 템플릿</label>
               <select
                 id="template"
+              disabled={!editable}
                 value={form.templateId}
                 onChange={(e) => chooseTemplate(e.target.value)}
               >
@@ -402,6 +434,7 @@ function EditorForm({
               <label htmlFor="platform">발행 대상</label>
               <select
                 id="platform"
+              disabled={!editable}
                 value={form.platform}
                 onChange={(e) =>
                   update("platform", e.target.value as Article["platform"])
@@ -418,6 +451,7 @@ function EditorForm({
             <label htmlFor="keyword">핵심 키워드</label>
             <input
               id="keyword"
+              disabled={!editable}
               placeholder="예: Next.js 포트 오류"
               value={form.keyword}
               onChange={(e) => update("keyword", e.target.value)}
@@ -441,7 +475,7 @@ function EditorForm({
             <button
               className="ai-button"
               onClick={() => (skeleton ? generateDraft() : setAiOverwrite(true))}
-              disabled={!aiReady || busy !== null}
+              disabled={!aiReady || busy !== null || !editable}
               title={
                 aiReady
                   ? "핵심 키워드와 템플릿으로 초안을 만듭니다."
@@ -474,6 +508,7 @@ function EditorForm({
               </label>
               <textarea
                 id="body"
+                readOnly={!editable}
                 value={form.body}
                 onChange={(e) => update("body", e.target.value)}
                 placeholder="이곳에 본문을 작성하세요. ## 으로 소제목을 표시할 수 있어요."
@@ -488,6 +523,7 @@ function EditorForm({
             <label htmlFor="source">근거 자료 URL</label>
             <input
               id="source"
+              disabled={!editable}
               type="url"
               placeholder="https://공식문서 또는 근거 자료"
               value={form.sourceUrl}
@@ -511,11 +547,17 @@ function EditorForm({
             </p>
           )}
           <div className="editor-bottom">
+            {!editable && (
+              <p role="status" className="metric-note">
+                {roleLabels[role ?? "viewer"]} 권한이라 내용을 수정할 수 없어요.
+                {decider ? " 승인 대기 글은 오른쪽에서 승인하거나 수정을 요청할 수 있어요." : ""}
+              </p>
+            )}
             <div className="editor-actions">
               <button
                 className="button secondary"
                 onClick={() => persist()}
-                disabled={!!error}
+                disabled={!!error || !editable}
               >
                 <Save size={15} />
                 임시 저장
@@ -707,6 +749,47 @@ function EditorForm({
               <p className="metric-note">
                 규칙 기반 점검이며 사실 여부나 저작권은 확인하지 않습니다. 근거와 권리는 직접 확인해주세요.
               </p>
+              <button
+                className="button secondary"
+                onClick={crossReview}
+                disabled={!aiReady || reviewing || dirty || !form.body.trim()}
+                title={
+                  !aiReady
+                    ? "AI가 연결되지 않았습니다."
+                    : dirty
+                      ? "저장한 뒤에 검수할 수 있어요."
+                      : "다른 모델로 두 번째 의견을 받습니다."
+                }
+              >
+                <Sparkles size={14} /> {reviewing ? "AI 검수 중…" : aiReady ? "AI 교차 검수" : "AI 미연결"}
+              </button>
+              {reviewError && (
+                <p role="alert" className="qa-list blocker">
+                  {reviewError}
+                </p>
+              )}
+              {review && (
+                <>
+                  <h3 className="qa-heading">AI 교차 검수 의견 (참고용)</h3>
+                  {review.findings.length === 0 ? (
+                    <p className="qa-ok">AI가 따로 짚은 항목이 없어요. 그래도 사실과 권리는 직접 확인해주세요.</p>
+                  ) : (
+                    <ul className="qa-list">
+                      {review.findings.map((f, i) => (
+                        <li key={i} className={f.severity === "high" ? "blocker" : undefined}>
+                          <b>[{kindLabels[f.kind]}]</b> {f.message}
+                          {f.quote && <q className="qa-quote">{f.quote}</q>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="metric-note">
+                    모델 {review.model}
+                    {review.sameModel ? " — 글 작성과 같은 모델이라 독립적인 검수가 아니에요(QA_MODEL로 다른 모델 지정)." : ""} · 승인이나
+                    상태를 바꾸지 않습니다.
+                  </p>
+                </>
+              )}
             </section>
           )}
         </aside>

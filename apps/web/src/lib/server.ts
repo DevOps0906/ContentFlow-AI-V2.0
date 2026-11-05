@@ -1,5 +1,6 @@
 // Server-only helpers: environment config and request guards for the API routes.
 // Secrets are read here and never sent to the browser.
+import { createHash } from "node:crypto";
 import type { WpConfig } from "./wordpress";
 
 export type AiConfig = { apiKey: string; model: string; baseUrl: string };
@@ -12,6 +13,14 @@ export function aiConfig(env = process.env): AiConfig | null {
     model: env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
     baseUrl: (env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, ""),
   };
+}
+/** Model used for the second opinion. Using the writer model would defeat the purpose, so a
+ * separate QA_MODEL is preferred; falling back to the same model is reported to the user. */
+export function reviewConfig(env = process.env): (AiConfig & { sameModel: boolean }) | null {
+  const base = aiConfig(env);
+  if (!base) return null;
+  const model = env.QA_MODEL?.trim() || base.model;
+  return { ...base, model, sameModel: model === base.model };
 }
 export function wpConfig(env = process.env): WpConfig | null {
   const baseUrl = env.WP_BASE_URL?.trim();
@@ -46,6 +55,34 @@ export function rateLimited(key: string, max: number, windowMs: number, now = Da
   recent.push(now);
   hits.set(key, recent);
   return false;
+}
+type RpcClient = {
+  rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+/**
+ * Rate limit shared by every instance (database function `rate_limit_hit`). The key is hashed so
+ * no email address is stored. If the database can not answer, the per-process limiter is used:
+ * it never fails open.
+ */
+export async function sharedLimited(
+  client: RpcClient | null,
+  key: string,
+  max: number,
+  windowMs: number,
+): Promise<boolean> {
+  if (client) {
+    try {
+      const { data, error } = await client.rpc("rate_limit_hit", {
+        p_key: `${key.split(":")[0]}:${createHash("sha256").update(key).digest("hex").slice(0, 40)}`,
+        p_max: max,
+        p_window_seconds: Math.max(1, Math.ceil(windowMs / 1000)),
+      });
+      if (!error && typeof data === "boolean") return data;
+    } catch {
+      // fall through to the local limiter
+    }
+  }
+  return rateLimited(key, max, windowMs);
 }
 export function resetRateLimits() {
   hits.clear();
