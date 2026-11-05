@@ -1,0 +1,13 @@
+**/node_modules
+**/.next
+.git
+.cache
+.nomad
+.codex
+docs
+tasks
+supabase
+*.md
+.env*
+!.env.example
+**/*.tsbuildinfo

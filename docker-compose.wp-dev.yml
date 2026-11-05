@@ -1,0 +1,28 @@
+# Throwaway WordPress for testing the draft integration locally (not for production).
+#   docker compose -f docker-compose.wp-dev.yml up -d
+# Then set WP_BASE_URL=http://localhost:8081 and create an Application Password
+# (see README "WordPress 연동 테스트"). http is accepted for localhost only.
+name: contentflow-wp-dev
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: wp
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp-dev-only
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    volumes:
+      - wpdb:/var/lib/mysql
+  wordpress:
+    image: wordpress:6-apache
+    depends_on:
+      - db
+    ports:
+      - "127.0.0.1:8081:80"
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp-dev-only
+      WORDPRESS_DB_NAME: wp
+volumes:
+  wpdb:

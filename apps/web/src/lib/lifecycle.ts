@@ -129,11 +129,22 @@ export const cmsOnlyStates: readonly LifecycleState[] = [
 ];
 
 export type LocalAction = { to: LifecycleState; available: boolean };
-/** Next states for the UI; CMS-only targets are listed but not available locally. */
-export function localActions(from: LifecycleState): LocalAction[] {
+/**
+ * Next states for the UI. CMS-only targets are available only when a CMS connection is
+ * configured; the transition into `draft_created`/`publish_failed` is decided by the
+ * server call result, never picked by hand, so those are never offered as buttons.
+ */
+export function localActions(
+  from: LifecycleState,
+  opts: { cmsConnected?: boolean } = {},
+): LocalAction[] {
   return nextStates(from).map((to) => ({
     to,
-    available: !cmsOnlyStates.includes(to),
+    available:
+      !cmsOnlyStates.includes(to) ||
+      (!!opts.cmsConnected && to === "publishing") ||
+      // A request that never answered can be closed out by the operator.
+      (!!opts.cmsConnected && from === "publishing" && to === "publish_failed"),
   }));
 }
 

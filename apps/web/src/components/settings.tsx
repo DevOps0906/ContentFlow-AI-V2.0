@@ -4,11 +4,13 @@ import { Download, ExternalLink, Trash2 } from "lucide-react";
 import { useWorkspace, download } from "./workspace";
 import { LEGACY_STORAGE_KEY, STORAGE_KEY } from "@/lib/content";
 import { PageHeading } from "./shell";
+import { useIntegrations } from "./integrations";
 import { ConfirmDialog } from "./dialog";
 export function Settings() {
   const { articles, clear } = useWorkspace();
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState("");
+  const integrations = useIntegrations();
   return (
     <>
       <PageHeading
@@ -25,8 +27,32 @@ export function Settings() {
           <dd>{articles.length}개</dd>
           <dt>글쓰기 템플릿</dt>
           <dd>10종 · 콘텐츠 작성 화면에서 선택</dd>
-          <dt>외부 연결</dt>
-          <dd>로그인 / CMS / AI / 광고 API 미연결</dd>
+          <dt>AI 초안</dt>
+          <dd>
+            {!integrations
+              ? "확인 중…"
+              : integrations.ai.configured
+                ? `연결됨 · 모델 ${integrations.ai.model}`
+                : "미연결 · OPENAI_API_KEY 필요"}
+          </dd>
+          <dt>WordPress</dt>
+          <dd>
+            {!integrations
+              ? "확인 중…"
+              : integrations.wordpress.configured
+                ? `설정됨 · ${integrations.wordpress.host} · 초안만 생성`
+                : "미연결 · WP_BASE_URL/WP_USERNAME/WP_APP_PASSWORD 필요"}
+          </dd>
+          <dt>Supabase</dt>
+          <dd>
+            {!integrations
+              ? "확인 중…"
+              : { not_configured: "미설정", reachable: "서버 응답 확인 · 앱 데이터 연동은 아직 없음", unreachable: "설정됨 · 응답 없음" }[
+                  integrations.supabase.status
+                ]}
+          </dd>
+          <dt>로그인 / 광고 API</dt>
+          <dd>미연결</dd>
         </dl>
         <p>
           공유 기기에서는 콘텐츠가 다른 사용자에게 보일 수 있습니다. 다른 기기로
@@ -73,9 +99,10 @@ export function Settings() {
       <section className="panel settings-panel">
         <h2>프로젝트 안내</h2>
         <p>
-          현재 버전은 템플릿 선택·원고 작성·수동 검수·HTML 내보내기를 제공하는
-          프런트엔드입니다. 서버 저장, 사용자 인증, WordPress API 초안 생성과
-          광고 데이터 수집은 후속 단계입니다.
+          템플릿 선택·원고 작성·AI 초안(키 설정 시)·수동 검수·HTML 내보내기·
+          WordPress 초안 전송(설정 시)을 제공합니다. 서버 저장, 사용자 인증,
+          광고 데이터 수집은 후속 단계입니다. 연동 키는 서버 환경 변수로만
+          설정하며 브라우저에 저장되지 않습니다.
         </p>
         <a
           className="view-link"

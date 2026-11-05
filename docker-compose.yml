@@ -1,0 +1,22 @@
+# Web app container. Local Supabase runs separately: `npx supabase start` (see README).
+#   docker compose up -d --build
+services:
+  web:
+    build: .
+    image: contentflow-web:local
+    ports:
+      # No login yet: keep it on localhost. Change the host port with WEB_PORT.
+      - "127.0.0.1:${WEB_PORT:-3410}:3000"
+    env_file:
+      - path: .env
+        required: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

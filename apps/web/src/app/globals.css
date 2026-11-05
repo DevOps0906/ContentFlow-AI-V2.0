@@ -958,6 +958,27 @@ tr:last-child td {
   background: var(--rose-bg);
   color: #b05c74;
 }
+.editor-tabs .ai-button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #cfe5db;
+  background: var(--mint-bg);
+  color: var(--green);
+  font-weight: 650;
+}
+.editor-tabs .ai-button + span {
+  margin-left: 0;
+}
+.editor-tabs .ai-button:disabled {
+  background: #f0f3f7;
+  border-color: var(--line);
+  color: var(--muted);
+}
 .lifecycle-current {
   display: flex;
   align-items: center;

@@ -26,8 +26,11 @@
 | 내보내기 | 승인 이후 단계 원고만 HTML escape 후 다운로드, 승인 → 내보내기 준비 전환 | 외부 자동 발행·이미지 ZIP 없음 |
 | 수익 분석 | 연결 전 안내와 N/A 표시 | 실제 보고서 입력·연동 미구현 |
 | Codex 팀 | NOMAD 도구·역할 5종·프로젝트 설정 추가 | 루나-6.1 정확한 ID 대기, 비활성 상태 |
-| DB/RLS | `supabase/migrations/0001_core_tenancy.sql` + RLS 테스트 (`supabase/tests/run.ps1`, Docker Postgres에서 통과) | 실제 Supabase 프로젝트 미연결·미적용, 앱 연동 없음 |
-| 서버/인증 | 설계 문서 | 인증·API 구현 대기 |
+| DB/RLS | `supabase/migrations/0001_core_tenancy.sql` + RLS 테스트. 로컬 Supabase 스택(Docker)에 마이그레이션 적용·8개 테이블 RLS 확인 | 클라우드 프로젝트 없음(로컬 전용). 앱 데이터는 아직 브라우저 저장, 앱-DB 연동·로그인 없음 |
+| AI 초안 | `POST /api/ai/generate`: 키워드·템플릿으로 OpenAI 호환 API 호출, 소제목 고정, `[확인 필요]` 표시 | `OPENAI_API_KEY` 설정 시에만 동작. 실제 OpenAI 호출은 미검증(가짜 서버로 검증). 초안은 승인 전 사람이 확인 |
+| WordPress | `POST /api/wordpress/draft`: 승인된 글을 **초안으로만** 생성, 재시도 시 같은 초안 갱신, 게시된 글은 덮어쓰지 않음 | 실제 WordPress(Docker) 컨테이너로 생성·갱신·거부 검증. 로그인이 없어 로컬 사용 전제. 게시는 직접 |
+| Docker | `Dockerfile`(standalone, non-root), `docker-compose.yml`(읽기 전용 FS, 127.0.0.1 바인딩) | 이미지 327MB, healthcheck 통과 |
+| 서버/인증 | API 라우트 + 같은 출처 검사·호출 제한 | 사용자 인증·권한 없음(CF-07b) |
 
 ### 작업 진행률
 
@@ -52,6 +55,19 @@
 - [ ] 부 에이전트의 정확한 모델 ID 확인 후 팀 활성화
 - [ ] 실제 브라우저에서 모바일/태블릿/데스크톱 검증
 - [ ] Supabase 인증·RLS·서버 저장, WP 초안 API, 수익 보고서 입력
+
+### Docker · Supabase · 연동 실행
+
+| 목적 | 명령/설정 |
+|---|---|
+| 웹 이미지 빌드·실행 | `docker compose up -d --build` → `http://127.0.0.1:3410` (`WEB_PORT`로 변경) |
+| 환경 변수 | `.env.example`을 `.env`로 복사해 채움 (git 제외). 키는 서버에서만 읽음 |
+| 로컬 Supabase | `npx supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor` · 포트 60321~ (`supabase/config.toml`), 중지 `npx supabase stop` |
+| AI 초안 | `OPENAI_API_KEY`(필수), `OPENAI_MODEL`, `OPENAI_BASE_URL`(호환 API) |
+| WordPress | `WP_BASE_URL`(https, 로컬만 http), `WP_USERNAME`, `WP_APP_PASSWORD`(애플리케이션 비밀번호) |
+| WordPress 테스트 | `docker compose -f docker-compose.wp-dev.yml up -d` 후 WP-CLI로 설치·비밀번호 발급 |
+
+AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 `[확인 필요]` 표시가 남아 있으면 검수가 차단되고, WordPress에는 승인된 글만 초안으로 전송된다.
 
 ## 콘텐츠 바로가기
 
@@ -85,7 +101,7 @@
 | 배포 빌드 | `npm run build` |
 | production 실행 | `npm start` |
 | CI | Web checks; Markdown 변경 시 PDF 문서 빌드 |
-| 검증 결과 | 타입·테스트 22개·빌드 통과; HTTP 200; 의존성 high 이상 취약점 0 (2026-11-05 감사) |
+| 검증 결과 | 타입·테스트 36개·빌드·Docker 이미지 통과; 컨테이너 HTTP 200; 의존성 high 이상 취약점 0 (2026-11-05 감사, 이번 변경은 신규 의존성 없음) |
 | 미검증 | 저장된 글이 있는 화면, 키보드 조작, 저장 실패 화면은 브라우저로 확인하지 못함 |
 
 ## Codex 멀티에이전트 구성

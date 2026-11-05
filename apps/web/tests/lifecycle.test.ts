@@ -84,6 +84,18 @@ test("local actions never offer CMS-only transitions as available", () => {
   assert.ok(localActions("export_ready").some((a) => a.to === "publishing" && !a.available));
 });
 
+test("with a CMS connection only sending (and closing a stuck send) becomes available", () => {
+  const cms = { cmsConnected: true };
+  const on = (s: Parameters<typeof localActions>[0]) =>
+    localActions(s, cms).filter((a) => a.available).map((a) => a.to);
+  assert.ok(on("export_ready").includes("publishing"));
+  assert.ok(on("publish_failed").includes("publishing"));
+  // Results of a send are decided by the server response, never picked by hand.
+  assert.ok(!on("publishing").includes("draft_created"));
+  assert.deepEqual(on("publishing"), ["publish_failed"]);
+  assert.ok(!localActions("export_ready").some((a) => a.to === "publishing" && a.available));
+});
+
 test("every state belongs to exactly one of the 5 phases", () => {
   for (const s of lifecycleStates) assert.ok(phases.includes(phaseOf(s)));
   assert.deepEqual(

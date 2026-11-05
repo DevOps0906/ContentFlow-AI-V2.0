@@ -19,6 +19,8 @@ export type Article = {
   sourceUrl: string;
   status: LifecycleState;
   updatedAt: string;
+  /** Draft created in WordPress. Kept so a retry updates it instead of duplicating. */
+  remote?: { postId: number; url: string; syncedAt: string };
 };
 export const STORAGE_KEY = "contentflow.articles.v2";
 /** v1 stored the 3-step status. It is read for migration and never overwritten. */
@@ -37,7 +39,17 @@ function hasArticleFields(a: Record<string, unknown>) {
 export function isArticle(value: unknown): value is Article {
   if (!value || typeof value !== "object") return false;
   const a = value as Record<string, unknown>;
-  return hasArticleFields(a) && isLifecycleState(a.status);
+  return hasArticleFields(a) && isLifecycleState(a.status) && isRemote(a.remote);
+}
+function isRemote(value: unknown) {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object") return false;
+  const r = value as Record<string, unknown>;
+  return (
+    Number.isInteger(r.postId) &&
+    typeof r.url === "string" &&
+    typeof r.syncedAt === "string"
+  );
 }
 function readArray(raw: string): unknown[] {
   const parsed: unknown = JSON.parse(raw);
@@ -91,6 +103,9 @@ export function reviewErrors(article: Article): string[] {
     .join("")
     .trim();
   if (!content) errors.push("템플릿의 빈 항목에 실제 본문을 작성해주세요.");
+  // AI drafts mark what they could not verify; these must be resolved by a person.
+  if (/\[(출처 )?확인 필요|\[직접 경험 작성/.test(article.body))
+    errors.push("AI 초안의 [확인 필요] 표시를 모두 확인하고 지워주세요.");
   try {
     const url = new URL(article.sourceUrl);
     if (!["https:", "http:"].includes(url.protocol)) throw new Error();

@@ -65,6 +65,11 @@ test("review blocks empty skeleton and unsafe source protocols", () => {
   );
   assert.deepEqual(reviewErrors(article), []);
 });
+test("unresolved AI placeholders block review until a person removes them", () => {
+  for (const marker of ["[확인 필요]", "[출처 확인 필요: 가격]", "[직접 경험 작성]"])
+    assert.ok(reviewErrors({ ...article, body: `## 해결\n본문 ${marker}` }).length, marker);
+  assert.deepEqual(reviewErrors({ ...article, body: "## 해결\n확인을 마친 본문" }), []);
+});
 test("HTML export rejects unapproved states and escapes markup rather than executing it", () => {
   for (const status of ["drafting", "qa_pending", "approval_pending", "needs_revision", "idea"] as const)
     assert.throws(() => exportHtml({ ...article, status }));

@@ -9,7 +9,9 @@ import {
   FileText,
   LayoutTemplate,
   Save,
+  Send,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { findTemplate, templateBody, templates } from "@/lib/templates";
 import {
@@ -31,6 +33,7 @@ import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 import { PhaseSteps, StatusBadge } from "./status-badge";
+import { postJson, useIntegrations } from "./integrations";
 
 function actionLabel(from: LifecycleState, to: LifecycleState) {
   switch (to) {
@@ -145,6 +148,12 @@ function EditorForm({
   const [preview, setPreview] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState<"ai" | "wp" | null>(null);
+  const [aiOverwrite, setAiOverwrite] = useState(false);
+  const integrations = useIntegrations();
+  const aiReady = !!integrations?.ai.configured;
+  const cmsConnected =
+    !!integrations?.wordpress.configured && form.platform === "wordpress";
   const template = findTemplate(form.templateId);
   const dirty = saved
     ? ["title", "keyword", "templateId", "platform", "body", "sourceUrl"].some(
@@ -158,7 +167,7 @@ function EditorForm({
       );
   // Unsaved edits void any review/approval until the operator saves and reviews again.
   const currentStatus = dirty ? afterEdit(form.status) : form.status;
-  const actions = localActions(currentStatus);
+  const actions = localActions(currentStatus, { cmsConnected });
   const canExport = !dirty && isApprovedContent(form);
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
@@ -222,6 +231,95 @@ function EditorForm({
     if (form.body.trim() !== templateBody(form.templateId).trim())
       setPendingTemplate(next);
     else applyTemplate(next);
+  }
+  const skeleton = form.body.trim() === templateBody(form.templateId).trim();
+  async function generateDraft() {
+    if (!form.keyword.trim()) {
+      setErrors(["AI 초안을 만들려면 핵심 키워드를 입력해주세요."]);
+      return;
+    }
+    setAiOverwrite(false);
+    setBusy("ai");
+    setErrors([]);
+    setMessage("");
+    try {
+      const { body } = await postJson<{ body: string }>("/api/ai/generate", {
+        templateId: form.templateId,
+        keyword: form.keyword,
+        title: form.title,
+      });
+      update("body", body);
+      setPreview(false);
+      setMessage(
+        "AI 초안을 채웠어요. 사실·출처·경험을 직접 확인하고 [확인 필요] 표시를 지운 뒤 검수를 요청해주세요.",
+      );
+    } catch (e) {
+      setErrors([e instanceof Error ? e.message : "AI 초안을 만들지 못했습니다."]);
+    } finally {
+      setBusy(null);
+    }
+  }
+  /** export_ready/publish_failed → publishing → draft_created | publish_failed. */
+  async function sendToWordpress() {
+    if (dirty || !isApprovedContent(form)) return;
+    let current: Article;
+    try {
+      current = { ...form, status: transition(form.status, "publishing"), updatedAt: new Date().toISOString() };
+    } catch (e) {
+      setErrors([e instanceof Error ? e.message : "상태를 바꿀 수 없습니다."]);
+      return;
+    }
+    // Persist "publishing" first so a closed tab can not silently lose an in-flight send.
+    if (!save(current)) return;
+    setSaved(current);
+    setForm(current);
+    setBusy("wp");
+    setErrors([]);
+    setMessage("");
+    try {
+      const r = await postJson<{ postId: number; url: string; created: boolean }>(
+        "/api/wordpress/draft",
+        current,
+      );
+      const done: Article = {
+        ...current,
+        status: transition("publishing", "draft_created"),
+        remote: { postId: r.postId, url: r.url, syncedAt: new Date().toISOString() },
+        updatedAt: new Date().toISOString(),
+      };
+      if (save(done)) {
+        setSaved(done);
+        setForm(done);
+        setMessage(
+          `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
+        );
+      }
+    } catch (e) {
+      const failed: Article = {
+        ...current,
+        status: transition("publishing", "publish_failed"),
+        updatedAt: new Date().toISOString(),
+      };
+      if (save(failed)) {
+        setSaved(failed);
+        setForm(failed);
+      }
+      setErrors([e instanceof Error ? e.message : "WordPress 전송에 실패했습니다."]);
+    } finally {
+      setBusy(null);
+    }
+  }
+  function markPublishFailed() {
+    const failed: Article = {
+      ...form,
+      status: transition(form.status, "publish_failed"),
+      updatedAt: new Date().toISOString(),
+    };
+    if (save(failed)) {
+      setSaved(failed);
+      setForm(failed);
+      setMessage("전송 실패로 표시했어요. WordPress에 글이 생겼는지 확인한 뒤 다시 시도해주세요.");
+    }
   }
   /** Saves the manuscript and, if given, moves it to `target` via the lifecycle rules. */
   function persist(target?: LifecycleState) {
@@ -345,6 +443,19 @@ function EditorForm({
             >
               미리보기
             </button>
+            <button
+              className="ai-button"
+              onClick={() => (skeleton ? generateDraft() : setAiOverwrite(true))}
+              disabled={!aiReady || busy !== null}
+              title={
+                aiReady
+                  ? "핵심 키워드와 템플릿으로 초안을 만듭니다."
+                  : "AI가 연결되지 않았습니다. OPENAI_API_KEY를 설정해주세요."
+              }
+            >
+              <Sparkles size={13} />
+              {busy === "ai" ? "초안 작성 중…" : aiReady ? "AI 초안 생성" : "AI 미연결"}
+            </button>
             <span>{form.body.length.toLocaleString()}자</span>
           </div>
           {preview ? (
@@ -373,8 +484,8 @@ function EditorForm({
                 placeholder="이곳에 본문을 작성하세요. ## 으로 소제목을 표시할 수 있어요."
               />
               <small>
-                본문 구조만 제공합니다. AI 생성·외부 발행은 아직 연결되지
-                않았습니다.
+                AI 초안은 참고용입니다. 사실·출처·경험은 직접 확인해야 하며,
+                자동으로 승인하거나 게시하지 않습니다.
               </small>
             </div>
           )}
@@ -481,7 +592,30 @@ function EditorForm({
               {actions
                 .filter((a) => a.to !== "qa_pending")
                 .map(({ to, available }) =>
-                  available ? (
+                  available && to === "publishing" ? (
+                    <button
+                      key={to}
+                      className="button primary"
+                      onClick={sendToWordpress}
+                      disabled={!!error || busy !== null}
+                    >
+                      <Send size={15} />
+                      {busy === "wp"
+                        ? "전송 중…"
+                        : currentStatus === "publish_failed"
+                          ? "WordPress 초안 다시 보내기"
+                          : "WordPress 초안 보내기"}
+                    </button>
+                  ) : available && currentStatus === "publishing" ? (
+                    <button
+                      key={to}
+                      className="button secondary"
+                      onClick={markPublishFailed}
+                      disabled={!!error || busy !== null}
+                    >
+                      응답 없음 — 실패로 표시
+                    </button>
+                  ) : available ? (
                     <button
                       key={to}
                       className={`button ${to === "approved" ? "primary" : "secondary"}`}
@@ -501,10 +635,16 @@ function EditorForm({
                       className="button secondary"
                       aria-disabled="true"
                       disabled
-                      title="CMS 연동 전에는 사용할 수 없습니다."
+                      title={
+                        cmsConnected
+                          ? "전송 결과에 따라 자동으로 바뀝니다."
+                          : "CMS 연동 전에는 사용할 수 없습니다."
+                      }
                     >
                       {lifecycleLabels[to]}
-                      <small className="unavailable-note">CMS 연동 전</small>
+                      <small className="unavailable-note">
+                        {cmsConnected ? "자동 결정" : "CMS 연동 전"}
+                      </small>
                     </button>
                   ),
                 )}
@@ -531,6 +671,15 @@ function EditorForm({
           </section>
         </aside>
       </div>
+      {aiOverwrite && (
+        <ConfirmDialog
+          title="작성한 본문을 AI 초안으로 바꿀까요?"
+          description="현재 본문이 AI가 만든 초안으로 교체됩니다. 제목, 키워드, 출처는 유지되며 기존 검수·승인은 해제됩니다."
+          confirmLabel="AI 초안으로 교체"
+          onCancel={() => setAiOverwrite(false)}
+          onConfirm={generateDraft}
+        />
+      )}
       {pendingTemplate && (
         <ConfirmDialog
           title="본문을 새 템플릿으로 바꿀까요?"
