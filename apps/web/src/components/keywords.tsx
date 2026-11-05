@@ -25,20 +25,87 @@ export function Keywords() {
   const [titles, setTitles] = useState<TitleCandidate[]>([]);
   const [message, setMessage] = useState("");
   const file = useRef<HTMLInputElement>(null);
-  const { articles, save, mode } = useWorkspace();
+  const { articles, save, mode, ready: wsReady } = useWorkspace();
+  const [localCount, setLocalCount] = useState(0);
   const [creating, setCreating] = useState<string | null>(null);
   const [created, setCreated] = useState<{ id: string; title: string } | null>(null);
 
+  const readLocal = () => parseKeywords(localStorage.getItem(KEYWORD_STORAGE_KEY));
+
+  async function loadAccount() {
+    const res = await fetch("/api/keywords");
+    const data = (await res.json().catch(() => null)) as { keywords?: Keyword[]; error?: string } | null;
+    if (!res.ok || !data?.keywords) throw new Error(data?.error ?? "키워드를 불러오지 못했습니다.");
+    setKeywords(data.keywords);
+  }
+  async function callApi(url: string, init: RequestInit) {
+    const res = await fetch(url, {
+      ...init,
+      headers: init.body ? { "Content-Type": "application/json" } : undefined,
+    });
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) throw new Error((data?.error as string) ?? `요청에 실패했습니다(${res.status}).`);
+    return data ?? {};
+  }
+
   useEffect(() => {
+    if (!wsReady) return;
+    (async () => {
+      if (mode === "account") {
+        try {
+          await loadAccount();
+          try {
+            setLocalCount(readLocal().length);
+          } catch {
+            setLocalCount(0);
+          }
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "키워드를 불러오지 못했습니다.");
+        }
+      } else {
+        try {
+          setKeywords(readLocal());
+        } catch {
+          setError("저장된 키워드를 읽을 수 없습니다. 원본 데이터는 덮어쓰지 않았습니다.");
+        }
+      }
+      setReady(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsReady, mode]);
+
+  /** Copies the browser-stored keywords into the account. The browser copy is kept. */
+  async function importLocalKeywords() {
+    setMessage("");
     try {
-      setKeywords(parseKeywords(localStorage.getItem(KEYWORD_STORAGE_KEY)));
-    } catch {
-      setError(
-        "저장된 키워드를 읽을 수 없습니다. 원본 데이터는 덮어쓰지 않았습니다.",
-      );
+      const local = readLocal();
+      let added = 0;
+      let duplicates = 0;
+      for (let i = 0; i < local.length; i += 500) {
+        const r = await callApi("/api/keywords", {
+          method: "POST",
+          body: JSON.stringify({ keywords: local.slice(i, i + 500) }),
+        });
+        added += Number(r.added ?? 0);
+        duplicates += Number(r.duplicates ?? 0);
+      }
+      await loadAccount();
+      setMessage(`브라우저 키워드 ${added}개를 계정으로 가져왔어요(이미 있어서 건너뜀 ${duplicates}개).`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
     }
-    setReady(true);
-  }, []);
+  }
+  async function removeKeyword(id: string) {
+    setMessage("");
+    try {
+      if (mode === "account") {
+        await callApi(`/api/keywords/${id}`, { method: "DELETE" });
+        setKeywords((list) => list.filter((x) => x.id !== id));
+      } else persist(keywords.filter((x) => x.id !== id));
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "삭제하지 못했습니다.");
+    }
+  }
 
   function persist(next: Keyword[]) {
     if (error) return false;
@@ -58,7 +125,24 @@ export function Keywords() {
     if (!f) return;
     try {
       const result = importKeywords(await f.text(), keywords);
-      if (persist(result.keywords)) setReport(result);
+      if (mode === "account") {
+        // The database decides duplicates, so its counts are the ones to report.
+        const fresh = result.keywords.slice(keywords.length);
+        let added = 0;
+        for (let i = 0; i < fresh.length; i += 500) {
+          const r = await callApi("/api/keywords", {
+            method: "POST",
+            body: JSON.stringify({ keywords: fresh.slice(i, i + 500) }),
+          });
+          added += Number(r.added ?? 0);
+        }
+        await loadAccount();
+        setReport({
+          ...result,
+          added,
+          duplicates: result.duplicates + (fresh.length - added),
+        });
+      } else if (persist(result.keywords)) setReport(result);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "가져오기에 실패했습니다.");
     } finally {
@@ -112,8 +196,12 @@ export function Keywords() {
       <div className="notice-banner">
         <Info size={17} />
         <div>
-          <b>키워드는 이 브라우저에만 저장돼요.</b> 검색량·경쟁도는 외부 도구에서
-          가져온 값이 없으면 표시하지 않습니다. 제목 후보는 AI가 아니라 고정
+          <b>
+            {mode === "account"
+              ? "키워드는 내 계정(데이터베이스)에 저장돼요."
+              : "키워드는 이 브라우저에만 저장돼요."}
+          </b>{" "}
+          검색량·경쟁도는 외부 도구에서 가져온 값이 없으면 표시하지 않습니다. 제목 후보는 AI가 아니라 고정
           규칙으로 만든 초안이에요. 키워드에서 만든 글은 {mode === "account" ? "내 계정" : "이 브라우저"}에
           &lsquo;아이디어&rsquo; 단계로 저장됩니다.
         </div>
@@ -146,6 +234,11 @@ export function Keywords() {
         >
           <FileUp size={16} /> CSV 파일 선택
         </button>
+        {mode === "account" && localCount > 0 && (
+          <button className="button secondary" onClick={importLocalKeywords} style={{ marginLeft: 8 }}>
+            브라우저 키워드 {localCount}개 가져오기
+          </button>
+        )}
         {report && (
           <div role="status" className="success-message">
             {report.added}개 추가 · 중복 {report.duplicates}개 건너뜀 · 오류{" "}
@@ -244,9 +337,7 @@ export function Keywords() {
                           <button
                             className="button secondary"
                             aria-label={`${k.phrase} 삭제`}
-                            onClick={() =>
-                              persist(keywords.filter((x) => x.id !== k.id))
-                            }
+                            onClick={() => removeKeyword(k.id)}
                           >
                             <Trash2 size={14} />
                           </button>

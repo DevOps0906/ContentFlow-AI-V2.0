@@ -2340,7 +2340,10 @@ footer {
   margin-bottom: 8px;
 }
 .keywords-panel .table-scroll {
-  margin: 12px -24px -24px;
+  margin: 12px -24px 0;
+}
+.keywords-panel .table-scroll + .metric-note {
+  margin: 16px 0 0;
 }
 .keywords-panel .title-list li {
   display: flex;
@@ -2358,4 +2361,48 @@ footer {
 .keywords-panel td .table-actions {
   justify-content: flex-end;
   white-space: nowrap;
+}
+/* QA panel */
+.qa-panel .qa-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #3c9678;
+}
+.qa-heading {
+  font-size: 11px;
+  margin: 12px 0 6px;
+  color: #8a6d2f;
+}
+.qa-heading.blocker {
+  color: #b05c74;
+}
+.qa-list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: #7c8a95;
+  line-height: 1.6;
+}
+.qa-list li.blocker {
+  color: #b05c74;
+}
+/* Revenue import form */
+.revenue-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0 14px;
+}
+.revenue-form .field {
+  margin: 0;
+}
+.revenue-form .field:nth-child(1) input {
+  width: 180px;
+}
+.revenue-form .field:nth-child(3) input {
+  width: 90px;
 }

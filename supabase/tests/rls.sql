@@ -10,6 +10,7 @@ grant usage on schema public, auth to authenticated;
 
 \ir ../migrations/0001_core_tenancy.sql
 \ir ../migrations/0002_article_content_and_state_rules.sql
+\ir ../migrations/0003_keywords.sql
 
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant usage on all sequences in schema public to authenticated;
@@ -211,6 +212,42 @@ select as_user('00000000-0000-0000-0000-0000000000a4');
 update articles set title = 'x' where id = '30000000-0000-0000-0000-0000000000a3';
 select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000000a3' and title = 'T'$$, 1, 'reviewer can not edit content (RLS hides the row)');
 
+-- ================= 0003: keywords =================
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
+insert into keywords (workspace_id, phrase, created_by) values
+  ('10000000-0000-0000-0000-00000000000a', 'Next.js  포트 오류', '00000000-0000-0000-0000-0000000000a2');
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', 'ｎｅｘｔ.js 포트 오류', '00000000-0000-0000-0000-0000000000a2')$$,
+  'duplicate keyword (case, spacing, full-width) is rejected by the database');
+select expect_fail($$insert into keywords (workspace_id, phrase, priority, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', 'x', 9, '00000000-0000-0000-0000-0000000000a2')$$, 'priority outside 1..5 rejected');
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', '   ', '00000000-0000-0000-0000-0000000000a2')$$, 'blank phrase rejected');
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', 'y', '00000000-0000-0000-0000-0000000000a1')$$, 'created_by must be the caller');
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000b', 'z', '00000000-0000-0000-0000-0000000000a2')$$, 'editorA cannot write keywords into workspace B');
+-- same phrase in a different workspace is allowed
+select as_user('00000000-0000-0000-0000-0000000000b1');
+insert into keywords (workspace_id, phrase, created_by) values
+  ('10000000-0000-0000-0000-00000000000b', 'next.js 포트 오류', '00000000-0000-0000-0000-0000000000b1');
+select expect_count($$select count(*) from keywords$$, 1, 'ownerB sees only its own keyword');
+select as_user('00000000-0000-0000-0000-0000000000a3'); -- viewerA
+select expect_count($$select count(*) from keywords$$, 1, 'viewerA can read A keywords');
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', 'v', '00000000-0000-0000-0000-0000000000a3')$$, 'viewer cannot add keywords');
+delete from keywords;
+select expect_count($$select count(*) from keywords$$, 1, 'viewer cannot delete keywords');
+select as_user('00000000-0000-0000-0000-0000000000a2');
+delete from keywords;
+select expect_count($$select count(*) from keywords$$, 0, 'editor can delete keywords');
+-- cap
+reset role;
+insert into keywords (workspace_id, phrase, created_by)
+  select '10000000-0000-0000-0000-00000000000a', 'bulk ' || g, '00000000-0000-0000-0000-0000000000a2' from generate_series(1, 5000) g;
+select expect_fail($$insert into keywords (workspace_id, phrase, created_by)
+  values ('10000000-0000-0000-0000-00000000000a', 'one too many', '00000000-0000-0000-0000-0000000000a2')$$, '5000 keyword cap enforced by the database');
+delete from keywords;
 -- the lifecycle function itself agrees with the table
 reset role;
 select expect_count($$select count(*) from unnest(enum_range(null::article_state)) s where article_transition_allowed(s, s)$$, 0, 'no state transitions to itself');

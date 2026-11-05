@@ -35,6 +35,7 @@ import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 import { PhaseSteps, StatusBadge } from "./status-badge";
 import { postJson, useIntegrations } from "./integrations";
+import { runQa } from "@/lib/qa";
 
 function actionLabel(from: LifecycleState, to: LifecycleState) {
   switch (to) {
@@ -128,7 +129,7 @@ function EditorForm({
   templateId: string;
 }) {
   const router = useRouter();
-  const { save, sendWordpress, error } = useWorkspace();
+  const { articles, save, sendWordpress, error } = useWorkspace();
   const [form, setForm] = useState<Article>(
     () =>
       initial ?? {
@@ -169,6 +170,7 @@ function EditorForm({
   // Unsaved edits void any review/approval until the operator saves and reviews again.
   const currentStatus = dirty ? afterEdit(form.status) : form.status;
   const actions = localActions(currentStatus, { cmsConnected });
+  const qa = runQa(form, articles);
   const canExport = !dirty && isApprovedContent(form);
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
@@ -674,6 +676,39 @@ function EditorForm({
               </p>
             )}
           </section>
+          {phaseOf(currentStatus) !== "plan" && (
+            <section className="panel qa-panel" aria-live="polite">
+              <h2>검수 점검</h2>
+              {qa.blockers.length === 0 && qa.warnings.length === 0 ? (
+                <p className="qa-ok">
+                  <Check size={14} /> 자동 점검 {qa.checked}개 항목에서 문제를 찾지 못했어요.
+                </p>
+              ) : null}
+              {qa.blockers.length > 0 && (
+                <>
+                  <h3 className="qa-heading blocker">검수 전에 해결해야 해요</h3>
+                  <ul className="qa-list">
+                    {qa.blockers.map((b) => (
+                      <li key={b} className="blocker">{b}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {qa.warnings.length > 0 && (
+                <>
+                  <h3 className="qa-heading">확인해 보세요 (차단하지 않음)</h3>
+                  <ul className="qa-list">
+                    {qa.warnings.map((w) => (
+                      <li key={w.code}>{w.message}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="metric-note">
+                규칙 기반 점검이며 사실 여부나 저작권은 확인하지 않습니다. 근거와 권리는 직접 확인해주세요.
+              </p>
+            </section>
+          )}
         </aside>
       </div>
       {aiOverwrite && (
