@@ -1,3 +1,5 @@
+import { findTemplate, templateBody } from "./templates";
+import type { Article } from "./content";
 export type Keyword = {
   id: string;
   phrase: string;
@@ -133,4 +135,40 @@ export function parseKeywords(raw: string | null): Keyword[] {
   if (!Array.isArray(parsed) || !parsed.every(isKeyword))
     throw new Error("저장된 키워드 형식을 읽을 수 없습니다.");
   return parsed;
+}
+
+/**
+ * Articles that came from (or share) a keyword. The link is the normalized phrase stored in
+ * `Article.keyword`, so it works in local and account mode without a schema change.
+ */
+export function linkedArticles(phrase: string, articles: Article[]): Article[] {
+  const key = normalizePhrase(phrase);
+  return articles
+    .filter((a) => normalizePhrase(a.keyword) === key)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+}
+
+/**
+ * A new article at the `idea` stage. It carries no body text of its own (only the template
+ * skeleton) and no source, so it can not skip research, briefing or review.
+ */
+export function ideaFromKeyword(
+  phrase: string,
+  opts: { title?: string; templateId?: string; id?: string; now?: string } = {},
+): Article {
+  const keyword = phrase.trim();
+  if (!keyword) throw new Error("키워드가 비어 있습니다.");
+  if (keyword.length > 120) throw new Error("키워드가 120자를 넘습니다.");
+  const templateId = findTemplate(opts.templateId ?? "T01").id;
+  return {
+    id: opts.id ?? crypto.randomUUID(),
+    title: (opts.title ?? "").trim().slice(0, 200),
+    keyword,
+    templateId,
+    platform: "wordpress",
+    body: templateBody(templateId),
+    sourceUrl: "",
+    status: "idea",
+    updatedAt: opts.now ?? new Date().toISOString(),
+  };
 }

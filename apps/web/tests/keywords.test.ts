@@ -69,3 +69,30 @@ test("title lab returns 5 distinct deterministic candidates and flags overlong t
   assert.throws(() => generateTitles("  "));
   assert.throws(() => generateTitles("가".repeat(41)));
 });
+test("an idea from a keyword starts at idea with no source and no approval", async () => {
+  const { ideaFromKeyword } = await import("../src/lib/keywords");
+  const { isArticle, reviewErrors } = await import("../src/lib/content");
+  const a = ideaFromKeyword("  Next.js 포트 오류 ", { title: "제목 후보", templateId: "T02" });
+  assert.equal(a.status, "idea");
+  assert.equal(a.keyword, "Next.js 포트 오류");
+  assert.equal(a.title, "제목 후보");
+  assert.equal(a.sourceUrl, "");
+  assert.ok(isArticle(a));
+  // Nothing about it is reviewable yet: research, briefing and drafting still have to happen.
+  assert.ok(reviewErrors(a).length > 0);
+  assert.equal(ideaFromKeyword("x", { templateId: "nope" }).templateId, "T01");
+  assert.ok(isArticle(ideaFromKeyword("x", { templateId: "nope" })));
+  assert.throws(() => ideaFromKeyword("   "));
+  assert.throws(() => ideaFromKeyword("x".repeat(121)));
+  assert.equal(ideaFromKeyword("x", { title: "t".repeat(500) }).title.length, 200);
+});
+
+test("keyword ↔ article link ignores case, spacing and width, newest first", async () => {
+  const { ideaFromKeyword, linkedArticles } = await import("../src/lib/keywords");
+  const old = ideaFromKeyword("Next.js  포트 오류", { now: "2026-11-01T00:00:00Z" });
+  const recent = ideaFromKeyword("next.js 포트 오류", { now: "2026-11-05T00:00:00Z" });
+  const other = ideaFromKeyword("다른 키워드");
+  const got = linkedArticles("ＮＥＸＴ.js 포트 오류", [old, other, recent]);
+  assert.deepEqual(got.map((x) => x.id), [recent.id, old.id]);
+  assert.deepEqual(linkedArticles("없는 키워드", [old, recent, other]), []);
+});

@@ -2331,3 +2331,31 @@ footer {
 .user-profile .icon-button {
   flex-shrink: 0;
 }
+/* Keywords screen: panels had no inner padding */
+.keywords-panel {
+  padding: 24px;
+  margin-bottom: 22px;
+}
+.keywords-panel h2 {
+  margin-bottom: 8px;
+}
+.keywords-panel .table-scroll {
+  margin: 12px -24px -24px;
+}
+.keywords-panel .title-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.keywords-panel .title-list li .metric-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+.keywords-created {
+  margin: -8px 0 16px;
+}
+.keywords-panel td .table-actions {
+  justify-content: flex-end;
+  white-space: nowrap;
+}

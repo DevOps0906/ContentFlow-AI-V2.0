@@ -1,15 +1,20 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Copy, FileUp, Info, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { Copy, FilePlus2, FileUp, Info, Trash2 } from "lucide-react";
 import {
+  ideaFromKeyword,
   importKeywords,
   KEYWORD_STORAGE_KEY,
+  linkedArticles,
   parseKeywords,
   type ImportResult,
   type Keyword,
 } from "@/lib/keywords";
 import { generateTitles, type TitleCandidate } from "@/lib/titles";
 import { PageHeading } from "./shell";
+import { useWorkspace } from "./workspace";
+import { StatusBadge } from "./status-badge";
 
 export function Keywords() {
   const [keywords, setKeywords] = useState<Keyword[]>([]);
@@ -20,6 +25,9 @@ export function Keywords() {
   const [titles, setTitles] = useState<TitleCandidate[]>([]);
   const [message, setMessage] = useState("");
   const file = useRef<HTMLInputElement>(null);
+  const { articles, save, mode } = useWorkspace();
+  const [creating, setCreating] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -69,6 +77,22 @@ export function Keywords() {
     }
   }
 
+  /** Creates an article at the `idea` stage; the editor takes it from there. */
+  async function createIdea(phrase: string, title?: string) {
+    if (creating) return;
+    setCreating(phrase + (title ?? ""));
+    setMessage("");
+    setCreated(null);
+    try {
+      const stored = await save(ideaFromKeyword(phrase, { title }));
+      setCreated({ id: stored.id, title: stored.title || stored.keyword });
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "글을 만들지 못했습니다.");
+    } finally {
+      setCreating(null);
+    }
+  }
+
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -88,9 +112,10 @@ export function Keywords() {
       <div className="notice-banner">
         <Info size={17} />
         <div>
-          <b>이 브라우저에만 저장돼요.</b> 검색량·경쟁도는 외부 도구에서 가져온
-          값이 없으면 표시하지 않습니다. 제목 후보는 AI가 아니라 고정 규칙으로
-          만든 초안이에요.
+          <b>키워드는 이 브라우저에만 저장돼요.</b> 검색량·경쟁도는 외부 도구에서
+          가져온 값이 없으면 표시하지 않습니다. 제목 후보는 AI가 아니라 고정
+          규칙으로 만든 초안이에요. 키워드에서 만든 글은 {mode === "account" ? "내 계정" : "이 브라우저"}에
+          &lsquo;아이디어&rsquo; 단계로 저장됩니다.
         </div>
       </div>
       {error && (
@@ -98,7 +123,7 @@ export function Keywords() {
           {error}
         </p>
       )}
-      <section className="panel">
+      <section className="panel keywords-panel">
         <h2>CSV 가져오기</h2>
         <p className="metric-note">
           첫 줄 헤더(키워드, 검색의도, 우선순위 1~5, 메모)는 선택이에요. 헤더가
@@ -146,7 +171,13 @@ export function Keywords() {
         )}
       </section>
 
-      <section className="panel">
+      {created && (
+        <div role="status" className="success-message keywords-created">
+          &lsquo;{created.title}&rsquo; 글을 아이디어 단계로 만들었어요.{" "}
+          <Link href={`/content/${created.id}`}>편집기에서 열기</Link>
+        </div>
+      )}
+      <section className="panel keywords-panel">
         <h2>키워드 {keywords.length}개</h2>
         {!ready ? (
           <p className="metric-note">불러오는 중…</p>
@@ -165,6 +196,7 @@ export function Keywords() {
                     <th scope="col">검색의도</th>
                     <th scope="col">우선순위</th>
                     <th scope="col">메모</th>
+                    <th scope="col">연결된 글</th>
                     <th scope="col">
                       <span className="sr-only">작업</span>
                     </th>
@@ -174,13 +206,34 @@ export function Keywords() {
                   {[...keywords]
                     .sort((a, b) => a.priority - b.priority)
                     .slice(0, 200)
-                    .map((k) => (
+                    .map((k) => {
+                      const linked = linkedArticles(k.phrase, articles);
+                      return (
                       <tr key={k.id}>
                         <td>{k.phrase}</td>
                         <td>{k.intent || "—"}</td>
                         <td>{k.priority}</td>
                         <td>{k.note || "—"}</td>
-                        <td className="table-actions">
+                        <td>
+                          {linked.length === 0 ? (
+                            "—"
+                          ) : (
+                            <Link href={`/content/${linked[0].id}`}>
+                              <StatusBadge state={linked[0].status} />
+                              {linked.length > 1 && <small> 외 {linked.length - 1}</small>}
+                            </Link>
+                          )}
+                        </td>
+                        <td>
+                          <div className="table-actions">
+                          <button
+                            className="button secondary"
+                            disabled={!!creating || !ready}
+                            onClick={() => createIdea(k.phrase)}
+                            aria-label={`${k.phrase} 글 만들기`}
+                          >
+                            <FilePlus2 size={14} /> {linked.length ? "글 추가" : "글 만들기"}
+                          </button>
                           <button
                             className="button secondary"
                             aria-pressed={selected === k.phrase}
@@ -197,9 +250,11 @@ export function Keywords() {
                           >
                             <Trash2 size={14} />
                           </button>
+                          </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -219,6 +274,13 @@ export function Keywords() {
             {titles.map((t) => (
               <li key={t.pattern}>
                 <b>{t.title}</b> <small>({t.pattern})</small>
+                <button
+                  className="button secondary"
+                  disabled={!!creating}
+                  onClick={() => createIdea(selected, t.title)}
+                >
+                  <FilePlus2 size={14} /> 이 제목으로 글 만들기
+                </button>
                 <button
                   className="button secondary"
                   aria-label={`${t.title} 복사`}

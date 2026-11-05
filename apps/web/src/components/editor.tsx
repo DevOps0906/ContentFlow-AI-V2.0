@@ -25,6 +25,7 @@ import {
   afterEdit,
   lifecycleLabels,
   localActions,
+  phaseOf,
   requiresApproval,
   transition,
   type LifecycleState,
@@ -517,6 +518,12 @@ function EditorForm({
                 <Save size={15} />
                 임시 저장
               </button>
+              {phaseOf(currentStatus) === "plan" && (
+                <p className="metric-note">
+                  기획 단계예요. 자료 조사와 브리프(제목·근거·구조)를 정리한 뒤 초안
+                  작성을 시작하면 검수를 요청할 수 있어요.
+                </p>
+              )}
               {actions.some((a) => a.to === "qa_pending") && (
                 <button
                   className="button primary"
@@ -640,6 +647,12 @@ function EditorForm({
                     </button>
                   ),
                 )}
+              {phaseOf(currentStatus) === "plan" && (
+                <p className="metric-note">
+                  기획 단계예요. 자료 조사와 브리프(제목·근거·구조)를 정리한 뒤 초안
+                  작성을 시작하면 검수를 요청할 수 있어요.
+                </p>
+              )}
               {actions.some((a) => a.to === "qa_pending") && (
                 <p className="metric-note">
                   제목, 실제 본문, 근거 URL을 채운 뒤 본문 하단의 &lsquo;검수 요청&rsquo;을
