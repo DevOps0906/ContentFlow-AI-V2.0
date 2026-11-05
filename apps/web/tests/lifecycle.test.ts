@@ -2,6 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  afterEdit,
+  cmsOnlyStates,
+  localActions,
+  phaseOf,
+  phases,
   canTransition,
   lifecycleLabels,
   lifecycleStates,
@@ -63,4 +68,26 @@ test("editing approved content returns to drafting", () => {
   for (const s of ["approved", "export_ready"] as const) assert.ok(canTransition(s, "drafting"));
   assert.equal(localToLifecycle("draft"), "drafting");
   assert.equal(localToLifecycle("approved"), "approved");
+  for (const s of requiresApproval) assert.equal(afterEdit(s), "drafting");
+  assert.equal(afterEdit("briefing"), "briefing");
+});
+
+test("local actions never offer CMS-only transitions as available", () => {
+  for (const s of lifecycleStates)
+    for (const a of localActions(s)) {
+      assert.ok(canTransition(s, a.to));
+      assert.equal(a.available, !cmsOnlyStates.includes(a.to));
+    }
+  // Manual path works without a CMS: export_ready → manual_pending → published.
+  assert.ok(localActions("export_ready").some((a) => a.to === "manual_pending" && a.available));
+  assert.ok(localActions("manual_pending").some((a) => a.to === "published" && a.available));
+  assert.ok(localActions("export_ready").some((a) => a.to === "publishing" && !a.available));
+});
+
+test("every state belongs to exactly one of the 5 phases", () => {
+  for (const s of lifecycleStates) assert.ok(phases.includes(phaseOf(s)));
+  assert.deepEqual(
+    phases.map((p) => lifecycleStates.filter((s) => phaseOf(s) === p).length),
+    [3, 4, 2, 5, 2],
+  );
 });

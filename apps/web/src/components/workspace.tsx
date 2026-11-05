@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { type Article, parseArticles, STORAGE_KEY } from "@/lib/content";
+import {
+  type Article,
+  LEGACY_STORAGE_KEY,
+  loadArticles,
+  parseArticles,
+  STORAGE_KEY,
+} from "@/lib/content";
 
 type Workspace = {
   articles: Article[];
@@ -24,7 +30,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   useEffect(() => {
     try {
-      setArticles(parseArticles(localStorage.getItem(STORAGE_KEY)));
+      // v1 data is migrated in memory and written to v2 on the next save only.
+      setArticles(
+        loadArticles(
+          localStorage.getItem(STORAGE_KEY),
+          localStorage.getItem(LEGACY_STORAGE_KEY),
+        ),
+      );
     } catch {
       setError(
         "브라우저 저장소를 읽을 수 없습니다. 원본 데이터는 덮어쓰지 않았습니다. 설정에서 백업 후 초기화할 수 있습니다.",
@@ -60,7 +72,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
   function clear() {
     try {
+      // Explicit reset removes v1 too, otherwise it would be migrated again on reload.
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
       setArticles([]);
       setError("");
       return true;

@@ -15,15 +15,18 @@ import {
   Wallet,
 } from "lucide-react";
 import { templates } from "@/lib/templates";
-import { statusLabels, templateName } from "@/lib/content";
+import { isApprovedContent, templateName } from "@/lib/content";
 import { useWorkspace } from "./workspace";
 import { NewContentButton, PageHeading } from "./shell";
 import { TemplateCard } from "./template-card";
+import { StatusBadge } from "./status-badge";
 
 export function Dashboard() {
   const { articles, ready } = useWorkspace();
-  const approved = articles.filter((a) => a.status === "approved").length;
-  const reviewing = articles.filter((a) => a.status === "review").length;
+  const approved = articles.filter(isApprovedContent).length;
+  const reviewing = articles.filter((a) =>
+    ["qa_pending", "approval_pending"].includes(a.status),
+  ).length;
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - 6 + i);
@@ -46,7 +49,9 @@ export function Dashboard() {
     },
     {
       label: "출처 확인 후 검수 요청",
-      done: articles.some((a) => a.status !== "draft"),
+      done: articles.some(
+        (a) => a.status === "approval_pending" || isApprovedContent(a),
+      ),
       href: "/content",
     },
     { label: "원고 승인하고 내보내기", done: approved > 0, href: "/content" },
@@ -119,7 +124,7 @@ export function Dashboard() {
           title="승인 완료"
           value={ready ? String(approved) : "—"}
           unit="개"
-          note="HTML로 내보낼 수 있어요"
+          note="게시·사후 관리 포함 · HTML로 내보낼 수 있어요"
           icon={<CircleCheck size={19} />}
           color="mint"
         />
@@ -260,9 +265,7 @@ export function Dashboard() {
                     </td>
                     <td>{templateName(a)}</td>
                     <td>
-                      <span className={`status ${a.status}`}>
-                        {statusLabels[a.status]}
-                      </span>
+                      <StatusBadge state={a.status} />
                     </td>
                     <td>{new Date(a.updatedAt).toLocaleDateString("ko-KR")}</td>
                     <td>

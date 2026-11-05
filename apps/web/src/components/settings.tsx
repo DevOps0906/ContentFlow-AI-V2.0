@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Download, ExternalLink, Trash2 } from "lucide-react";
 import { useWorkspace, download } from "./workspace";
-import { STORAGE_KEY } from "@/lib/content";
+import { LEGACY_STORAGE_KEY, STORAGE_KEY } from "@/lib/content";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 export function Settings() {
@@ -45,7 +45,10 @@ export function Settings() {
             className="button secondary"
             onClick={() => {
               try {
-                const raw = localStorage.getItem(STORAGE_KEY) ?? "[]";
+                const raw =
+                  localStorage.getItem(STORAGE_KEY) ??
+                  localStorage.getItem(LEGACY_STORAGE_KEY) ??
+                  "[]";
                 download("contentflow-backup.json", raw, "application/json");
                 setMessage("브라우저 원본 데이터를 백업했어요.");
               } catch {

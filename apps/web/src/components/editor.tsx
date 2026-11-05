@@ -14,15 +14,77 @@ import {
 import { findTemplate, templateBody, templates } from "@/lib/templates";
 import {
   type Article,
-  type ArticleStatus,
   exportHtml,
+  isApprovedContent,
   reviewErrors,
   saveRevision,
-  statusLabels,
 } from "@/lib/content";
+import {
+  afterEdit,
+  lifecycleLabels,
+  localActions,
+  requiresApproval,
+  transition,
+  type LifecycleState,
+} from "@/lib/lifecycle";
 import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
+import { PhaseSteps, StatusBadge } from "./status-badge";
+
+function actionLabel(from: LifecycleState, to: LifecycleState) {
+  switch (to) {
+    case "researching":
+      return "자료 조사 시작";
+    case "briefing":
+      return "브리프 작성 시작";
+    case "drafting":
+      return requiresApproval.includes(from)
+        ? "승인 해제하고 다시 작성"
+        : from === "briefing"
+          ? "초안 작성 시작"
+          : "다시 작성";
+    case "qa_pending":
+      return "검수 요청";
+    case "approval_pending":
+      return "검수 통과 처리";
+    case "needs_revision":
+      return "수정 요청";
+    case "approved":
+      return "검토 후 승인";
+    case "export_ready":
+      return from === "approved" ? "HTML 내보내기" : "내보내기 단계로 되돌리기";
+    case "manual_pending":
+      return "수동 게시 시작";
+    case "published":
+      return "게시 완료 확인";
+    case "monitoring":
+      return "성과 모니터링 시작";
+    case "update_due":
+      return "업데이트 필요로 표시";
+    default:
+      return lifecycleLabels[to];
+  }
+}
+function savedMessage(status: LifecycleState, target?: LifecycleState) {
+  if (!target) return "현재 브라우저에 저장했어요.";
+  switch (status) {
+    case "approval_pending":
+      return "검수를 통과해 승인 대기로 저장했어요. 근거와 권리를 직접 확인한 뒤 승인해주세요.";
+    case "needs_revision":
+      return "검수에서 고칠 항목이 있어 '수정 필요'로 저장했어요.";
+    case "approved":
+      return "검토한 원고를 승인했어요. HTML 내보내기가 가능합니다.";
+    case "export_ready":
+      return "HTML을 내려받고 '내보내기 준비'로 표시했어요.";
+    case "manual_pending":
+      return "수동 게시 대기로 표시했어요. 블로그에 직접 게시한 뒤 완료를 확인해주세요.";
+    case "published":
+      return "게시 완료로 표시했어요. 외부 블로그에 자동 게시하지는 않았습니다.";
+    default:
+      return `상태를 '${lifecycleLabels[status]}'(으)로 변경했어요.`;
+  }
+}
 
 export function EditorScreen({
   id,
@@ -73,7 +135,7 @@ function EditorForm({
         platform: "wordpress",
         body: templateBody(templateId),
         sourceUrl: "",
-        status: "draft",
+        status: "drafting",
         updatedAt: new Date().toISOString(),
       },
   );
@@ -94,7 +156,10 @@ function EditorForm({
         form.sourceUrl ||
         form.body !== templateBody(form.templateId)
       );
-  const currentStatus = dirty ? "draft" : form.status;
+  // Unsaved edits void any review/approval until the operator saves and reviews again.
+  const currentStatus = dirty ? afterEdit(form.status) : form.status;
+  const actions = localActions(currentStatus);
+  const canExport = !dirty && isApprovedContent(form);
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
       if (dirty) {
@@ -137,7 +202,7 @@ function EditorForm({
     };
   }, [dirty]);
   function update<K extends keyof Article>(key: K, value: Article[K]) {
-    setForm((f) => ({ ...f, [key]: value, status: "draft" }));
+    setForm((f) => ({ ...f, [key]: value }));
     setConfirmed(false);
     setMessage("");
     setErrors([]);
@@ -147,7 +212,6 @@ function EditorForm({
       ...f,
       templateId: next,
       body: templateBody(next),
-      status: "draft",
     }));
     setConfirmed(false);
     setPendingTemplate(null);
@@ -159,29 +223,44 @@ function EditorForm({
       setPendingTemplate(next);
     else applyTemplate(next);
   }
-  function persist(status: ArticleStatus) {
-    if (status !== "draft") {
-      const issues = reviewErrors(form);
-      if (issues.length) {
-        setErrors(issues);
+  /** Saves the manuscript and, if given, moves it to `target` via the lifecycle rules. */
+  function persist(target?: LifecycleState) {
+    let next = saveRevision(form, saved);
+    let issues: string[] = [];
+    if (target) {
+      if (["qa_pending", "approval_pending", "approved"].includes(target))
+        issues = reviewErrors(next);
+      if (target === "approved" && !confirmed)
+        issues.push("근거와 권리를 직접 검토했다는 항목을 확인해주세요.");
+      try {
+        let status = transition(next.status, target);
+        // QA is decided immediately by the checklist: pass → approval, fail → revision.
+        if (target === "qa_pending")
+          status = transition(
+            status,
+            issues.length ? "needs_revision" : "approval_pending",
+          );
+        else if (issues.length) {
+          setErrors(issues);
+          return;
+        }
+        next = { ...next, status };
+      } catch (e) {
+        setErrors([e instanceof Error ? e.message : "상태를 바꿀 수 없습니다."]);
         return;
       }
     }
-    if (status === "approved" && !confirmed) {
-      setErrors(["근거와 권리를 직접 검토했다는 항목을 확인해주세요."]);
-      return;
-    }
-    const next = { ...saveRevision(form, saved), status };
     if (save(next)) {
+      if (target === "export_ready" && next.status === "export_ready")
+        download(`contentflow-${next.id}.html`, exportHtml(next));
       setSaved(next);
       setForm(next);
-      setErrors([]);
+      setErrors(issues);
+      setConfirmed(false);
       setMessage(
-        status === "draft"
-          ? "현재 브라우저에 저장했어요."
-          : status === "review"
-            ? "검수 대기로 저장했어요. 근거와 권리를 직접 확인해주세요."
-            : "검토한 원고를 승인했어요. HTML 내보내기가 가능합니다.",
+        !target && saved && next.status !== saved.status
+          ? "내용이 바뀌어 기존 검수·승인이 해제됐어요. 다시 검수해주세요."
+          : savedMessage(next.status, target),
       );
       if (!initial) router.replace(`/content/${next.id}`);
     }
@@ -329,37 +408,36 @@ function EditorForm({
             <div className="editor-actions">
               <button
                 className="button secondary"
-                onClick={() => persist("draft")}
+                onClick={() => persist()}
                 disabled={!!error}
               >
                 <Save size={15} />
                 임시 저장
               </button>
-              <button
-                className="button primary"
-                onClick={() => persist("review")}
-                disabled={!!error}
-              >
-                검수 요청
-              </button>
-              {currentStatus === "approved" && (
+              {actions.some((a) => a.to === "qa_pending") && (
+                <button
+                  className="button primary"
+                  onClick={() => persist("qa_pending")}
+                  disabled={!!error}
+                >
+                  검수 요청
+                </button>
+              )}
+              {canExport && (
                 <button
                   className="button secondary"
                   onClick={() =>
-                    download(
-                      `contentflow-${form.id}.html`,
-                      exportHtml({ ...form, status: "approved" }),
-                    )
+                    download(`contentflow-${form.id}.html`, exportHtml(form))
                   }
                 >
                   <Download size={15} />
-                  HTML 내보내기
+                  HTML 다시 받기
                 </button>
               )}
             </div>
             <p>
-              수정한 원고는 다시 승인해야 합니다. 외부 블로그에는 자동 게시되지
-              않습니다.
+              수정한 원고는 다시 검수·승인해야 합니다. 외부 블로그에는 자동
+              게시되지 않습니다.
             </p>
           </div>
         </section>
@@ -382,31 +460,65 @@ function EditorForm({
             </ol>
             <p className="evidence-note">필수 근거: {template.evidence}</p>
           </section>
-          <section className="panel">
-            <h2>검수 · 승인</h2>
-            <span className={`status ${currentStatus}`}>
-              {statusLabels[currentStatus]}
-            </span>
+          <section className="panel lifecycle-panel">
+            <h2>진행 상태</h2>
+            <div className="lifecycle-current">
+              <StatusBadge state={currentStatus} />
+              {dirty && <small>저장하지 않은 변경 있음</small>}
+            </div>
+            <PhaseSteps state={currentStatus} />
+            {currentStatus === "approval_pending" && (
+              <label className="approval-label">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                />
+                <span>사실·출처·이미지 권리를 직접 확인했습니다.</span>
+              </label>
+            )}
+            <div className="lifecycle-actions" role="group" aria-label="다음 단계">
+              {actions
+                .filter((a) => a.to !== "qa_pending")
+                .map(({ to, available }) =>
+                  available ? (
+                    <button
+                      key={to}
+                      className={`button ${to === "approved" ? "primary" : "secondary"}`}
+                      onClick={() => persist(to)}
+                      disabled={!!error || (to === "approved" && !confirmed)}
+                    >
+                      {to === "approved" ? (
+                        <ShieldCheck size={15} />
+                      ) : to === "export_ready" && currentStatus === "approved" ? (
+                        <Download size={15} />
+                      ) : null}
+                      {actionLabel(currentStatus, to)}
+                    </button>
+                  ) : (
+                    <button
+                      key={to}
+                      className="button secondary"
+                      aria-disabled="true"
+                      disabled
+                      title="CMS 연동 전에는 사용할 수 없습니다."
+                    >
+                      {lifecycleLabels[to]}
+                      <small className="unavailable-note">CMS 연동 전</small>
+                    </button>
+                  ),
+                )}
+              {actions.some((a) => a.to === "qa_pending") && (
+                <p className="metric-note">
+                  제목, 실제 본문, 근거 URL을 채운 뒤 본문 하단의 &lsquo;검수 요청&rsquo;을
+                  누르세요.
+                </p>
+              )}
+            </div>
             <p className="metric-note">
-              제목, 실제 본문, 근거 URL을 채운 후 직접 검토하고 승인하세요.
+              승인 후에만 HTML을 내보낼 수 있고, 게시는 직접 한 뒤 완료를
+              확인합니다.
             </p>
-            <label className="approval-label">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-              />
-              <span>사실·출처·이미지 권리를 직접 확인했습니다.</span>
-            </label>
-            <button
-              style={{ marginTop: 16, width: "100%" }}
-              className="button secondary"
-              onClick={() => persist("approved")}
-              disabled={!!error || !confirmed}
-            >
-              <ShieldCheck size={15} />
-              검토 후 승인
-            </button>
             {saved && (
               <p className="metric-note">
                 마지막 저장{" "}

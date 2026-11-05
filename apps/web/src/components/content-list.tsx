@@ -2,18 +2,20 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ArrowUpRight, FileText, Search, Trash2 } from "lucide-react";
-import { statusLabels, templateName, type ArticleStatus } from "@/lib/content";
+import { templateName } from "@/lib/content";
+import { phaseLabels, phaseOf, phases, type Phase } from "@/lib/lifecycle";
 import { PageHeading, NewContentButton } from "./shell";
 import { useWorkspace } from "./workspace";
 import { ConfirmDialog } from "./dialog";
+import { StatusBadge } from "./status-badge";
 export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
   const { articles, ready, remove } = useWorkspace();
   const [query, setQuery] = useState(initialQuery);
-  const [status, setStatus] = useState<ArticleStatus | "all">("all");
+  const [status, setStatus] = useState<Phase | "all">("all");
   const [deleting, setDeleting] = useState<string | null>(null);
   const filtered = articles.filter(
     (a) =>
-      (status === "all" || a.status === status) &&
+      (status === "all" || phaseOf(a.status) === status) &&
       `${a.title} ${a.keyword} ${templateName(a)}`
         .toLowerCase()
         .includes(query.toLowerCase()),
@@ -27,19 +29,19 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
         action={<NewContentButton />}
       />
       <div className="toolbar">
-        <div className="filter-tabs" role="group" aria-label="콘텐츠 상태">
-          {(["all", "draft", "review", "approved"] as const).map((s) => (
+        <div className="filter-tabs" role="group" aria-label="콘텐츠 진행 단계">
+          {(["all", ...phases] as const).map((s) => (
             <button
               key={s}
               aria-pressed={status === s}
               className={`filter-tab ${status === s ? "selected" : ""}`}
               onClick={() => setStatus(s)}
             >
-              {s === "all" ? "전체" : statusLabels[s]}
+              {s === "all" ? "전체" : phaseLabels[s]}
               <span>
                 {s === "all"
                   ? articles.length
-                  : articles.filter((a) => a.status === s).length}
+                  : articles.filter((a) => phaseOf(a.status) === s).length}
               </span>
             </button>
           ))}
@@ -85,9 +87,7 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
                     </td>
                     <td>{templateName(a)}</td>
                     <td>
-                      <span className={`status ${a.status}`}>
-                        {statusLabels[a.status]}
-                      </span>
+                      <StatusBadge state={a.status} />
                     </td>
                     <td>{new Date(a.updatedAt).toLocaleDateString("ko-KR")}</td>
                     <td>

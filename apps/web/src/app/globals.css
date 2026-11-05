@@ -933,17 +933,85 @@ tr:last-child td {
   border-radius: 5px;
   white-space: nowrap;
 }
-.status.draft {
+/* One color per lifecycle phase; .warn marks states needing operator attention. */
+.status.plan {
+  background: var(--purple-bg);
+  color: var(--purple);
+}
+.status.write {
   background: #f0f3f7;
-  color: #8293a6;
+  color: #6f8196;
 }
-.status.review {
-  background: var(--amber-bg);
-  color: #b49457;
-}
-.status.approved {
+.status.approve {
   background: var(--mint-bg);
-  color: #5c9d84;
+  color: #3f8a6f;
+}
+.status.publish {
+  background: var(--blue-bg);
+  color: var(--blue);
+}
+.status.after {
+  background: var(--amber-bg);
+  color: #9a7429;
+}
+.status.warn {
+  background: var(--rose-bg);
+  color: #b05c74;
+}
+.lifecycle-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.lifecycle-current small {
+  font-size: 10px;
+  color: var(--amber);
+}
+.phase-steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin: 14px 0 4px;
+  padding: 0;
+}
+.phase-steps li {
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+  padding-top: 7px;
+  border-top: 3px solid var(--line);
+  line-height: 1.3;
+}
+.phase-steps li.done {
+  border-top-color: #a9d8c6;
+}
+.phase-steps li.current {
+  border-top-color: var(--green);
+  color: var(--green);
+  font-weight: 650;
+}
+.lifecycle-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.lifecycle-actions .button {
+  width: 100%;
+  justify-content: center;
+}
+.lifecycle-actions .metric-note {
+  margin: 0;
+}
+.unavailable-note {
+  font-size: 9px;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #f0f3f7;
+  color: var(--muted);
 }
 .recommended > .section-heading {
   margin-bottom: 17px;

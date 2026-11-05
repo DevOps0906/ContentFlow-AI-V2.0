@@ -1,6 +1,14 @@
 import { findTemplate, templates } from "./templates";
+import {
+  afterEdit,
+  isLifecycleState,
+  legacyStatuses,
+  localToLifecycle,
+  requiresApproval,
+  type LegacyStatus,
+  type LifecycleState,
+} from "./lifecycle";
 
-export type ArticleStatus = "draft" | "review" | "approved";
 export type Article = {
   id: string;
   title: string;
@@ -9,35 +17,70 @@ export type Article = {
   platform: "wordpress" | "tistory" | "blogger" | "naver";
   body: string;
   sourceUrl: string;
-  status: ArticleStatus;
+  status: LifecycleState;
   updatedAt: string;
 };
-export const STORAGE_KEY = "contentflow.articles.v1";
-export const statusLabels: Record<ArticleStatus, string> = {
-  draft: "작성 중",
-  review: "검수 대기",
-  approved: "승인 완료",
-};
+export const STORAGE_KEY = "contentflow.articles.v2";
+/** v1 stored the 3-step status. It is read for migration and never overwritten. */
+export const LEGACY_STORAGE_KEY = "contentflow.articles.v1";
 
-export function isArticle(value: unknown): value is Article {
-  if (!value || typeof value !== "object") return false;
-  const a = value as Record<string, unknown>;
+function hasArticleFields(a: Record<string, unknown>) {
   return (
     ["id", "title", "keyword", "body", "sourceUrl", "updatedAt"].every(
       (k) => typeof a[k] === "string",
     ) &&
     templates.some((t) => t.id === a.templateId) &&
     ["wordpress", "tistory", "blogger", "naver"].includes(String(a.platform)) &&
-    ["draft", "review", "approved"].includes(String(a.status)) &&
     !Number.isNaN(Date.parse(String(a.updatedAt)))
   );
 }
-export function parseArticles(raw: string | null): Article[] {
-  if (!raw) return [];
+export function isArticle(value: unknown): value is Article {
+  if (!value || typeof value !== "object") return false;
+  const a = value as Record<string, unknown>;
+  return hasArticleFields(a) && isLifecycleState(a.status);
+}
+function readArray(raw: string): unknown[] {
   const parsed: unknown = JSON.parse(raw);
-  if (!Array.isArray(parsed) || !parsed.every(isArticle))
+  if (!Array.isArray(parsed))
     throw new Error("저장된 콘텐츠 형식을 읽을 수 없습니다.");
   return parsed;
+}
+export function parseArticles(raw: string | null): Article[] {
+  if (!raw) return [];
+  const parsed = readArray(raw);
+  if (!parsed.every(isArticle))
+    throw new Error("저장된 콘텐츠 형식을 읽을 수 없습니다.");
+  return parsed;
+}
+/** Reads v1 data (3-step status) and converts it to the lifecycle model. */
+export function parseLegacyArticles(raw: string | null): Article[] {
+  if (!raw) return [];
+  return readArray(raw).map((value) => {
+    const a = (value && typeof value === "object" ? value : {}) as Record<
+      string,
+      unknown
+    >;
+    if (
+      !hasArticleFields(a) ||
+      !legacyStatuses.includes(a.status as LegacyStatus)
+    )
+      throw new Error("이전 버전 콘텐츠 형식을 읽을 수 없습니다.");
+    return {
+      ...(a as unknown as Article),
+      status: localToLifecycle(a.status as LegacyStatus),
+    };
+  });
+}
+/** v2 wins when present; otherwise v1 is migrated in memory (v1 stays untouched). */
+export function loadArticles(
+  current: string | null,
+  legacy: string | null,
+): Article[] {
+  return current !== null ? parseArticles(current) : parseLegacyArticles(legacy);
+}
+/** Content approved and not changed since: HTML export is allowed. */
+export function isApprovedContent(article: Article) {
+  return requiresApproval.includes(article.status);
 }
 export function reviewErrors(article: Article): string[] {
   const errors: string[] = [];
@@ -64,7 +107,7 @@ export function saveRevision(article: Article, previous?: Article): Article {
     );
   return {
     ...article,
-    status: changed ? "draft" : article.status,
+    status: changed ? afterEdit(article.status) : article.status,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -77,7 +120,7 @@ export function escapeHtml(text: string) {
     .replaceAll("'", "&#39;");
 }
 export function exportHtml(article: Article): string {
-  if (article.status !== "approved")
+  if (!isApprovedContent(article))
     throw new Error("승인된 콘텐츠만 HTML로 내보낼 수 있습니다.");
   const body = article.body
     .split("\n")
