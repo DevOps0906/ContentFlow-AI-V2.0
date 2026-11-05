@@ -45,6 +45,8 @@ erDiagram
 | agent_runs | id, workspace_id, task, model, tokens_in, tokens_out, cost_estimate, status | 모델별 계량 |
 | audit_logs | id, workspace_id, actor_id, action, payload, created_at | 보안 감사 |
 
+> **적용 상태:** supabase/migrations/0001_core_tenancy.sql은 로컬 Supabase에 적용되어 있고 8개 테이블에 RLS가 켜져 있다. 앱은 아직 이 DB를 쓰지 않으며(브라우저 저장), 클라우드 프로젝트는 없다. 앱의 lifecycle.ts는 rticle_state enum과 일치 테스트로 묶여 있다.
+
 ## 3. 주요 상태 값
 Article: idea → researching → briefing → drafting → qa_pending → needs_revision → approval_pending → approved → export_ready → publishing → draft_created → published → monitoring → update_due. 수동 경로는 export_ready → manual_pending → published이며 publishing 실패 시 publish_failed에서 명시적으로 재시도한다.
 PublishJob: queued, running, draft_created, manual_pending, succeeded, failed, cancelled, needs_attention. draft_created/manual_pending은 공개 확인 전 상태다.

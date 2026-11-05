@@ -13,7 +13,7 @@
 
 ## 진행 현황 (2026-11-06 기준)
 
-작업 표 11개 중 8개는 문서/로컬 구현 완료, 3개는 모델 확인·시각 검증·서비스 연동 대기다. 이는 서비스 출시율이 아니라 [작업 항목](tasks/README.md)의 상태다.
+작업 표 14개 중 10개는 문서/로컬 구현 완료, 2개는 부분 완료(시각 검증·AI 실키 검증), 2개는 모델 확인·로그인/DB 연동 대기다. 작업 항목 기준 약 71%, 서비스 출시 기준 약 30~35%로 어림한다(산정은 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)). 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
 
 | 영역 | 현재 상태 | 제한 사항 |
 |---|---|---|
@@ -38,6 +38,7 @@
 |---|---|---|
 | 기획 | 1/1 | PRD·수익화·DB·워크플로우 보강 |
 | 로컬 대시보드/편집 | 5/5 | CF-02~04, CF-09~10 코드·테스트·빌드 |
+| Docker·연동 | 2/3 | CF-11 Docker·Supabase, CF-13 WordPress 완료 / CF-12 AI는 실키 미검증 |
 | DB 스키마 | 1/1 | CF-07a 마이그레이션·RLS 테스트 |
 | NOMAD 구성 도구 | 1/1 | CF-05 네이티브 역할·초기화/검사 도구 |
 | 모델 활성화/시각 검증/백엔드 연동 | 0/3 | CF-06, CF-07b, CF-08 대기 |
@@ -81,7 +82,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
 | 설정/백업 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) |
 
-[전체 문서](docs/README.md) · [디자인 명세](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 
@@ -187,6 +188,8 @@ flowchart LR
 | 콘텐츠 | [CONTENT_TEMPLATES](docs/04-content/CONTENT_TEMPLATES.md) | [PDF](docs/04-content/CONTENT_TEMPLATES.pdf) |
 | 개발 에이전트 | [AGENTS](docs/05-agents/AGENTS.md) | [PDF](docs/05-agents/AGENTS.pdf) |
 | 자동화 | [WORKFLOWS](docs/06-workflows/WORKFLOWS.md) | [PDF](docs/06-workflows/WORKFLOWS.pdf) |
+| 디자인 시안 | [DESIGN_SPEC](docs/07-design/DESIGN_SPEC.md) | 다음 문서 빌드에서 생성 |
+| 개발 단계·완성도 | [IMPLEMENTATION_STATUS](docs/07-design/IMPLEMENTATION_STATUS.md) | 다음 문서 빌드에서 생성 |
 
 > Markdown이 최신 원본이다. 기존 PDF에는 v2.1 보강이 아직 반영되지 않았으며, main/master 반영 후 GitHub Actions 문서 빌드에서 재생성한다.
 

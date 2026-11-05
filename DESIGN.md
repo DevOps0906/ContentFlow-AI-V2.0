@@ -13,4 +13,4 @@
 | 접근성 | skip link, label, focus 표시, dialog focus trap, reduced motion |
 | 미리보기 | React 텍스트 렌더링. 원본 HTML·광고 script 실행 없음 |
 
-브라우저 시각 검증은 앱 접근 승인 시간 초과로 수행하지 못했다. CSS 3구간, HTTP 응답, 타입/테스트/빌드를 확인했으며 실제 화면 검토는 남아 있다.
+화면 캡처와 상세 규칙은 [디자인 시안](docs/07-design/DESIGN_SPEC.md). 헤드리스 Chrome으로 데스크톱·태블릿·모바일 캡처를 확인했으며, 저장된 글이 있는 화면·키보드 조작·저장 실패 화면은 남아 있다.
