@@ -2176,3 +2176,12 @@ footer {
     animation: none !important;
   }
 }
+
+.title-list {
+  display: grid;
+  gap: 12px;
+  padding-left: 18px;
+}
+.title-list .button {
+  margin-left: 8px;
+}

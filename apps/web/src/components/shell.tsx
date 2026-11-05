@@ -25,6 +25,7 @@ import { useWorkspace } from "./workspace";
 const nav = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
   { href: "/content", label: "콘텐츠", icon: FileText },
+  { href: "/keywords", label: "키워드 · 제목 랩", icon: Search },
   { href: "/templates", label: "템플릿 라이브러리", icon: LayoutTemplate },
   { href: "/analytics", label: "수익 분석", icon: TrendingUp },
 ];
