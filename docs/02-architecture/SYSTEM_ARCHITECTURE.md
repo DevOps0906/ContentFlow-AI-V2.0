@@ -1,6 +1,8 @@
 # System Architecture — ContentFlow AI
 **상태:** 설계안
 
+**v2.1 범위:** [PRD](../01-planning/PRD.md)의 축소 MVP가 아래 전체 목표 구조보다 우선한다. 첫 출시는 WP 초안/티스토리 export, 3종 템플릿, CSV 분석이다. Blogger/API 성과 수집/예약은 후속이다.
+
 ## 1. 스택 및 책임
 Next.js App Router/TypeScript, Tailwind/shadcn/ui, Tiptap, React Flow; Supabase Auth/PostgreSQL/Storage/RLS; n8n(오케스트레이션); OpenAI API(구조화 작성), Claude API(보조 검토); WordPress REST/Blogger v3 연동.
 
@@ -57,3 +59,14 @@ verify(result): VerifiedResult
 
 ## 8. 운영 성능 기준
 발행 요청 중복 0건(멱등성), 템플릿 버전별 재현 가능, RLS 교차 테넌트 테스트 전부 통과, 장애 복구·감사 로그, 일일 모델 예산·경보, 오류 상태 대시보드.
+
+## 9. v2.1 템플릿/광고/측정 경계
+
+- Renderer 입력은 승인된 본문 + 고정된 글쓰기/표시/광고 프로필/renderer 버전이다. 미리보기와 export가 같은 renderer를 사용한다. HTML 허용 목록 정제 후 출력하며 임의 script/event handler는 제거 또는 차단한다. 광고 후보 슬롯은 미리보기의 placeholder이며 모델 출력 광고 코드를 실행하지 않는다.
+- 승인 해시는 본문/제목뿐 아니라 프로필 버전과 렌더 결과를 포함한다. 변경 시 새 QA/승인이 필요하다. 이전 패키지를 보존하여 복구한다.
+- WordPress 어댑터의 초안 생성은 `draft_created`로 기록한다. 공개 게시와 별개이며 운영자의 공개 URL 확인으로 완료한다. 후속 예약은 예약 등록 성공과 실제 공개 확인을 구분한다.
+- 사이트 준비 점검/광고 상태는 독립 서비스다. MVP는 설정 기록과 안내만 제공한다. 실제 테마·광고·CMP 적용은 운영자가 수행한다.
+- 보고서 입력은 파일 검증 → import batch → 원본/출처/정산 상태 보존 → URL 매핑 → 집계 → 개선 후보 순서다. 외부 URL 점검은 사설/루프백/링크로컬 주소를 차단하고 redirect마다 재검증하여 SSRF를 막는다.
+- 데이터 소스마다 시간대/통화/범위/차원/수집 시각을 보존한다. 사이트 총계와 페이지 상세를 별도 집계 경로로 두며 서로 더하지 않는다. 월 확정 정산과 일별 예상 수익도 별도다.
+- `PAGE_URL` 지원 여부는 연결 계정에서 검증한다. 정규화 원본과 canonical 매핑을 보존하고 충돌은 수동 검토한다. 미귀속 수익을 조회수 비율로 자동 배분하지 않는다.
+- GSC 검색 성과와 색인 검사는 별도 기능이다. API 수집은 후속이며 CSV 업로드 시 0·결측·미지원 상태를 구분한다.

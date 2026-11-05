@@ -1,7 +1,7 @@
 name: Build and commit documentation PDFs
 on:
   push:
-    branches: [master]
+    branches: [main, master]
     paths:
       - 'docs/**/*.md'
       - 'scripts/build_docs_pdf.py'

@@ -1,12 +1,98 @@
 # ContentFlow AI v2.0
 
-> **멀티채널 AI 블로그 콘텐츠 운영 SaaS — 기획/설계 단계**
+> **블로그 콘텐츠 대시보드 — 템플릿 선택·작성·검수·로컬 저장 구현**
 >
 > 키워드 리서치 → 출처 기반 작성 → AI 교차 검수 → 사람 승인 → 플랫폼별 발행 → 검색/광고 수익 분석
 
-**상태:** 설계 문서 v2.0 (구현/서비스 출시 전) · **최종 정리:** 2026-11-05  
-**지원 대상:** 네이버 블로그, 티스토리, WordPress, Blogger, 자체 블로그  
-**기술:** Next.js · React · TypeScript · Tailwind CSS · shadcn/ui · Supabase/PostgreSQL · n8n · OpenAI API · Claude API · Tiptap · React Flow
+**상태:** 기획 v2.1 + 로컬 프런트엔드 v0.1 (서비스 출시 전) · **최종 정리:** 2026-11-05
+
+**최초 출시 제안:** WordPress 초안 + 티스토리 수동 패키지 · **후속 대상:** Blogger, 네이버, 자체 블로그
+**기술 설계:** Next.js · React · TypeScript · Tailwind CSS · shadcn/ui · Supabase/PostgreSQL · n8n · OpenAI API · Claude API · Tiptap (React Flow는 후속)
+
+`apps/web`에 실행 가능한 로컬 대시보드가 있다. 템플릿은 사이드바 메뉴와 콘텐츠 작성 화면에서 선택한다. 서버 인증·AI 생성·CMS·광고 데이터 연결과 설치형 스킨은 후속이다. 기획 정본은 [PRD v2.1](docs/01-planning/PRD.md), 상세 실행안은 [수익화·템플릿 기획](docs/01-planning/MONETIZATION_STRATEGY.md)이다.
+
+## 진행 현황 (2026-11-05 기준)
+
+작업 표 8개 중 5개는 문서/로컬 구현 완료, 3개는 모델 확인·시각 검증·서비스 연동 대기다. 이는 서비스 출시율이 아니라 [작업 항목](tasks/README.md)의 상태다.
+
+| 영역 | 현재 상태 | 제한 사항 |
+|---|---|---|
+| 대시보드 | 개요·콘텐츠·템플릿·수익 분석·설정, 3구간 CSS | 브라우저 시각 검증 대기 |
+| 템플릿 | 10종 카드, 검색/분류, 콘텐츠 화면 선택 | 글쓰기 골격이며 스킨·AI 생성 아님 |
+| 콘텐츠 | 로컬 생성/수정/검색/삭제, JSON 백업 | 브라우저 단위 저장, 기기 동기화 없음 |
+| 검수/승인 | 실제 본문·근거 URL 형식 검사, 수동 승인 | 사실/권리 자동 검증 아님; 변경 시 승인 해제 |
+| 내보내기 | 승인된 원고 HTML escape 후 다운로드 | 외부 자동 발행·이미지 ZIP 없음 |
+| 수익 분석 | 연결 전 안내와 N/A 표시 | 실제 보고서 입력·연동 미구현 |
+| Codex 팀 | NOMAD 도구·역할 5종·프로젝트 설정 추가 | 루나-6.1 정확한 ID 대기, 비활성 상태 |
+| 서버/인증 | 설계 문서 | DB migration/RLS/API 구현 대기 |
+
+### 작업 진행률
+
+| 작업 묶음 | 완료/전체 | 판단 근거 |
+|---|---|---|
+| 기획 | 1/1 | PRD·수익화·DB·워크플로우 보강 |
+| 로컬 대시보드/편집 | 3/3 | CF-02~04 코드·테스트·빌드 |
+| NOMAD 구성 도구 | 1/1 | CF-05 네이티브 역할·초기화/검사 도구 |
+| 모델 활성화/시각 검증/백엔드 | 0/3 | CF-06~08 대기 |
+
+### 구현된 주요 항목
+
+- [x] 대시보드 메뉴와 콘텐츠 현황
+- [x] 템플릿 라이브러리 → 콘텐츠 작성 및 편집 화면 내 템플릿 변경
+- [x] 로컬 저장·검수·수동 승인·HTML 내보내기
+- [x] NOMAD Codex 팀 초기화/검사 도구와 5역할 정의
+
+### 다음 개발 단계
+
+- [ ] 부 에이전트의 정확한 모델 ID 확인 후 팀 활성화
+- [ ] 실제 브라우저에서 모바일/태블릿/데스크톱 검증
+- [ ] Supabase 인증·RLS·서버 저장, WP 초안 API, 수익 보고서 입력
+
+## 콘텐츠 바로가기
+
+| 콘텐츠 | 화면 경로 | 기획·명세 문서 | 구현 코드 |
+|---|---|---|---|
+| 대시보드 | `/` | [PRD](docs/01-planning/PRD.md) | [dashboard](apps/web/src/components/dashboard.tsx) |
+| 콘텐츠 목록 | `/content` | [PRD](docs/01-planning/PRD.md) | [content-list](apps/web/src/components/content-list.tsx) |
+| 콘텐츠 작성 | `/content/new?template=T02` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [editor](apps/web/src/components/editor.tsx) |
+| 저장 원고 편집 | `/content/{id}` | [DB](docs/03-database/DATABASE_SCHEMA.md) | [동적 라우트](apps/web/src/app/content/[id]/page.tsx) |
+| 템플릿 라이브러리 | `/templates` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [catalog](apps/web/src/components/catalog.tsx) |
+| 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
+| 설정/백업 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) |
+
+[전체 문서](docs/README.md) · [디자인 명세](DESIGN.md) · [구현 현황](tasks/NOW.md)
+
+## 연관·참고 저장소
+
+| 저장소 | 역할 |
+|---|---|
+| [nomad-agent-os](https://github.com/DevOps0906/nomad-agent-os) | Codex 네이티브 팀 역할·초기화 도구·공통 개발 규칙 |
+
+## 로컬 실행과 검증
+
+| 목적 | 명령/기준 |
+|---|---|
+| 준비 | Node.js 24, npm 11 |
+| 설치 | `npm ci` |
+| 개발 | `npm run dev` → `http://127.0.0.1:3000` |
+| 타입 검사 | `npm run typecheck` |
+| 테스트 | `npm test` — 템플릿/승인 해제/입력/안전한 export/저장 데이터 검증 |
+| 배포 빌드 | `npm run build` |
+| production 실행 | `npm start` |
+| CI | Web checks; Markdown 변경 시 PDF 문서 빌드 |
+| 검증 결과 | 타입·테스트 5개·빌드 통과; HTTP 200; 의존성 high 이상 취약점 0 |
+| 미검증 | UI 자동화 승인 시간 초과로 브라우저 시각 검증 미완료 |
+
+## Codex 멀티에이전트 구성
+
+| 구분 | 설정/상태 |
+|---|---|
+| 주 에이전트 | `gpt-6.1-sol`, 다음 세션 구성 |
+| 부 에이전트 | 요청 `루나-6.1`의 정확한 지원 ID 확인 대기; `gpt-6-luna`로 임의 대체 안 함 |
+| 역할 | 탐색·디자인·구현·테스트·리뷰, 최대 동시 부 작업 3개, 깊이 1 |
+| 파일 | [.codex/config.toml](.codex/config.toml), [.codex/CODEX_TEAM.md](.codex/CODEX_TEAM.md) |
+| 활성화 | NOMAD에서 `nomad-os codex init <프로젝트> --worker-model <확인된_ID>` |
+| 실제 실행 | 이번 작업에서 하위 에이전트 실행 없음. 모델 확인 전 비활성 |
 
 ## 1. 프로젝트 소개
 ContentFlow AI는 단순한 글 자동 생성기를 넘어, **블로그 콘텐츠를 검색 유입과 수익으로 연결하는 운영 플랫폼**이다. 하나의 키워드와 검증된 근거를 바탕으로 **채널별 특성이 다른 독립 콘텐츠 버전**을 작성하며, 사람이 승인한 결과물만 발행한다. 애드센스·애드포스트·제휴 수익과 API/제작비를 함께 분석한다.
@@ -15,7 +101,7 @@ ContentFlow AI는 단순한 글 자동 생성기를 넘어, **블로그 콘텐�
 - 키워드 조사, 제목 작성, 출처 검증, 편집 및 발행이 분산되어 있다.
 - 플랫폼별 제목/본문 패턴과 발행 인터페이스가 다르다.
 - 대량 AI 작성 시 근거 부족·중복·정책 위반 위험이 있다.
-- 글 수만 추적하고 글별 유입·순이익을 보지 못한다.
+- 글 수만 추적하고 귀속 가능한 유입·수익과 제작 원가를 함께 보지 못한다.
 
 ### 해결
 **Keyword Explorer → Title Lab → Template Builder → AI Writer → QA Center → Approval → Channel Publisher → Analytics**
@@ -33,11 +119,12 @@ ContentFlow AI는 단순한 글 자동 생성기를 넘어, **블로그 콘텐�
 |---|---|---|
 | 키워드/클러스터 | CSV 입력, 의도/우선순위, 중복 검사 | 검색량·계절성 자동 수집 |
 | 제목 생성 | 검색형/홈판형/비교형 제목 5개, 평가 | 게시 전후 제목 실험 |
-| 콘텐츠 템플릿 | 10종 템플릿·플랫폼 규칙 | 비주얼 블록 빌더 |
+| 콘텐츠 템플릿 | 정보/오류 해결/비교 3종, 표시·광고 후보 프로필 | 나머지 7종, 설치형 스킨, 비주얼 빌더 |
 | AI 콘텐츠 | OpenAI 초안, Claude 리뷰, 비용 로깅 | 모델 라우팅·다국어 |
 | 검수 | 사실/출처/권리/광고/중복 게이트 | 변경 감시·시맨틱 중복 |
-| 발행 | WP/Blogger API, 티스토리/네이버 수동 패키지 | 자체 CMS/예약 |
-| 분석 | Search Console/GA4 연결 구조 | 광고 매출·기여/ROI |
+| 발행 | WP API 초안, 티스토리 수동 패키지, 공개 URL 확인 | Blogger API, 네이버, 자체 CMS/예약 |
+| 광고 준비 | 사이트/광고 상태·근거·다음 작업 | 설정 자동 적용/복구 |
+| 분석 | 검색/광고 CSV, 비용, 귀속/정산 구분, 개선 큐 | OAuth/API 동기화, 효과 실험 |
 | 운영 | 조직/블로그/권한 | 결제, 크레딧, 대행사 |
 
 ## 4. 콘텐츠 전략
@@ -48,6 +135,8 @@ ContentFlow AI는 단순한 글 자동 생성기를 넘어, **블로그 콘텐�
 - **GEO**: 독창적 자료, 엔티티의 명확한 설명, 출처와 갱신일. 노출 보장은 불가.
 
 ## 5. 시스템 흐름
+다음은 후속 채널까지 포함한 목표 구조다. 최초 출시는 WordPress 초안과 티스토리 패키지로 제한한다.
+
 ```mermaid
 flowchart LR
  K[키워드 CSV/리서치] --> B[브리프/제목/템플릿]
@@ -71,20 +160,21 @@ flowchart LR
 | 분류 | Markdown 원본 | PDF 배포본 |
 |---|---|---|
 | 제품 기획 | [PRD](docs/01-planning/PRD.md) | [PRD.pdf](docs/01-planning/PRD.pdf) |
+| 수익화 실행 기획 | [MONETIZATION_STRATEGY](docs/01-planning/MONETIZATION_STRATEGY.md) | 다음 문서 빌드에서 생성 |
 | 기술 설계 | [SYSTEM_ARCHITECTURE](docs/02-architecture/SYSTEM_ARCHITECTURE.md) | [PDF](docs/02-architecture/SYSTEM_ARCHITECTURE.pdf) |
 | DB | [DATABASE_SCHEMA](docs/03-database/DATABASE_SCHEMA.md) | [PDF](docs/03-database/DATABASE_SCHEMA.pdf) |
 | 콘텐츠 | [CONTENT_TEMPLATES](docs/04-content/CONTENT_TEMPLATES.md) | [PDF](docs/04-content/CONTENT_TEMPLATES.pdf) |
 | 개발 에이전트 | [AGENTS](docs/05-agents/AGENTS.md) | [PDF](docs/05-agents/AGENTS.pdf) |
 | 자동화 | [WORKFLOWS](docs/06-workflows/WORKFLOWS.md) | [PDF](docs/06-workflows/WORKFLOWS.pdf) |
 
-> PDF는 아래 GitHub Actions 문서 빌드로 생성되며, 워크플로 실행 전에는 링크가 존재하지 않을 수 있습니다.
+> Markdown이 최신 원본이다. 기존 PDF에는 v2.1 보강이 아직 반영되지 않았으며, main/master 반영 후 GitHub Actions 문서 빌드에서 재생성한다.
 
 ## 7. 개발 순서 및 Done 기준
 1. **Foundation:** Next.js 로그인·Supabase 마이그레이션·RLS 교차 테넌트 차단 테스트.
-2. **Content MVP:** CSV 30개 입력, 10종 템플릿, 제목/원고/QA, 버전 기록.
-3. **Publisher:** 사람 승인, WordPress/Blogger 초안 API, 네이버/티스토리 ZIP/HTML 패키지.
-4. **Analytics:** 검색 노출·클릭·수익 지표(실측/추정 구분).
-5. **SaaS:** 결제·크레딧·팀 역할·고객별 과금/비용 감시.
+2. **Content MVP:** CSV 입력, T01/T02/T04, 제목/원고/QA, 표시·광고 후보 프로필, 승인 버전 기록.
+3. **Publisher:** WordPress 초안 API, 티스토리 HTML/이미지 패키지, 사람이 게시 후 공개 URL 확인.
+4. **Analytics:** 출처별 보고서 CSV·원가·URL 매핑·개선 큐. 관측 예상 수익/확정 정산/모델 가정 분리.
+5. **Pilot → SaaS:** 3~5명 파일럿 제안, 편집 시간·반복 사용 검증 후 채널/API/결제 확장.
 
 `docs/` 문서는 제품 의사결정의 기준이며, 실행 코드/비밀키/원본 유료 PDF는 포함하지 않는다.
 

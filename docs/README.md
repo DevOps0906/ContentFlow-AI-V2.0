@@ -1,10 +1,11 @@
 # ContentFlow AI — 문서 센터
 
-문서 원본은 Markdown이며, PDF는 읽기/검토용으로 분류합니다.
+문서 원본은 Markdown이며, PDF는 읽기/검토용으로 분류합니다. v2.1 보강의 시작점은 [수익화·템플릿 실행 기획](01-planning/MONETIZATION_STRATEGY.md)과 [PRD](01-planning/PRD.md)입니다. 기존 PDF는 다음 CI 빌드 전까지 v2.0 내용입니다.
 
 | 폴더 | 분류 | 원본 |
 |---|---|---|
 | 01-planning | 제품 전략 및 PRD | PRD.md |
+| 01-planning | 분석·수익화·템플릿·파일럿 실행안 | [MONETIZATION_STRATEGY.md](01-planning/MONETIZATION_STRATEGY.md) |
 | 02-architecture | 서비스 아키텍처 | SYSTEM_ARCHITECTURE.md |
 | 03-database | Supabase 데이터 모델 | DATABASE_SCHEMA.md |
 | 04-content | 플랫폼별 글쓰기 템플릿 | CONTENT_TEMPLATES.md |
