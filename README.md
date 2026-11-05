@@ -24,7 +24,8 @@
 | 내보내기 | 승인된 원고 HTML escape 후 다운로드 | 외부 자동 발행·이미지 ZIP 없음 |
 | 수익 분석 | 연결 전 안내와 N/A 표시 | 실제 보고서 입력·연동 미구현 |
 | Codex 팀 | NOMAD 도구·역할 5종·프로젝트 설정 추가 | 루나-6.1 정확한 ID 대기, 비활성 상태 |
-| 서버/인증 | 설계 문서 | DB migration/RLS/API 구현 대기 |
+| DB/RLS | `supabase/migrations/0001_core_tenancy.sql` + RLS 테스트 (`supabase/tests/run.ps1`, Docker Postgres에서 통과) | 실제 Supabase 프로젝트 미연결·미적용, 앱 연동 없음 |
+| 서버/인증 | 설계 문서 | 인증·API 구현 대기 |
 
 ### 작업 진행률
 
