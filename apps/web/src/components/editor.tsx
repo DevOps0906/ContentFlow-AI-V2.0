@@ -127,7 +127,7 @@ function EditorForm({
   templateId: string;
 }) {
   const router = useRouter();
-  const { save, error } = useWorkspace();
+  const { save, sendWordpress, error } = useWorkspace();
   const [form, setForm] = useState<Article>(
     () =>
       initial ?? {
@@ -148,7 +148,7 @@ function EditorForm({
   const [preview, setPreview] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState<"ai" | "wp" | null>(null);
+  const [busy, setBusy] = useState<"ai" | "wp" | "save" | null>(null);
   const [aiOverwrite, setAiOverwrite] = useState(false);
   const integrations = useIntegrations();
   const aiReady = !!integrations?.ai.configured;
@@ -259,70 +259,56 @@ function EditorForm({
       setBusy(null);
     }
   }
-  /** export_ready/publish_failed → publishing → draft_created | publish_failed. */
+  /** Runs a store/server call and reports its failure in the form. */
+  function fail(e: unknown, fallback: string) {
+    setErrors([e instanceof Error ? e.message : fallback]);
+  }
+  function adopt(stored: Article) {
+    setSaved(stored);
+    setForm(stored);
+  }
+  /** export_ready/publish_failed → publishing → draft_created | publish_failed (decided by the server in account mode). */
   async function sendToWordpress() {
-    if (dirty || !isApprovedContent(form)) return;
-    let current: Article;
-    try {
-      current = { ...form, status: transition(form.status, "publishing"), updatedAt: new Date().toISOString() };
-    } catch (e) {
-      setErrors([e instanceof Error ? e.message : "상태를 바꿀 수 없습니다."]);
-      return;
-    }
-    // Persist "publishing" first so a closed tab can not silently lose an in-flight send.
-    if (!save(current)) return;
-    setSaved(current);
-    setForm(current);
+    if (dirty || !isApprovedContent(form) || busy) return;
     setBusy("wp");
     setErrors([]);
     setMessage("");
     try {
-      const r = await postJson<{ postId: number; url: string; created: boolean }>(
-        "/api/wordpress/draft",
-        current,
+      const r = await sendWordpress(form);
+      adopt(r.article);
+      setMessage(
+        `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
       );
-      const done: Article = {
-        ...current,
-        status: transition("publishing", "draft_created"),
-        remote: { postId: r.postId, url: r.url, syncedAt: new Date().toISOString() },
-        updatedAt: new Date().toISOString(),
-      };
-      if (save(done)) {
-        setSaved(done);
-        setForm(done);
-        setMessage(
-          `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
-        );
-      }
     } catch (e) {
-      const failed: Article = {
-        ...current,
-        status: transition("publishing", "publish_failed"),
-        updatedAt: new Date().toISOString(),
-      };
-      if (save(failed)) {
-        setSaved(failed);
-        setForm(failed);
-      }
-      setErrors([e instanceof Error ? e.message : "WordPress 전송에 실패했습니다."]);
+      fail(e, "WordPress 전송에 실패했습니다.");
+      // The failed state was stored by the server/provider; show it.
+      const stored = (e as { article?: Article }).article;
+      if (stored) adopt(stored);
     } finally {
       setBusy(null);
     }
   }
-  function markPublishFailed() {
-    const failed: Article = {
-      ...form,
-      status: transition(form.status, "publish_failed"),
-      updatedAt: new Date().toISOString(),
-    };
-    if (save(failed)) {
-      setSaved(failed);
-      setForm(failed);
+  async function markPublishFailed() {
+    if (busy) return;
+    setBusy("wp");
+    try {
+      adopt(
+        await save({
+          ...form,
+          status: transition(form.status, "publish_failed"),
+          updatedAt: new Date().toISOString(),
+        }),
+      );
       setMessage("전송 실패로 표시했어요. WordPress에 글이 생겼는지 확인한 뒤 다시 시도해주세요.");
+    } catch (e) {
+      fail(e, "상태를 바꿀 수 없습니다.");
+    } finally {
+      setBusy(null);
     }
   }
   /** Saves the manuscript and, if given, moves it to `target` via the lifecycle rules. */
-  function persist(target?: LifecycleState) {
+  async function persist(target?: LifecycleState) {
+    if (busy) return;
     let next = saveRevision(form, saved);
     let issues: string[] = [];
     if (target) {
@@ -344,23 +330,29 @@ function EditorForm({
         }
         next = { ...next, status };
       } catch (e) {
-        setErrors([e instanceof Error ? e.message : "상태를 바꿀 수 없습니다."]);
+        fail(e, "상태를 바꿀 수 없습니다.");
         return;
       }
     }
-    if (save(next)) {
-      if (target === "export_ready" && next.status === "export_ready")
-        download(`contentflow-${next.id}.html`, exportHtml(next));
-      setSaved(next);
-      setForm(next);
+    setBusy("save");
+    try {
+      // In account mode the server and database decide whether this state is legal.
+      const stored = await save(next);
+      if (target === "export_ready" && stored.status === "export_ready")
+        download(`contentflow-${stored.id}.html`, exportHtml(stored));
+      adopt(stored);
       setErrors(issues);
       setConfirmed(false);
       setMessage(
-        !target && saved && next.status !== saved.status
+        !target && saved && stored.status !== saved.status
           ? "내용이 바뀌어 기존 검수·승인이 해제됐어요. 다시 검수해주세요."
-          : savedMessage(next.status, target),
+          : savedMessage(stored.status, target),
       );
-      if (!initial) router.replace(`/content/${next.id}`);
+      if (!initial) router.replace(`/content/${stored.id}`);
+    } catch (e) {
+      fail(e, "저장하지 못했습니다.");
+    } finally {
+      setBusy(null);
     }
   }
   return (

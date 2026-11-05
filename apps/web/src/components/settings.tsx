@@ -1,13 +1,27 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, ExternalLink, Trash2 } from "lucide-react";
 import { useWorkspace, download } from "./workspace";
-import { LEGACY_STORAGE_KEY, STORAGE_KEY } from "@/lib/content";
+import { LEGACY_STORAGE_KEY, loadArticles, STORAGE_KEY } from "@/lib/content";
 import { PageHeading } from "./shell";
 import { useIntegrations } from "./integrations";
 import { ConfirmDialog } from "./dialog";
 export function Settings() {
-  const { articles, clear } = useWorkspace();
+  const { articles, clear, mode, email, importLocal } = useWorkspace();
+  const [localCount, setLocalCount] = useState(0);
+  useEffect(() => {
+    if (mode !== "account") return;
+    try {
+      setLocalCount(
+        loadArticles(
+          localStorage.getItem(STORAGE_KEY),
+          localStorage.getItem(LEGACY_STORAGE_KEY),
+        ).length,
+      );
+    } catch {
+      setLocalCount(0);
+    }
+  }, [mode]);
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState("");
   const integrations = useIntegrations();
@@ -22,7 +36,11 @@ export function Settings() {
         <h2>나의 블로그 스튜디오</h2>
         <dl className="detail-list">
           <dt>운영 모드</dt>
-          <dd>로컬 · 이 브라우저에서만 저장</dd>
+          <dd>
+            {mode === "account"
+              ? `계정 ${email ?? ""} · 데이터베이스에 저장`
+              : "로컬 · 이 브라우저에서만 저장"}
+          </dd>
           <dt>콘텐츠</dt>
           <dd>{articles.length}개</dd>
           <dt>글쓰기 템플릿</dt>
@@ -47,11 +65,17 @@ export function Settings() {
           <dd>
             {!integrations
               ? "확인 중…"
-              : { not_configured: "미설정", reachable: "서버 응답 확인 · 앱 데이터 연동은 아직 없음", unreachable: "설정됨 · 응답 없음" }[
+              : { not_configured: "미설정", reachable: mode === "account" ? "연결됨 · 로그인·콘텐츠 저장에 사용 중" : "서버 응답 확인", unreachable: "설정됨 · 응답 없음" }[
                   integrations.supabase.status
                 ]}
           </dd>
-          <dt>로그인 / 광고 API</dt>
+          <dt>로그인</dt>
+          <dd>
+            {mode === "account"
+              ? `로그인됨 · ${email ?? ""}`
+              : "미설정 · SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY 필요"}
+          </dd>
+          <dt>광고 API</dt>
           <dd>미연결</dd>
         </dl>
         <p>
@@ -72,9 +96,11 @@ export function Settings() {
             onClick={() => {
               try {
                 const raw =
-                  localStorage.getItem(STORAGE_KEY) ??
-                  localStorage.getItem(LEGACY_STORAGE_KEY) ??
-                  "[]";
+                  mode === "account"
+                    ? JSON.stringify(articles, null, 2)
+                    : (localStorage.getItem(STORAGE_KEY) ??
+                      localStorage.getItem(LEGACY_STORAGE_KEY) ??
+                      "[]");
                 download("contentflow-backup.json", raw, "application/json");
                 setMessage("브라우저 원본 데이터를 백업했어요.");
               } catch {
@@ -85,10 +111,29 @@ export function Settings() {
             <Download size={16} />
             JSON 백업
           </button>
-          <button className="button danger" onClick={() => setConfirm(true)}>
-            <Trash2 size={15} />
-            로컬 데이터 초기화
-          </button>
+          {mode !== "account" && (
+            <button className="button danger" onClick={() => setConfirm(true)}>
+              <Trash2 size={15} />
+              로컬 데이터 초기화
+            </button>
+          )}
+          {mode === "account" && localCount > 0 && (
+            <button
+              className="button secondary"
+              onClick={async () => {
+                try {
+                  const r = await importLocal();
+                  setMessage(
+                    `이 브라우저의 콘텐츠 ${r.imported}개를 계정으로 가져왔어요(건너뜀 ${r.skipped}, 형식 오류 ${r.invalid}, 실패 ${r.failed}). 검수·승인 상태는 승인 기록이 없어 초안 작성으로 가져왔으니 다시 승인해주세요.`,
+                  );
+                } catch (e) {
+                  setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
+                }
+              }}
+            >
+              브라우저 콘텐츠 {localCount}개 가져오기
+            </button>
+          )}
         </div>
         {message && (
           <p role="status" className="metric-note">
@@ -100,8 +145,9 @@ export function Settings() {
         <h2>프로젝트 안내</h2>
         <p>
           템플릿 선택·원고 작성·AI 초안(키 설정 시)·수동 검수·HTML 내보내기·
-          WordPress 초안 전송(설정 시)을 제공합니다. 서버 저장, 사용자 인증,
-          광고 데이터 수집은 후속 단계입니다. 연동 키는 서버 환경 변수로만
+          WordPress 초안 전송(설정 시)을 제공합니다. Supabase를 설정하면 로그인과
+          데이터베이스 저장을 쓰고, 설정하지 않으면 이 브라우저에만 저장합니다.
+          광고 데이터 수집과 팀 초대는 후속 단계입니다. 연동 키는 서버 환경 변수로만
           설정하며 브라우저에 저장되지 않습니다.
         </p>
         <a

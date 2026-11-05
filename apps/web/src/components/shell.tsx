@@ -11,6 +11,7 @@ import {
   CircleHelp,
   FileText,
   LayoutDashboard,
+  LogOut,
   LayoutTemplate,
   Menu,
   Plus,
@@ -32,9 +33,12 @@ const nav = [
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { articles, error } = useWorkspace();
+  const { articles, error, mode, email, logout } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // The login page has its own bare layout: no sidebar for visitors who are not signed in.
+  if (path === "/login") return <>{children}</>;
+  const initial = (email ?? "N").charAt(0).toUpperCase();
   const current =
     nav.find((n) => (n.href === "/" ? path === "/" : path.startsWith(n.href)))
       ?.label ?? "설정";
@@ -115,12 +119,23 @@ export function Shell({ children }: { children: ReactNode }) {
             <ArrowUpRight size={14} />
           </a>
           <div className="user-profile">
-            <span className="user-avatar">N</span>
+            <span className="user-avatar">{initial}</span>
             <span>
               <b>나의 블로그 스튜디오</b>
-              <small>로컬 워크스페이스</small>
+              <small>{mode === "account" ? (email ?? "계정") : "로컬 워크스페이스"}</small>
             </span>
-            <span className="online-dot" />
+            {mode === "account" ? (
+              <button
+                className="icon-button"
+                onClick={logout}
+                aria-label="로그아웃"
+                title="로그아웃"
+              >
+                <LogOut size={16} />
+              </button>
+            ) : (
+              <span className="online-dot" />
+            )}
           </div>
         </div>
       </aside>
@@ -157,9 +172,9 @@ export function Shell({ children }: { children: ReactNode }) {
             </form>
             <span className="local-badge">
               <span />
-              로컬 모드
+              {mode === "account" ? "계정 · DB 저장" : "로컬 모드"}
             </span>
-            <span className="top-avatar">N</span>
+            <span className="top-avatar">{initial}</span>
           </div>
         </header>
         <main id="main-content">
@@ -173,8 +188,8 @@ export function Shell({ children }: { children: ReactNode }) {
         <footer>
           <span>작은 아이디어를, 오래 읽히는 콘텐츠로.</span>
           <span>
-            ContentFlow AI <span className="footer-dot">·</span> 로컬에
-            저장됩니다
+            ContentFlow AI <span className="footer-dot">·</span>{" "}
+            {mode === "account" ? "계정에 저장됩니다" : "로컬에 저장됩니다"}
           </span>
         </footer>
       </div>

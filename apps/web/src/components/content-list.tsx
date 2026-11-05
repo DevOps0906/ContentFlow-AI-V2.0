@@ -9,10 +9,11 @@ import { useWorkspace } from "./workspace";
 import { ConfirmDialog } from "./dialog";
 import { StatusBadge } from "./status-badge";
 export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
-  const { articles, ready, remove } = useWorkspace();
+  const { articles, ready, remove, mode } = useWorkspace();
   const [query, setQuery] = useState(initialQuery);
   const [status, setStatus] = useState<Phase | "all">("all");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const filtered = articles.filter(
     (a) =>
       (status === "all" || phaseOf(a.status) === status) &&
@@ -56,6 +57,11 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
           />
         </label>
       </div>
+      {deleteError && (
+        <div role="alert" className="error-banner">
+          {deleteError}
+        </div>
+      )}
       <section className="panel">
         {!ready ? (
           <div className="loading-state">콘텐츠를 불러오고 있어요.</div>
@@ -145,18 +151,28 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
         )}
       </section>
       <p className="metric-note">
-        콘텐츠는 현재 브라우저에만 저장됩니다. 승인된 원고는 HTML로 백업할 수
-        있습니다.
+        {mode === "account"
+          ? "콘텐츠는 내 계정(데이터베이스)에 저장됩니다. 승인된 원고는 HTML로 내려받을 수 있습니다."
+          : "콘텐츠는 현재 브라우저에만 저장됩니다. 승인된 원고는 HTML로 백업할 수 있습니다."}
       </p>
       {deleting && (
         <ConfirmDialog
           title="이 콘텐츠를 삭제할까요?"
-          description="브라우저에 저장된 원고가 삭제됩니다. 내보내지 않은 내용은 복구할 수 없습니다."
+          description={
+            mode === "account"
+              ? "계정에 저장된 원고가 삭제됩니다. 승인 기록과 버전 스냅샷은 감사를 위해 남을 수 있지만 원고는 복구할 수 없습니다."
+              : "브라우저에 저장된 원고가 삭제됩니다. 내보내지 않은 내용은 복구할 수 없습니다."
+          }
           confirmLabel="삭제하기"
           danger
           onCancel={() => setDeleting(null)}
-          onConfirm={() => {
-            if (remove(deleting)) setDeleting(null);
+          onConfirm={async () => {
+            try {
+              if (await remove(deleting)) setDeleting(null);
+            } catch (e) {
+              setDeleting(null);
+              setDeleteError(e instanceof Error ? e.message : "삭제하지 못했습니다.");
+            }
           }}
         />
       )}

@@ -10,16 +10,18 @@
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.119.0",
+    "lucide-react": "1.68.0",
     "next": "16.4.5",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "lucide-react": "1.68.0"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "tsx": "^4.20.0"
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3"
   }
 }

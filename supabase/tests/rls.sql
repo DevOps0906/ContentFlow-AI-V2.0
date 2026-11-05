@@ -9,6 +9,7 @@ create role authenticated nologin;
 grant usage on schema public, auth to authenticated;
 
 \ir ../migrations/0001_core_tenancy.sql
+\ir ../migrations/0002_article_content_and_state_rules.sql
 
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant usage on all sequences in schema public to authenticated;
@@ -137,4 +138,80 @@ select expect_fail($$update article_versions set markdown = 'tampered'$$, 'versi
 select expect_fail($$delete from approvals$$, 'approvals append-only even for RLS bypass');
 insert into audit_logs (workspace_id, action) values ('10000000-0000-0000-0000-00000000000a', 'test');
 select expect_fail($$delete from audit_logs$$, 'audit logs append-only even for RLS bypass');
+-- ================= 0002: server-enforced lifecycle =================
+-- Valid content for review: title, real body, http(s) source, no AI placeholders.
+select as_user('00000000-0000-0000-0000-0000000000a1');
+insert into articles (id, workspace_id, owner_id, state, title, body, source_url) values
+  ('30000000-0000-0000-0000-0000000000a2', '10000000-0000-0000-0000-00000000000a',
+   '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T', E'## 해결\n본문 내용', 'https://example.com/x');
+
+select expect_fail($$insert into articles (workspace_id, owner_id, state)
+  values ('10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1', 'approved')$$,
+  'new article can not start approved');
+select expect_fail($$insert into articles (workspace_id, owner_id, remote)
+  values ('10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1', '{"postId":1,"url":"x"}')$$,
+  'new article can not carry remote info');
+select expect_fail($$update articles set state = 'approved' where id = '30000000-0000-0000-0000-0000000000a2'$$,
+  'drafting → approved directly is blocked');
+select expect_fail($$update articles set state = 'published' where id = '30000000-0000-0000-0000-0000000000a2'$$,
+  'drafting → published directly is blocked');
+select expect_fail($$update articles set state = 'approval_pending', body = E'## 해결\n본문 [확인 필요]'
+  where id = '30000000-0000-0000-0000-0000000000a2'$$, 'AI placeholder blocks review');
+select expect_fail($$update articles set state = 'approval_pending', source_url = 'javascript:alert(1)'
+  where id = '30000000-0000-0000-0000-0000000000a2'$$, 'unsafe source URL blocks review');
+select expect_fail($$update articles set owner_id = '00000000-0000-0000-0000-0000000000a2'
+  where id = '30000000-0000-0000-0000-0000000000a2'$$, 'owner can not be reassigned');
+
+-- review request decided at once: drafting → approval_pending in one save
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000000a2' and state = 'approval_pending'$$, 1, 'drafting → approval_pending');
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000000a2'$$, 0, 'no snapshot before approval');
+select expect_fail($$update articles set state = 'approved', body = 'changed after review'
+  where id = '30000000-0000-0000-0000-0000000000a2'$$, 'editing and approving in one save is blocked');
+
+update articles set state = 'approved' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000000a2' and version = 1 and length(content_hash) = 64$$, 1, 'approval writes snapshot v1 with sha256');
+select expect_count($$select count(*) from approvals a join article_versions v on v.id = a.article_version_id
+  where v.article_id = '30000000-0000-0000-0000-0000000000a2' and a.snapshot_hash = v.content_hash$$, 1, 'approval row matches snapshot hash');
+select expect_count($$select count(*) from audit_logs where action = 'article.approved'$$, 1, 'approval is audited');
+
+-- editing approved content keeps it approved only if the state is reset
+select expect_fail($$update articles set body = E'## 해결\n수정한 본문' where id = '30000000-0000-0000-0000-0000000000a2'$$,
+  'content edit while staying approved is blocked');
+update articles set body = E'## 해결\n수정한 본문', state = 'drafting' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000000a2'$$, 1, 'old snapshot is preserved');
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000000a2';
+update articles set state = 'approved' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000000a2' and version = 2$$, 1, 're-approval writes snapshot v2');
+
+-- delivery chain
+update articles set state = 'export_ready' where id = '30000000-0000-0000-0000-0000000000a2';
+update articles set state = 'publishing' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_fail($$update articles set state = 'published' where id = '30000000-0000-0000-0000-0000000000a2'$$,
+  'publishing → published needs an operator confirmation step');
+update articles set state = 'draft_created', remote = '{"postId":7,"url":"https://x/?p=7"}'
+  where id = '30000000-0000-0000-0000-0000000000a2';
+update articles set state = 'published' where id = '30000000-0000-0000-0000-0000000000a2';
+-- editing published content resets it, remote info stays for the retry
+update articles set title = 'T2', state = 'drafting' where id = '30000000-0000-0000-0000-0000000000a2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000000a2' and remote is not null$$, 1, 'remote draft info survives edits');
+select expect_fail($$update articles set remote = '{"foo":1}' where id = '30000000-0000-0000-0000-0000000000a2'$$, 'malformed remote rejected');
+
+-- an editor can drive an article to approval_pending but can not approve it
+select as_user('00000000-0000-0000-0000-0000000000a2');
+insert into articles (id, workspace_id, owner_id, state, title, body, source_url) values
+  ('30000000-0000-0000-0000-0000000000a3', '10000000-0000-0000-0000-00000000000a',
+   '00000000-0000-0000-0000-0000000000a2', 'drafting', 'T', E'## 해결\n본문 내용', 'https://example.com/x');
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000000a3';
+select expect_fail($$update articles set state = 'approved' where id = '30000000-0000-0000-0000-0000000000a3'$$,
+  'editor can not approve (reviewer/admin/owner only)');
+
+-- a reviewer can approve but never create or edit content
+select as_user('00000000-0000-0000-0000-0000000000a4');
+update articles set title = 'x' where id = '30000000-0000-0000-0000-0000000000a3';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000000a3' and title = 'T'$$, 1, 'reviewer can not edit content (RLS hides the row)');
+
+-- the lifecycle function itself agrees with the table
+reset role;
+select expect_count($$select count(*) from unnest(enum_range(null::article_state)) s where article_transition_allowed(s, s)$$, 0, 'no state transitions to itself');
 select 'ALL RLS CHECKS PASSED' as result;

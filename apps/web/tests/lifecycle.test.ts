@@ -103,3 +103,15 @@ test("every state belongs to exactly one of the 5 phases", () => {
     [3, 4, 2, 5, 2],
   );
 });
+
+test("DB transition table (migration 0002) is identical to lifecycle.ts", () => {
+  const sql = readFileSync(
+    new URL("../../../supabase/migrations/0002_article_content_and_state_rules.sql", import.meta.url),
+    "utf8",
+  );
+  const body = sql.match(/create function article_transition_allowed[\s\S]*?\$\$;/)?.[0];
+  assert.ok(body, "article_transition_allowed not found");
+  const db = [...body.matchAll(/\('([a-z_]+)', '([a-z_]+)'\)/g)].map((m) => `${m[1]}>${m[2]}`).sort();
+  const app = lifecycleStates.flatMap((f) => nextStates(f).map((t) => `${f}>${t}`)).sort();
+  assert.deepEqual(db, app);
+});

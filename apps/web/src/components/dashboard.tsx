@@ -22,7 +22,7 @@ import { TemplateCard } from "./template-card";
 import { StatusBadge } from "./status-badge";
 
 export function Dashboard() {
-  const { articles, ready } = useWorkspace();
+  const { articles, ready, mode } = useWorkspace();
   const approved = articles.filter(isApprovedContent).length;
   const reviewing = articles.filter((a) =>
     ["qa_pending", "approval_pending"].includes(a.status),
@@ -108,7 +108,7 @@ export function Dashboard() {
           title="전체 콘텐츠"
           value={ready ? String(articles.length) : "—"}
           unit="개"
-          note="이 브라우저에 저장한 콘텐츠"
+          note={mode === "account" ? "내 계정에 저장한 콘텐츠" : "이 브라우저에 저장한 콘텐츠"}
           icon={<FileText size={19} />}
           color="blue"
         />
@@ -215,7 +215,7 @@ export function Dashboard() {
           <div className="note-box">
             <span className="online-dot" />
             <p>
-              지금은 로컬 작업 공간입니다.
+              {mode === "account" ? "계정에 저장되는 작업 공간입니다." : "지금은 로컬 작업 공간입니다."}
               <br />
               실제 블로그 발행은 직접 진행해주세요.
             </p>

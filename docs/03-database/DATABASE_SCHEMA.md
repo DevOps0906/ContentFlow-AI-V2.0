@@ -45,7 +45,9 @@ erDiagram
 | agent_runs | id, workspace_id, task, model, tokens_in, tokens_out, cost_estimate, status | 모델별 계량 |
 | audit_logs | id, workspace_id, actor_id, action, payload, created_at | 보안 감사 |
 
-> **적용 상태:** supabase/migrations/0001_core_tenancy.sql은 로컬 Supabase에 적용되어 있고 8개 테이블에 RLS가 켜져 있다. 앱은 아직 이 DB를 쓰지 않으며(브라우저 저장), 클라우드 프로젝트는 없다. 앱의 lifecycle.ts는 rticle_state enum과 일치 테스트로 묶여 있다.
+> **적용 상태:** `0001_core_tenancy.sql`(코어·RLS)과 `0002_article_content_and_state_rules.sql`이 로컬 Supabase에 적용되어 있고 8개 테이블에 RLS가 켜져 있다. 앱은 로그인 시 이 DB에 글을 저장한다. 클라우드 프로젝트는 없다.
+>
+> **0002 요약:** `articles`에 작업본 컬럼(title, keyword, template_id, platform, body, source_url, remote)을 추가하고, `enforce_article_rules` 트리거로 (1) 신규 글은 기획 단계에서만 시작, (2) 상태 전이는 `article_transition_allowed` 표에 있는 것만 허용(앱 `lifecycle.ts`와 일치 테스트로 묶음), (3) 내용을 고치면 승인·게시 상태가 `drafting`으로 복귀하지 않는 저장은 거부, (4) 검수·승인 이후 상태는 제목·본문·http(s) 근거·AI 표시 해소를 요구, (5) `approved` 전환 시 owner/admin/reviewer만 가능하며 버전 스냅샷·승인·감사 로그를 같은 트랜잭션에 기록, (6) workspace·owner 변경 금지. 테스트: `supabase/tests/rls.sql`.
 
 ## 3. 주요 상태 값
 Article: idea → researching → briefing → drafting → qa_pending → needs_revision → approval_pending → approved → export_ready → publishing → draft_created → published → monitoring → update_due. 수동 경로는 export_ready → manual_pending → published이며 publishing 실패 시 publish_failed에서 명시적으로 재시도한다.

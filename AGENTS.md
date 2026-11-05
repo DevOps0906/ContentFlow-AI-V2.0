@@ -9,7 +9,9 @@
 - 제품 정본: `docs/01-planning/PRD.md`, `docs/01-planning/MONETIZATION_STRATEGY.md`.
 - 구현은 `apps/web`: Next.js 16 App Router, React 19, TypeScript, CSS 토큰, lucide-react.
 - 명령: `npm run dev`, `npm run typecheck`, `npm test`, `npm run build`.
-- 로컬 저장 기반이다. 서버 인증·CMS·AI·광고 API가 연결되었다고 표시하지 않는다.
+- Supabase 미설정 시 브라우저 저장(로컬 모드), 설정 시 이메일 로그인 + DB 저장(계정 모드)이다. 연결되지 않은 AI·CMS·광고 API를 연결되었다고 표시하지 않는다.
+- 상태 규칙의 최종 강제는 DB 트리거(`supabase/migrations/0002_*`)다. `lifecycle.ts`를 바꾸면 SQL 전이표도 같이 바꾸고(일치 테스트가 있다) `supabase/tests/run.ps1`을 실행한다.
+- 브라우저는 Supabase와 직접 통신하지 않는다. service role 키를 앱에 넣지 않는다.
 - 원고 수정은 승인을 해제한다. 본문/근거 URL 없는 승인, 승인 전 HTML export를 차단한다.
 - 미리보기는 React 텍스트, export는 HTML escape를 사용한다. 임의 script를 실행하지 않는다.
 - 실제 수익 데이터가 없으면 N/A로 표시한다.

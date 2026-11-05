@@ -57,7 +57,9 @@ verify(result): VerifiedResult
 ## 7. 배포
 웹: Vercel 또는 동일 Next.js 호스트; DB/Storage: Supabase; n8n/worker: 별도 Docker 기반 서비스. 웹 요청 안에서 장시간 모델 작업 실행 금지. 작업 큐/상태/재실행으로 관리.
 
-**현재 구현(2026-11-06):** 웹은 루트 Dockerfile(Next standalone, non-root)과 docker-compose.yml(읽기 전용 FS, 127.0.0.1 바인딩)로 실행한다. DB는
+**현재 구현(2026-11-06):** 웹은 루트 `Dockerfile`(Next standalone, non-root)과 `docker-compose.yml`(읽기 전용 FS, 127.0.0.1 바인딩)로 실행한다. DB는 `npx supabase start`의 로컬 스택(포트 60320번대)이며 마이그레이션 0001·0002가 적용돼 있다. AI 초안(`/api/ai/generate`, 60초 제한)과 WordPress 초안(`/api/wordpress/draft`)은 웹 API 라우트에서 동기 호출하며, 키는 서버 환경 변수로만 읽는다.
+
+**인증·저장(2026-11-06):** 브라우저는 Supabase와 직접 통신하지 않고 앱의 API 라우트만 호출한다(Supabase URL·키가 클라이언트로 나가지 않음). 로그인은 Supabase Auth 이메일/비밀번호이고 세션은 httpOnly 쿠키다. `proxy.ts`가 세션을 갱신하고 비로그인 접근을 `/login`으로 보내며, 각 API 라우트는 `getUser()`로 호출자를 다시 확인한다. DB 접근은 사용자 JWT(RLS 적용)로 하고 service role 키는 쓰지 않는다. 상태 규칙은 앱 코드가 아니라 DB 트리거(`enforce_article_rules`)가 최종 강제한다: 허용 전이만 통과, 내용 수정 시 승인 해제, 승인 시 `article_versions` 스냅샷(sha256)·`approvals`·`audit_logs` 기록, 승인은 owner/admin/reviewer만. WordPress 전송은 글 ID만 받아 DB 상태를 기준으로 하고 `publishing`을 조건부 갱신으로 선점해 중복 전송을 막는다. Supabase 미설정 시에는 로컬(브라우저 저장) 모드로 동작한다. 로그인·가입 시도 제한은 프로세스 메모리 기반이라 다중 인스턴스에서는 공유 저장소가 필요하다. 큐·n8n은 미구현이다.
 px supabase start의 로컬 스택(포트 60320번대)이며 마이그레이션 0001이 적용돼 있다. AI 초안(/api/ai/generate, 60초 제한)과 WordPress 초안(/api/wordpress/draft)은 웹 API 라우트에서 동기 호출하며, 키는 서버 환경 변수로만 읽는다. 인증이 없으므로 같은 출처 검사와 호출 제한만 적용하고 외부 공개를 금지한다. 큐·n8n·승인 스냅샷은 미구현이다.
 
 ## 8. 운영 성능 기준
