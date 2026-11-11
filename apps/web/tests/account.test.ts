@@ -60,8 +60,8 @@ test("supabase is only configured when both URL and key are present", () => {
   assert.equal(supabaseEnv({} as NodeJS.ProcessEnv), null);
   assert.equal(supabaseEnv({ SUPABASE_URL: "http://x" } as unknown as NodeJS.ProcessEnv), null);
   assert.deepEqual(
-    supabaseEnv({ SUPABASE_URL: " http://x ", SUPABASE_PUBLISHABLE_KEY: "k" } as unknown as NodeJS.ProcessEnv),
-    { url: "http://x", key: "k" },
+    supabaseEnv({ SUPABASE_URL: " http://localhost:54321 ", SUPABASE_PUBLISHABLE_KEY: "k" } as unknown as NodeJS.ProcessEnv),
+    { url: "http://localhost:54321", key: "k" },
   );
 });
 

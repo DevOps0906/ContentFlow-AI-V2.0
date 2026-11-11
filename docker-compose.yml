@@ -1,4 +1,4 @@
-# Web app container. Local Supabase runs separately: `npx supabase start` (see README).
+# Web app container. Pick env file with ENV_FILE=.env.local or .env.cloud (default .env). Local Supabase: scripts/supabase-local.ps1.
 #   docker compose up -d --build
 services:
   web:
@@ -8,7 +8,7 @@ services:
       # No login yet: keep it on localhost. Change the host port with WEB_PORT.
       - "127.0.0.1:${WEB_PORT:-3410}:3000"
     env_file:
-      - path: .env
+      - path: ${ENV_FILE:-.env}
         required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"

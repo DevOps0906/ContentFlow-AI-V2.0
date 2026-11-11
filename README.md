@@ -63,7 +63,7 @@
 2. [x] W9~W11 리뷰 수정 (마이그레이션 0018, [계획](tasks/PLAN_MVP_REMAINING.md)의 "W9~11 리뷰 수정")
 3. [ ] W8 브라우저 검증: 3구간 화면, 키보드 조작, 저장 실패, 실제 WordPress 컨테이너로 slug 선조회 확인 (미완성 스크립트는 로컬에만 있음)
 4. [ ] 실제 OpenAI 키로 AI 초안·검수 호출과 토큰·비용 기록 검증 (키 필요)
-5. [ ] 클라우드 Supabase 생성과 마이그레이션 0001~0018 적용 (계정·비용 승인 필요)
+5. [ ] 클라우드 Supabase 생성과 마이그레이션 0001~0018 적용 (계정·비용 승인 필요). 준비 완료: 로컬/Cloud 환경 분리·점검·스크립트([Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md))
 6. [ ] https 운영 배포와 운영 메일(가입 확인·비밀번호 복구·팀 초대) 설정 (승인 필요)
 7. [ ] 문서 정합화: `docs/03-database/DATABASE_SCHEMA.md`의 새 테이블, `WORKFLOWS.md` 티스토리 이미지 제외, ERD 재생성, 블스피·블로그AI 정확한 주소
 8. [ ] M4 파일럿: 운영자 3~5명의 편집 시간과 반복 사용 검증 (실제 사용자 필요)
@@ -130,8 +130,10 @@
 | 목적 | 명령/설정 |
 |---|---|
 | 웹 이미지 빌드·실행 | `docker compose up -d --build` → `http://127.0.0.1:3410` (`WEB_PORT`로 변경) |
-| 환경 변수 | `.env.example`을 `.env`로 복사해 채움 (git 제외). 키는 서버에서만 읽음 |
-| 로컬 Supabase | `npx supabase start -x realtime,storage-api,imgproxy,edge-runtime,logflare,vector,supavisor` · 포트 60321~ (`supabase/config.toml`), 중지 `npx supabase stop` |
+| 환경 변수 | Docker 로컬 Supabase는 `.env.local.example`, Supabase Cloud는 `.env.cloud.example`을 복사해 채움(git 제외). 다른 파일을 쓰려면 `ENV_FILE=.env.cloud docker compose up -d`. 키는 서버에서만 읽음 |
+| Supabase 대상 분류 | `SUPABASE_URL` 호스트가 localhost·127.0.0.1·::1·host.docker.internal이면 Docker 로컬, 그 외는 Cloud(https·`APP_URL` https 필수, 쿠키 Secure 기본 켜짐, http면 계정 모드 꺼짐). 설정 화면(로그인 후)에 대상·문제 표시. 상세: [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) |
+| 로컬 Supabase (Docker) | `pwsh scripts/supabase-local.ps1 <start·status·migrate·test·stop>` (`reset -Confirm`은 데이터 삭제) · 포트 60321~ (`supabase/config.toml`) |
+| Supabase Cloud | `pwsh scripts/supabase-cloud.ps1 link -ProjectRef <ref>` → `diff`(dry-run) → `push -Yes`. 프로젝트 생성·적용은 비용·외부 공개 승인 후 |
 | AI 초안·검수 | `OPENAI_API_KEY`(필수), `OPENAI_MODEL`, `OPENAI_BASE_URL`(호환 API), `QA_MODEL`(선택; 생략 시 작성 모델과 동일) |
 | 인증 메일 | `APP_URL`에 공개 앱 주소 설정, Supabase의 Site URL·허용 redirect URL에 `/auth/callback` 등록, 운영 SMTP 설정. 비밀번호 복구는 `/login` → 메일 → `/reset` |
 | WordPress | `WP_BASE_URL`(https, 로컬만 http), `WP_USERNAME`, `WP_APP_PASSWORD`(애플리케이션 비밀번호) |
@@ -156,7 +158,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
 | 설정/백업·팀 관리 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) |
 
-[전체 문서](docs/README.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

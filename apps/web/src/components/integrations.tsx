@@ -6,7 +6,12 @@ import { parseVerdict, type DeliveryCheck } from "@/lib/delivery";
 export type Integrations = {
   ai: { configured: boolean; model: string | null };
   wordpress: { configured: boolean; host: string | null };
-  supabase: { status: "not_configured" | "reachable" | "unreachable" };
+  supabase: {
+    status: "not_configured" | "reachable" | "unreachable";
+    target?: "none" | "local" | "cloud";
+    label?: string;
+    issues?: string[];
+  };
 };
 
 /** Reads which server-side integrations are configured. `null` while loading/failed. */

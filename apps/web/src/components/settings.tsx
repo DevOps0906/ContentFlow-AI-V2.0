@@ -72,6 +72,16 @@ export function Settings() {
                   integrations.supabase.status
                 ]}
           </dd>
+          <dt>Supabase 대상</dt>
+          <dd>
+            {!integrations
+              ? "확인 중…"
+              : !integrations.supabase.label
+                ? "로그인 후 확인"
+                : integrations.supabase.issues?.length
+                  ? `${integrations.supabase.label} · 설정 문제: ${integrations.supabase.issues.join(", ")}`
+                  : integrations.supabase.label}
+          </dd>
           <dt>로그인</dt>
           <dd>
             {mode === "account"

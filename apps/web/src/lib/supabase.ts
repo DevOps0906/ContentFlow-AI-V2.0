@@ -5,21 +5,28 @@ import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { WORKSPACE_COOKIE_NAME, type Role } from "./team";
+import { cookieSecure, supabaseTarget } from "./supabase-target";
 
 export type SupabaseEnv = { url: string; key: string };
 
 export function supabaseEnv(env = process.env): SupabaseEnv | null {
   const url = env.SUPABASE_URL?.trim();
   const key = env.SUPABASE_PUBLISHABLE_KEY?.trim();
-  return url && key ? { url, key } : null;
+  if (!url || !key) return null;
+  // A cloud Supabase over plain http would send keys and sessions in the clear: stay in local mode.
+  if (supabaseTarget(env) === "cloud" && !url.startsWith("https://")) return null;
+  return { url, key };
 }
 
-/** Session cookie flags. `Secure` must stay off for http://localhost, on behind https. */
+/**
+ * Session cookie flags. `Secure` must stay off for http://localhost, on behind https.
+ * COOKIE_SECURE wins when set; unset defaults to true for a cloud Supabase.
+ */
 export function sessionCookieOptions(env = process.env) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: env.COOKIE_SECURE === "true",
+    secure: cookieSecure(env),
     path: "/",
   };
 }

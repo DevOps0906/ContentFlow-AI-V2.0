@@ -10,4 +10,6 @@ supabase
 *.md
 .env*
 !.env.example
+!.env.local.example
+!.env.cloud.example
 **/*.tsbuildinfo

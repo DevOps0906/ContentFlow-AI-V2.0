@@ -2,6 +2,7 @@
 
 | 항목 | 상태 |
 |---|---|
+| 직전 완료 2 | Supabase 로컬(Docker)·Cloud 분리: 대상 판정·점검(supabase-target.ts), env 예시 2종, compose ENV_FILE, scripts/supabase-{local,cloud}.ps1, docs/08-ops. 테스트 266·build·컨테이너 health 확인. Cloud 실제 생성·push 미실행(승인 필요) |
 | 직전 완료 | W9~11 리뷰 수정(마이그레이션 0018) 커밋. typecheck·단위 테스트 257·build·DB 규칙 테스트(run.ps1) 통과. 로컬 Supabase는 `db reset`으로 0018까지 재적용(이전 로컬 데이터 삭제됨) |
 | 다음 작업 | W8 브라우저 검증 — `tasks/PLAN_MVP_REMAINING.md#검증 묶음`. 팀·인증·수익·AI 검수·W9~11 새 기능 흐름, 키보드, 저장 실패, 3구간 화면, 실제 WordPress 컨테이너로 slug 선조회·유지 확인. AI는 가짜 서버 |
 | W8 출발점 | 미완성 스크립트 `apps/web/tests/e2e/`(커밋 제외, 로컬에만). 먼저 내용 확인 후 이어서 작성 |
