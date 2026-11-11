@@ -1,0 +1,235 @@
+erDiagram
+  workspaces {
+    uuid id PK
+    uuid owner_id FK
+    text name
+    text plan
+    timestamptz created_at
+  }
+  memberships {
+    uuid workspace_id PK,FK
+    uuid user_id PK,FK
+    workspace_role role
+    timestamptz created_at
+  }
+  blogs {
+    uuid id PK
+    uuid workspace_id FK
+    blog_platform platform
+    text domain
+    text status
+    timestamptz created_at
+  }
+  sources {
+    uuid id PK
+    uuid workspace_id FK
+    text url
+    text title
+    text license_note
+  }
+  articles {
+    uuid id PK
+    uuid workspace_id FK
+    uuid owner_id FK
+    uuid blog_id
+    article_state state
+    timestamptz created_at
+    timestamptz updated_at
+  }
+  article_versions {
+    uuid id PK
+    uuid created_by FK
+    uuid workspace_id
+    uuid article_id
+    int version
+    text title
+    text markdown
+    uuid source_id
+    text content_hash
+    timestamptz created_at
+  }
+  approvals {
+    uuid id PK
+    uuid reviewer_id FK
+    uuid workspace_id
+    uuid article_version_id
+    approval_decision decision
+    text snapshot_hash
+    timestamptz decided_at
+  }
+  audit_logs {
+    bigint id PK
+    uuid workspace_id FK
+    uuid actor_id FK
+    text action
+    jsonb payload
+    timestamptz created_at
+  }
+  keywords {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    text phrase
+    text phrase_key
+    text intent
+    int priority
+    text note
+    timestamptz created_at
+  }
+  invitations {
+    uuid id PK
+    uuid workspace_id FK
+    uuid invited_by FK
+    text email
+    text email_key
+    workspace_role role
+    timestamptz created_at
+    timestamptz accepted_at
+  }
+  revenue_rows {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    text row_key
+    text source
+    text status
+    text currency
+    date report_date
+    text page
+    numeric revenue
+    bigint pageviews
+    bigint impressions
+    string more_2_cols
+  }
+  rate_limits {
+    text key PK
+    timestamptz window_start
+    int hits
+  }
+  agent_runs {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    text task
+    text model
+    text prompt_version
+    text status
+    int tokens_in
+    int tokens_out
+    int duration_ms
+    numeric cost_estimate
+    text cost_currency
+    string more_1_cols
+  }
+  article_state_events {
+    uuid id PK
+    uuid actor_id FK
+    uuid workspace_id
+    uuid article_id
+    article_state from_state
+    article_state to_state
+    timestamptz created_at
+  }
+  delivery_attempts {
+    uuid id PK
+    uuid created_by FK
+    uuid workspace_id
+    uuid article_id
+    text channel
+    int attempt
+    text failure_type
+    text url
+    int duration_ms
+    timestamptz created_at
+  }
+  site_checks {
+    uuid id PK
+    uuid workspace_id FK
+    text status
+    text evidence_url
+    text note
+  }
+  cost_entries {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    text category
+    numeric amount
+    text currency
+    date occurred_on
+    text provenance
+    text note
+    timestamptz created_at
+  }
+  improvement_tasks {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    uuid article_id
+    text target_url
+    text evidence
+    date observed_from
+    date observed_to
+    uuid assignee_id
+    date review_at
+    text state
+    int result_version
+    string more_2_cols
+  }
+  keyword_trends {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    uuid blog_id
+    text keyword
+    text keyword_key
+    text category
+    text category_key
+    bigint monthly_searches
+    numeric growth_pct
+    bigint document_count
+    text source
+    string more_3_cols
+  }
+  blog_metric_snapshots {
+    uuid id PK
+    uuid workspace_id FK
+    uuid created_by FK
+    uuid blog_id
+    text tool
+    text metric
+    text metric_key
+    text scope
+    text dimension
+    text dimension_key
+    numeric value
+    text value_label
+    string more_5_cols
+  }
+  workspaces ||--o{ memberships : "workspace_id"
+  workspaces ||--o{ blogs : "workspace_id"
+  workspaces ||--o{ sources : "workspace_id"
+  workspaces ||--o{ articles : "workspace_id"
+  blogs ||--o{ articles : "workspace_id"
+  articles ||--o{ article_versions : "workspace_id"
+  sources ||--o{ article_versions : "workspace_id"
+  article_versions ||--o{ approvals : "workspace_id"
+  workspaces ||--o{ audit_logs : "workspace_id"
+  workspaces ||--o{ keywords : "workspace_id"
+  workspaces ||--o{ invitations : "workspace_id"
+  workspaces ||--o{ revenue_rows : "workspace_id"
+  workspaces ||--o{ agent_runs : "workspace_id"
+  articles ||--o{ article_state_events : "workspace_id"
+  articles ||--o{ delivery_attempts : "workspace_id"
+  workspaces ||--o{ site_checks : "workspace_id"
+  workspaces ||--o{ cost_entries : "workspace_id"
+  workspaces ||--o{ improvement_tasks : "workspace_id"
+  articles ||--o{ improvement_tasks : "workspace_id"
+  memberships ||--o{ improvement_tasks : "workspace_id"
+  article_versions ||--o{ improvement_tasks : "article_id"
+  workspaces ||--o{ keyword_trends : "workspace_id"
+  blogs ||--o{ keyword_trends : "workspace_id"
+  workspaces ||--o{ blog_metric_snapshots : "workspace_id"
+  blogs ||--o{ blog_metric_snapshots : "workspace_id"
+  keywords ||--o{ articles : "workspace_id"
+  blogs ||--o{ keywords : "workspace_id"

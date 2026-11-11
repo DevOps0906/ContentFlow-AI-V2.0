@@ -51,7 +51,7 @@ Research 단계는 출처의 제목/URL/확인 시각을 기록. Title Lab은 5�
 Hard blockers: 근거 없는 민감 주제, 거짓 경험, 제휴 고지 누락, 이미지 권리 불명, 스팸성 중복, 외부 URL 오류. 점수는 보조 지표로만 사용하며 중요 차단 사유를 점수로 상쇄할 수 없다.
 
 ## 7. WF-06 Publish
-Preconditions: `approved_version_id`, 권한, 계정 연결, idempotency_key. WordPress/Blogger: 안전한 초안 생성→원격 ID/URL 확인→상태 업데이트. 네이버/티스토리: HTML/이미지/태그 export → 사람이 발행 → URL 확인. 중간에 예외가 나면 불명확한 성공 상태를 먼저 조회해 중복 발행 방지.
+Preconditions: `approved_version_id`, 권한, 계정 연결, idempotency_key. WordPress/Blogger: 안전한 초안 생성→원격 ID/URL 확인→상태 업데이트. 네이버/티스토리: HTML/이미지/태그 export → 사람이 발행 → URL 확인. **범위 축소: 티스토리 패키지는 이미지를 제외한다(이미지 제외, 2026-11-11 결정, `tasks/PLAN_MVP_REMAINING.md#사용자 결정` 3번)** — 패키지에 이미지를 넣지 않는다. 중간에 예외가 나면 불명확한 성공 상태를 먼저 조회해 중복 발행 방지.
 
 ## 8. WF-07/08
 Search Console은 검색 노출/클릭/CTR, GA4는 방문/행동을 별도 적재한다. 색인은 별도 검사 또는 운영자 확인으로 기록한다. 광고 데이터는 출처·정산 상태·귀속 수준을 분리한다. 정보 갱신 주기는 콘텐츠 위험도(정책/가격/법률 등에 차등).

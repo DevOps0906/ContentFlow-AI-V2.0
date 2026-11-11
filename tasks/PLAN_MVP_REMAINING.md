@@ -102,7 +102,7 @@
 
 #### 0018 상세 (2026-11-12 challenger 반영·사용자 결정)
 - 결정: 트렌드 점수 묶음 = 블로그·카테고리·키워드·출처(카테고리별 별도 점수). 보관(archived) 계정에는 새 연결·새 기록 모두 차단, 기존 값 유지·조회·중복 재가져오기(무시)만 허용.
-- 정규화 규칙(JS·SQL 동일): NFKC → 공백 6종(U+0020·\t·\n·\r·\f·\v) 연속을 스페이스 하나로 → 앞뒤 자르기 → 소문자. NBSP·전각 공백은 NFKC가 스페이스로 바꾼다. U+FEFF·U+2028·U+2029·U+1680은 양쪽 모두 건드리지 않는다. SQL: `lower(btrim(regexp_replace(normalize(x, NFKC), '[ \t\n\r\f\v]+', ' ', 'g')))`(로케일 무관 명시 집합, 바깥 btrim). JS: `/[ \t\n\r\f\v]+/g`. 대상 열: `keywords.phrase_key`(0003), 0016 키 3개, 0017 `metric_key`·`dimension_key`. `ALTER ... SET EXPRESSION`으로 적용하고, 그 전에 새 키로 겹치는 행이 있으면 RAISE로 중단. 같은 입력의 고정 문자 표 테스트를 `supabase/tests/rls.sql`과 JS 테스트에 둔다.
+- 정규화 규칙(JS·SQL 동일): NFKC → 공백 6종(U+0020·\t·\n·\r·\f·\v) 연속을 스페이스 하나로 → 앞뒤 자르기 → 소문자. NBSP·전각 공백은 NFKC가 스페이스로 바꾼다. U+FEFF·U+2028·U+2029·U+1680은 양쪽 모두 건드리지 않는다. SQL: `lower(btrim(regexp_replace(normalize(x, NFKC), '[ \t\n\r\f\v]+', ' ', 'g')))`(로케일 무관 명시 집합, 바깥 btrim). JS: `/[ \t\n\r\f\v]+/g`. 대상 열: `keywords.phrase_key`(0003), 0016 키 3개, 0017 `metric_key`·`dimension_key`. 생성 열을 drop 후 재추가로 적용하고(DB 테스트 컨테이너가 PG16이라 SET EXPRESSION 미사용, 열 순서는 끝으로 이동), 그 전에 새 키로 겹치는 행이 있으면 RAISE로 중단. 같은 입력의 고정 문자 표 테스트를 `supabase/tests/rls.sql`과 JS 테스트에 둔다.
 - active 검사: keywords·articles(update 시 blog_id가 바뀔 때만, insert 시 non-null이면), keyword_trends·blog_metric_snapshots(insert). `select status ... for share`. 단 trends·snapshots insert에서 같은 키 행이 이미 있으면 검사·상한을 건너뛰고 NEW 반환(ON CONFLICT DO NOTHING이 무시). articles는 별도 트리거로 둔다(0014 `enforce_article_rules` 재정의 금지).
 - 상한: 중복 키는 상한 계산 전에 통과. 상한 count 전에 `pg_advisory_xact_lock(hashtext('<table>:'||workspace_id))`. 상한 초과 메시지는 기존 문구 유지, 테스트로 고정.
 - 계정 모드 전송: 묶음을 CSV 행 경계로 자른다(한 행의 지표가 두 묶음에 나뉘지 않음). 경계 테스트 추가.
