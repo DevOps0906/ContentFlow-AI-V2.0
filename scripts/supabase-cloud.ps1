@@ -33,25 +33,25 @@ switch ($Action) {
   'diff' {
     Assert-Linked
     Assert-Env 'SUPABASE_DB_PASSWORD'
-    npx supabase db push --dry-run
+    npx supabase db push --remote --dry-run
     Assert-Ok
   }
   'push' {
     Assert-Linked
     Assert-Env 'SUPABASE_DB_PASSWORD'
-    npx supabase db push --dry-run
+    npx supabase db push --remote --dry-run
     Assert-Ok
     if (-not $Yes) {
       Write-Host 'Dry-run only. Review the list above, then re-run with -Yes to apply to the CLOUD database.'
       exit 0
     }
-    npx supabase db push
+    npx supabase db push --remote
     Assert-Ok
   }
   'status' {
     if (Test-Path $refFile) {
       Write-Host 'Linked project ref:' (Get-Content $refFile)
-      npx supabase migration list
+      npx supabase migration list --remote
       Assert-Ok
     } else { Write-Host 'Not linked.' }
   }

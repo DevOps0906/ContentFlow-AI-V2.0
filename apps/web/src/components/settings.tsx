@@ -33,8 +33,8 @@ export function Settings() {
   return (
     <>
       <PageHeading
-        eyebrow="YOUR WORKSPACE"
-        title="워크스페이스 설정"
+        eyebrow="SETTINGS"
+        title="환경설정"
         description="작업 환경과 로컬 콘텐츠의 보관 상태를 확인하세요."
       />
       <div className="filter-tabs" role="tablist" aria-label="설정 구분">

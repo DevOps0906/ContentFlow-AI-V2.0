@@ -6,7 +6,6 @@ import { useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
   BookOpen,
-  ChevronDown,
   ChartLine,
   ChevronRight,
   CircleHelp,
@@ -63,15 +62,6 @@ export function Shell({ children }: { children: ReactNode }) {
             contentflow<span className="brand-dot">.</span>
           </span>
         </Link>
-        <Link href="/settings" className="workspace-switch">
-          <span className="workspace-avatar">N</span>
-          <span>
-            <b>나의 워크스페이스</b>
-            <small>개인 작업 공간</small>
-          </span>
-          <ChevronDown size={15} />
-        </Link>
-        <div className="nav-label">WORKSPACE</div>
         <nav aria-label="주 메뉴">
           {nav.map((n) => (
             <Link
@@ -109,7 +99,7 @@ export function Shell({ children }: { children: ReactNode }) {
             href="/settings"
           >
             <Settings size={18} />
-            워크스페이스 설정
+            환경설정
           </Link>
           <a
             className="nav-item"
@@ -125,7 +115,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="user-avatar">{initial}</span>
             <span>
               <b>나의 블로그 스튜디오</b>
-              <small>{mode === "account" ? (email ?? "계정") : "로컬 워크스페이스"}</small>
+              <small>{mode === null ? "확인 중…" : mode === "account" ? (email ?? "계정") : "로컬 워크스페이스"}</small>
             </span>
             {mode === "account" ? (
               <button
@@ -175,7 +165,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </form>
             <span className="local-badge">
               <span />
-              {mode === "account" ? "계정 · DB 저장" : "로컬 모드"}
+              {mode === null ? "확인 중…" : mode === "account" ? "계정 · DB 저장" : "로컬 모드"}
             </span>
             <span className="top-avatar">{initial}</span>
           </div>
@@ -192,7 +182,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <span>작은 아이디어를, 오래 읽히는 콘텐츠로.</span>
           <span>
             ContentFlow AI <span className="footer-dot">·</span>{" "}
-            {mode === "account" ? "계정에 저장됩니다" : "로컬에 저장됩니다"}
+            {mode === null ? "" : mode === "account" ? "계정에 저장됩니다" : "로컬에 저장됩니다"}
           </span>
         </footer>
       </div>

@@ -13,6 +13,7 @@ import {
   Star,
 } from "lucide-react";
 import type { Template } from "@/lib/templates";
+import { TemplateExampleButton } from "./template-example";
 const icons = {
   book: BookOpen,
   tool: Bug,
@@ -72,6 +73,12 @@ export function TemplateCard({
           <div className="template-block-count">
             {template.blocks.length}개 구성 블록 <span>·</span> 근거 검수 포함
           </div>
+        )}
+        {!compact && (
+          <TemplateExampleButton
+            templateId={template.id}
+            className="button secondary small template-example-btn"
+          />
         )}
         <Link
           className="template-use"

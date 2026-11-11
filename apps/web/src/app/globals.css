@@ -2770,3 +2770,106 @@ footer {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* 템플릿 예시 대화상자 */
+.template-example-btn {
+  margin-top: 12px;
+  align-self: flex-start;
+}
+.example-dialog {
+  max-width: 720px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.example-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.example-head h2 {
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+.example-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: var(--amber);
+  margin-bottom: 8px;
+}
+.dialog .example-meta {
+  margin-bottom: 0;
+}
+.example-body {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+  margin-bottom: 18px;
+}
+.example-body section {
+  margin-bottom: 18px;
+}
+.example-body h3 {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.dialog .example-body p {
+  margin-bottom: 8px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.example-body ul {
+  margin: 0 0 8px 18px;
+  font-size: 12px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+.example-body figure {
+  margin: 10px 0 0;
+}
+.example-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.example-body figcaption {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+@media (max-width: 767px) {
+  .example-dialog {
+    padding: 18px;
+  }
+  .example-dialog .editor-actions {
+    flex-wrap: wrap;
+  }
+}
+.example-placeholder {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+  border-radius: 10px;
+  background: var(--mint-bg);
+  color: var(--green-dark);
+  border: 1px dashed var(--green);
+  overflow-wrap: anywhere;
+}
+.example-placeholder b {
+  font-size: 12px;
+}
+.example-placeholder span {
+  font-size: 11px;
+  color: var(--muted);
+}

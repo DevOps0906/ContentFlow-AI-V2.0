@@ -17,6 +17,7 @@ import {
 import { templates } from "@/lib/templates";
 import { isApprovedContent, templateName } from "@/lib/content";
 import { useWorkspace } from "./workspace";
+import { dayKey, formatDate, lastDayKeys, shortDay } from "@/lib/date";
 import { NewContentButton, PageHeading } from "./shell";
 import { TemplateCard } from "./template-card";
 import { StatusBadge } from "./status-badge";
@@ -27,18 +28,8 @@ export function Dashboard() {
   const reviewing = articles.filter((a) =>
     ["qa_pending", "approval_pending"].includes(a.status),
   ).length;
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - 6 + i);
-    return d;
-  });
-  const counts = days.map(
-    (d) =>
-      articles.filter(
-        (a) =>
-          new Date(a.updatedAt).toLocaleDateString() === d.toLocaleDateString(),
-      ).length,
-  );
+  const days = lastDayKeys(7);
+  const counts = days.map((d) => articles.filter((a) => dayKey(a.updatedAt) === d).length);
   const max = Math.max(4, ...counts);
   const total = counts.reduce((a, b) => a + b, 0);
   const steps = [
@@ -161,7 +152,7 @@ export function Dashboard() {
             </div>
             <div className="chart-bars">
               {days.map((day, i) => (
-                <div className="chart-column" key={day.toISOString()}>
+                <div className="chart-column" key={day}>
                   <div className="bar-track">
                     <div
                       className={`chart-bar ${i === 6 ? "today" : ""}`}
@@ -171,7 +162,7 @@ export function Dashboard() {
                     </div>
                   </div>
                   <span className={i === 6 ? "today-label" : ""}>
-                    {day.getMonth() + 1}.{day.getDate()}
+                    {shortDay(day)}
                   </span>
                 </div>
               ))}
@@ -267,7 +258,7 @@ export function Dashboard() {
                     <td>
                       <StatusBadge state={a.status} />
                     </td>
-                    <td>{new Date(a.updatedAt).toLocaleDateString("ko-KR")}</td>
+                    <td>{formatDate(a.updatedAt)}</td>
                     <td>
                       <Link
                         href={`/content/${a.id}`}

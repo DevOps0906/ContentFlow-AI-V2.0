@@ -68,7 +68,7 @@
 7. [x] 문서 정합화: DATABASE_SCHEMA 8절(0007~0018), ERD 재생성([ERD](docs/03-database/ERD.mmd)), WORKFLOWS 티스토리 이미지 제외. 남음: 블스피·블로그AI 정확한 주소
 8. [ ] M4 파일럿: 운영자 3~5명의 편집 시간과 반복 사용 검증 (실제 사용자 필요)
 
-후속(MVP 이후): P0-04 템플릿 예제·필수 블록 차단, L02 목차·비교표, 외부 분석 도구 API 연동, 이전 렌더 묶음 복원.
+후속(MVP 이후): P0-04 필수 블록 차단(템플릿 10종 예시 글은 2026-11-12 추가, 이미지는 Gemini 결제 후 `npx tsx --env-file=../../.env.local scripts/gen-template-images.ts`로 생성), L02 목차·비교표, 외부 분석 도구 API 연동, 이전 렌더 묶음 복원.
 
 최근 추가된 기능은 팀·권한 관리, 인증 메일 콜백과 비밀번호 재설정, 수익 DB 저장, 키워드↔글 ID 연결, AI 검수 의견이다. 아래 표는 현재 코드 기준이며, 기존 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)의 작업 수·완성도는 이번 추가분 이전 평가다. 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
 
@@ -132,7 +132,7 @@
 | 웹 이미지 빌드·실행 | `docker compose up -d --build` → `http://127.0.0.1:3410` (`WEB_PORT`로 변경) |
 | 환경 변수 | Docker 로컬 Supabase는 `.env.local.example`, Supabase Cloud는 `.env.cloud.example`을 복사해 채움(git 제외). 다른 파일을 쓰려면 `ENV_FILE=.env.cloud docker compose up -d`. 키는 서버에서만 읽음 |
 | Supabase 대상 분류 | `SUPABASE_URL` 호스트가 localhost·127.0.0.1·::1·host.docker.internal이면 Docker 로컬, 그 외는 Cloud(https·`APP_URL` https 필수, 쿠키 Secure 기본 켜짐, http면 계정 모드 꺼짐). 설정 화면(로그인 후)에 대상·문제 표시. 상세: [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) |
-| 로컬 Supabase (Docker) | `pwsh scripts/supabase-local.ps1 <start·status·migrate·test·stop>` (`reset -Confirm`은 데이터 삭제) · 포트 60321~ (`supabase/config.toml`) |
+| 로컬 Supabase (Docker) | `pwsh scripts/supabase-local.ps1 <start·status·migrate·test·stop>` (`reset -Confirm`은 데이터 삭제) · 포트 60321~ (`supabase/config.toml`) · 사용법 전체: [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) |
 | Supabase Cloud | `pwsh scripts/supabase-cloud.ps1 link -ProjectRef <ref>` → `diff`(dry-run) → `push -Yes`. 프로젝트 생성·적용은 비용·외부 공개 승인 후 |
 | AI 초안·검수 | 설정 → **AI API** 탭에서 제공자(Gemini·OpenAI)·초안/검수 모델 선택과 연결 테스트. 키는 서버 env에만: `GEMINI_API_KEY`(기본 제공자, 기본 모델 `GEMINI_MODEL`=gemini-3.5-flash, `GEMINI_QA_MODEL`), `OPENAI_API_KEY`·`OPENAI_MODEL`·`OPENAI_BASE_URL`·`QA_MODEL`. `AI_PROVIDER`로 기본 제공자 지정, `AI_ALLOWED_MODELS`로 허용 모델 제한. 기본 모델 외를 고르면 비용은 N/A |
 | 인증 메일 | `APP_URL`에 공개 앱 주소 설정, Supabase의 Site URL·허용 redirect URL에 `/auth/callback` 등록, 운영 SMTP 설정. 비밀번호 복구는 `/login` → 메일 → `/reset` |
@@ -155,11 +155,11 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 저장 원고 편집 | `/content/{id}` | [DB](docs/03-database/DATABASE_SCHEMA.md) | [동적 라우트](apps/web/src/app/content/[id]/page.tsx) |
 | 키워드·제목 랩 | `/keywords` | [PRD](docs/01-planning/PRD.md) | [keywords](apps/web/src/components/keywords.tsx) |
 | 비밀번호 재설정 | `/reset` (메일 링크 경유) | [PRD](docs/01-planning/PRD.md) | [reset-form](apps/web/src/components/reset-form.tsx) |
-| 템플릿 라이브러리 | `/templates` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [catalog](apps/web/src/components/catalog.tsx) |
+| 템플릿 라이브러리 | `/templates` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [catalog](apps/web/src/components/catalog.tsx) · [예시 보기](apps/web/src/components/template-example.tsx) |
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
 | 설정/백업·팀 관리 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) |
 
-[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

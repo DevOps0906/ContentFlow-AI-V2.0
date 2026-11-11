@@ -12,10 +12,10 @@ Set-Location $root
 switch ($Action) {
   'start'   { npx supabase start }
   'status'  { npx supabase status }
-  'migrate' { npx supabase migration up --local }
+  'migrate' { npx supabase migration up }
   'reset' {
     if (-not $Confirm) { throw 'reset DROPS the local database. Re-run with -Confirm.' }
-    npx supabase db reset --local
+    npx supabase db reset
   }
   'test'    { & (Join-Path $PSScriptRoot '..\supabase\tests\run.ps1') }
   'stop'    { npx supabase stop }

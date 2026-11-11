@@ -40,6 +40,7 @@ import {
 import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
+import { TemplateExampleButton } from "./template-example";
 import { PhaseSteps, StatusBadge } from "./status-badge";
 import { loadChoice } from "@/lib/ai-settings";
 import { accountDeliveryCheck, fetchStoredArticle, postJson, useIntegrations } from "./integrations";
@@ -562,6 +563,11 @@ function EditorForm({
                   </option>
                 ))}
               </select>
+              <TemplateExampleButton
+                templateId={form.templateId}
+                className="button secondary small template-example-btn"
+                onUse={editable ? chooseTemplate : undefined}
+              />
             </div>
             <div className="field">
               <label htmlFor="platform">발행 대상</label>

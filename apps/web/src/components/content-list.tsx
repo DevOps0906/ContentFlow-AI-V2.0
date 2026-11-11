@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ArrowUpRight, FileText, Search, Trash2 } from "lucide-react";
 import { templateName } from "@/lib/content";
+import { formatDate } from "@/lib/date";
 import { phaseLabels, phaseOf, phases, type Phase } from "@/lib/lifecycle";
 import { PageHeading, NewContentButton } from "./shell";
 import { useWorkspace } from "./workspace";
@@ -95,7 +96,7 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
                     <td>
                       <StatusBadge state={a.status} />
                     </td>
-                    <td>{new Date(a.updatedAt).toLocaleDateString("ko-KR")}</td>
+                    <td>{formatDate(a.updatedAt)}</td>
                     <td>
                       <div className="table-actions">
                         <Link
