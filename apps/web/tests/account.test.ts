@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { ARCHIVED_BLOG_MESSAGE } from "../src/lib/blogs-db";
 import { appOrigin, parseCredentials, parseEmail, parseNewPassword, safeNext } from "../src/lib/auth";
 import {
   articleToFields,
@@ -140,4 +141,11 @@ test("password reset input is validated and e-mail links use a trusted origin", 
   assert.equal(appOrigin(req("https://app.example.com"), {} as NodeJS.ProcessEnv), "https://app.example.com");
   assert.equal(appOrigin(req("https://evil.example"), { APP_URL: "https://app.example.com/" } as unknown as NodeJS.ProcessEnv), "https://app.example.com");
   assert.equal(appOrigin(req(null), {} as NodeJS.ProcessEnv), "http://internal:3000");
+});
+
+test("an archived-account trigger error is a conflict with its own message", () => {
+  const e = dbError({ code: "P0001", message: "blog account is archived" });
+  assert.equal(e.status, 409);
+  assert.equal(e.message, ARCHIVED_BLOG_MESSAGE);
+  assert.match(dbError({ code: "P0001", message: "state change not allowed" }).message, /상태 규칙/);
 });

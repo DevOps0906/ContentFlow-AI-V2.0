@@ -1,4 +1,5 @@
 // Mapping between the app's Article and the `articles` table (migration 0002).
+import { ARCHIVED_BLOG_MESSAGE } from "./blogs-db";
 import { isArticle, isReviewStatus, type Article, type ReviewStatus } from "./content";
 import type { LifecycleState } from "./lifecycle";
 import { afterEdit } from "./lifecycle";
@@ -153,6 +154,8 @@ export function dbError(error: { code?: string; message?: string }): {
 } {
   if (error.code === "42501")
     return { status: 403, message: "이 작업을 할 권한이 없습니다." };
+  if (error.code === "P0001" && /archived/.test(error.message ?? ""))
+    return { status: 409, message: ARCHIVED_BLOG_MESSAGE };
   if (error.code === "P0001")
     return {
       status: 409,

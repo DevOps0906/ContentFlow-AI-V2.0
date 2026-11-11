@@ -22,7 +22,7 @@ import { ARTICLE_COLUMNS, articleToFields, dbError, rowToArticle, toImportable, 
 import { isArticle, saveRevision, contentChanged, type Article } from "../src/lib/content";
 import { KEYWORD_COLUMNS, rowToKeyword } from "../src/lib/keywords-db";
 import { ideaFromKeyword, isKeyword } from "../src/lib/keywords";
-import { filterRevenueByBlog, summarize, type RevenueRow } from "../src/lib/revenue";
+import { filterRevenueByBlog, summarize, unallocatedRevenue, type RevenueRow } from "../src/lib/revenue";
 import { canManageBlogs, roles } from "../src/lib/team";
 import { BlogFilter } from "../src/components/blog-filter";
 import { BlogAccounts } from "../src/components/blog-accounts";
@@ -136,7 +136,7 @@ const reports = [
 const pagesOf = (filter: string) => filterRevenueByBlog(reports, articles, filter).map((r) => r.page);
 
 test("revenue rows follow the blog of the article with that public URL", () => {
-  assert.deepEqual(pagesOf("blog-a"), ["https://a.example/one"]);
+  assert.deepEqual(pagesOf("blog-a"), ["https://a.example/one", "https://a.example/draft"]); // draft link is the fallback
   assert.deepEqual(pagesOf("blog-b"), ["https://b.example/two?utm=x"]);
   assert.equal(filterRevenueByBlog(reports, articles, ALL_BLOGS), reports);
 });
@@ -144,17 +144,33 @@ test("revenue rows follow the blog of the article with that public URL", () => {
 test("rows that can not be attributed are unclassified", () => {
   assert.deepEqual(pagesOf(UNCLASSIFIED_BLOGS), [
     "https://a.example/no-blog", // the article has no account
-    "https://a.example/draft", // only a draft link, not a public URL
     "https://a.example/shared", // two accounts claim the URL
     "https://a.example/unknown", // no article
   ]);
 });
 
-test("site totals stay unclassified and never reach an account", () => {
+test("site totals belong to no account filter and are shown apart as the unallocated total", () => {
   const site = [row(""), row("https://a.example/one")];
   assert.deepEqual(filterRevenueByBlog(site, articles, "blog-a").map((r) => r.page), ["https://a.example/one"]);
-  assert.deepEqual(filterRevenueByBlog(site, articles, UNCLASSIFIED_BLOGS).map((r) => r.page), [""]);
+  assert.deepEqual(filterRevenueByBlog(site, articles, UNCLASSIFIED_BLOGS).map((r) => r.page), []);
   assert.equal(summarize(filterRevenueByBlog(site, articles, "blog-a"))[0].revenue, 10);
+  assert.deepEqual(unallocatedRevenue(site).map((r) => r.page), [""]);
+  assert.equal(summarize(unallocatedRevenue(site))[0].revenue, 10);
+  // no overlap: every page row is in exactly one of the account filters, the site row in none
+  const filters = ["blog-a", "blog-b", UNCLASSIFIED_BLOGS];
+  const placed = filters.flatMap((f) => filterRevenueByBlog(site, articles, f));
+  assert.equal(placed.length, 1);
+});
+
+test("a published URL wins over a remote URL, which only fills what no published article claims", () => {
+  const list = [
+    article("p", { publishedUrl: "https://x.example/p", blogId: "blog-a" }),
+    article("r1", { remote: { postId: 1, url: "https://x.example/p", syncedAt: "t" }, blogId: "blog-b" }),
+    article("r2", { remote: { postId: 2, url: "https://x.example/r", syncedAt: "t" }, blogId: "blog-b" }),
+  ];
+  const rows = [row("https://x.example/p"), row("https://x.example/r")];
+  assert.deepEqual(filterRevenueByBlog(rows, list, "blog-a").map((r) => r.page), ["https://x.example/p"]);
+  assert.deepEqual(filterRevenueByBlog(rows, list, "blog-b").map((r) => r.page), ["https://x.example/r"]);
 });
 
 test("a filter with no rows gives no summary rather than a zero", () => {

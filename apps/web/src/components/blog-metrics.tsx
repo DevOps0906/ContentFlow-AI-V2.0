@@ -9,6 +9,7 @@ import {
   INDEX_METRIC,
   indexSeries,
   MAX_METRICS_PER_REQUEST,
+  metricRowKey,
   METRIC_TOOLS,
   metricFromForm,
   TOOL_INFO,
@@ -97,6 +98,7 @@ function MetricBoard({ blogFilter }: { blogFilter: BlogFilterValue }) {
       },
       load,
       MAX_METRICS_PER_REQUEST,
+      metricRowKey,
     );
   }
 
@@ -478,9 +480,11 @@ export function MetricTable({
               </td>
               {canWrite && (
                 <td data-label="작업" className="trend-actions">
-                  <button className="icon-button" aria-label={`${r.metric} 기록 삭제`} title="삭제" onClick={() => onRemove(r)}>
-                    <Trash2 size={15} />
-                  </button>
+                  <div className="table-actions">
+                    <button className="icon-button" aria-label={`${r.metric} 기록 삭제`} title="삭제" onClick={() => onRemove(r)}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </td>
               )}
             </tr>

@@ -1,9 +1,11 @@
 import { dbError, isUuid } from "@/lib/articles-db";
 import { requireAccount } from "@/lib/api";
+import { ARCHIVED_BLOG_MESSAGE, archivedBlogIds, storedForBlogs } from "@/lib/blogs-db";
 import {
   dbToMetric,
   METRIC_COLUMNS,
   METRIC_CONFLICT,
+  metricKey,
   metricsToDbRows,
   parseMetricBatch,
   type MetricDbRow,
@@ -46,6 +48,19 @@ export async function POST(req: Request) {
   }
   if (await sharedLimited(account.supabase, `blog-metric:${account.user.id}`, 60, 60_000))
     return json({ error: "요청이 너무 잦습니다." }, 429);
+  try {
+    // Archived accounts take no new records; a value that is already stored is just ignored.
+    const archived = await archivedBlogIds(account, rows.map((r) => r.blogId));
+    if (archived.size > 0) {
+      const known = new Set(
+        (await storedForBlogs<MetricDbRow>(account, "blog_metric_snapshots", METRIC_COLUMNS, [...archived])).map((r) => metricKey(dbToMetric(r))),
+      );
+      if (rows.some((r) => r.blogId !== null && archived.has(r.blogId) && !known.has(metricKey(r))))
+        return json({ error: ARCHIVED_BLOG_MESSAGE }, 409);
+    }
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
+  }
   const { data, error } = await account.supabase
     .from("blog_metric_snapshots")
     .upsert(metricsToDbRows(rows, account.workspaceId, account.user.id), { onConflict: METRIC_CONFLICT, ignoreDuplicates: true })

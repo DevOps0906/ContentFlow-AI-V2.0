@@ -10,6 +10,7 @@ import {
   type ArticleRow,
 } from "@/lib/articles-db";
 import { requireAccount } from "@/lib/api";
+import { ARCHIVED_BLOG_MESSAGE, archivedBlogIds } from "@/lib/blogs-db";
 import { json, readJson, sameOrigin } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 
@@ -61,7 +62,7 @@ export async function PUT(req: Request, ctx: Ctx) {
 
   const existing = await account.supabase
     .from("articles")
-    .select("id,state,template_id")
+    .select("id,state,template_id,blog_id")
     .eq("id", id)
     .eq("workspace_id", account.workspaceId)
     .maybeSingle();
@@ -71,6 +72,14 @@ export async function PUT(req: Request, ctx: Ctx) {
     return json({ error: "잘못된 키워드 ID입니다." }, 400);
   if (typeof article.blogId === "string" && !isUuid(article.blogId))
     return json({ error: "잘못된 블로그 ID입니다." }, 400);
+  if (typeof article.blogId === "string" && article.blogId !== existing.data?.blog_id) {
+    // Archived accounts take no new links; keeping the current one is fine.
+    try {
+      if ((await archivedBlogIds(account, [article.blogId])).has(article.blogId)) return json({ error: ARCHIVED_BLOG_MESSAGE }, 409);
+    } catch (e) {
+      return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
+    }
+  }
   const fields = articleToFields(article);
   const result = existing.data
     ? await account.supabase

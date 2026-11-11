@@ -479,12 +479,14 @@ export function TrendTable({
               </td>
               {canWrite && (
                 <td data-label="작업" className="trend-actions">
-                  <button className="button secondary" disabled={creating !== null} onClick={() => onCreate(t)}>
-                    <FilePlus2 size={15} /> 글 만들기
-                  </button>
-                  <button className="icon-button" aria-label={`${t.keyword} 측정값 삭제`} title="삭제" onClick={() => onRemove(t)}>
-                    <Trash2 size={15} />
-                  </button>
+                  <div className="table-actions">
+                    <button className="button secondary" disabled={creating !== null} onClick={() => onCreate(t)}>
+                      <FilePlus2 size={15} /> 글 만들기
+                    </button>
+                    <button className="icon-button" aria-label={`${t.keyword} 측정값 삭제`} title="삭제" onClick={() => onRemove(t)}>
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </td>
               )}
             </tr>

@@ -8,6 +8,7 @@ import {
   importRevenue,
   revenueSendNotice,
   sendRevenueChunks,
+  unallocatedRevenue,
   pageSummaries,
   parseRevenue,
   REVENUE_STORAGE_KEY,
@@ -159,6 +160,7 @@ export function Analytics() {
   const shown = filterRevenueByBlog(rows, articles, blogFilter);
   const summaries = summarize(shown);
   const pages = pageSummaries(shown, articles);
+  const unallocated = blogFilter === ALL_BLOGS ? [] : summarize(unallocatedRevenue(rows));
   const est = single(summaries, "estimated", (s) => (s.revenue === null ? null : formatMoney(s.revenue, s.currency)));
   const fin = single(summaries, "finalized", (s) => (s.revenue === null ? null : formatMoney(s.revenue, s.currency)));
   const rpm = single(summaries, "estimated", (s) => (s.rpm === null ? null : formatMoney(s.rpm, s.currency)));
@@ -189,7 +191,7 @@ export function Analytics() {
           <BlogFilter account={mode === "account"} value={blogFilter} onChange={setBlogFilter} />
           {mode === "account" && (
             <p className="metric-note">
-              보고서 행은 공개 URL로 연결된 글의 블로그 계정으로 분류합니다. 사이트 합계 행과 공개 URL이 연결되지 않은 행은 미분류입니다.
+              페이지 행은 글의 공개 URL(없으면 원격 글 URL)로 연결된 블로그 계정으로 분류하며, 연결되지 않은 행은 미분류입니다. 사이트 합계 행은 어느 계정에도 넣지 않고 아래 "계정 미배분 합계"로 따로 보여 줍니다.
             </p>
           )}
         </section>
@@ -344,6 +346,41 @@ export function Analytics() {
               사이트 합계만 사용합니다. RPM은 같은 행에 수익과 조회수가 모두 있을 때만 계산합니다.
             </p>
           </section>}
+
+          {unallocated.length > 0 && (
+            <section className="panel keywords-panel" aria-label="계정 미배분 합계">
+              <h2>계정 미배분 합계</h2>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">출처</th>
+                      <th scope="col">구분</th>
+                      <th scope="col">기간</th>
+                      <th scope="col">수익</th>
+                      <th scope="col">조회수</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unallocated.map((s) => (
+                      <tr key={`${s.source}${s.status}${s.currency}${s.timezone}`}>
+                        <td>{s.source}</td>
+                        <td>{statusLabel[s.status]}</td>
+                        <td>
+                          {s.from} ~ {s.to} ({s.days}일)
+                        </td>
+                        <td>{formatMoney(s.revenue, s.currency)}</td>
+                        <td>{num(s.pageviews)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="metric-note">
+                사이트 전체 합계 행입니다. 계정별로 나눌 수 없어 어느 블로그 계정 필터에도 포함하지 않으며, 위 계정 요약과 합치지 않습니다.
+              </p>
+            </section>
+          )}
 
           {pages.length > 0 && (
             <section className="panel keywords-panel">

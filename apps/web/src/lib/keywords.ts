@@ -48,8 +48,12 @@ export function parseCsv(text: string): string[][] {
   return rows;
 }
 
+/**
+ * Same rule as the SQL keys (0018): NFKC, runs of the six ASCII whitespace characters become one space,
+ * trim, lower case. U+FEFF, U+2028, U+2029 and U+1680 are left alone on both sides.
+ */
 export function normalizePhrase(phrase: string) {
-  return phrase.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+  return phrase.normalize("NFKC").replace(/[ \t\n\r\f\v]+/g, " ").replace(/^ | $/g, "").toLowerCase();
 }
 
 const headerAliases: Record<string, string> = {

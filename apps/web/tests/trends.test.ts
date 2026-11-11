@@ -284,3 +284,44 @@ test("local mode explains the account requirement and claims no connection", () 
 test("the menu links to the trends page", () => {
   assert.match(read("../src/components/shell.tsx"), /href: "\/trends", label: "트렌드 분석"/);
 });
+
+test("a score merges the newest value of each metric inside one blog, category, keyword and source", () => {
+  const rows = [
+    trend({ keyword: "제주", monthlySearches: 100, growthPct: null, documentCount: null, measuredOn: "2026-11-01" }),
+    trend({ keyword: "제주", monthlySearches: null, growthPct: 5, documentCount: 50, measuredOn: "2026-11-03" }),
+    trend({ keyword: "제주", monthlySearches: 300, growthPct: null, documentCount: null, measuredOn: "2026-11-02" }),
+    trend({ keyword: "부산", monthlySearches: 10, growthPct: 1, documentCount: null, measuredOn: "2026-11-05" }),
+  ];
+  const [jeju] = latestTrends(rows).filter((t) => t.keyword === "제주");
+  assert.deepEqual([jeju.monthlySearches, jeju.growthPct, jeju.documentCount, jeju.measuredOn], [300, 5, 50, "2026-11-03"]);
+  const scored = scoreTrends(latestTrends(rows));
+  assert.notEqual(scored.find((t) => t.keyword === "제주")!.score, null);
+  assert.equal(scored.find((t) => t.keyword === "부산")!.score, null); // no document count in any row
+  assert.deepEqual(scored.find((t) => t.keyword === "부산")!.missing, ["문서 수"]);
+});
+
+test("merging only uses rows of the period, and never crosses blog, category or source", () => {
+  const rows = [
+    trend({ keyword: "k", monthlySearches: 100, growthPct: null, documentCount: 5, measuredOn: "2026-09-01" }),
+    trend({ keyword: "k", monthlySearches: null, growthPct: 2, documentCount: null, measuredOn: "2026-11-01" }),
+    trend({ keyword: "k", category: "맛집", monthlySearches: 9, growthPct: 9, documentCount: 9, measuredOn: "2026-11-01" }),
+  ];
+  const f = { blog: ALL_BLOGS, category: ALL_CATEGORIES, period: "30" as const, today: "2026-11-10" };
+  const travel = analyzeTrends(rows, f).filter((t) => t.category === "여행");
+  assert.equal(travel.length, 1);
+  assert.equal(travel[0].score, null); // the September values are outside the period
+  const all = analyzeTrends(rows, { ...f, period: "all" }).filter((t) => t.category === "여행");
+  assert.notEqual(all[0].score, null);
+  const food = analyzeTrends(rows, f).filter((t) => t.category === "맛집");
+  assert.notEqual(food[0].score, null); // categories are scored apart
+  assert.notEqual(food[0].group, travel[0].group);
+});
+
+test("rows of one file with the same key but other values are conflicts, the first stays", () => {
+  const csv = "keyword,volume,growth,documents\na,10,1,5\nA,10,1,5\na,99,1,5\n";
+  const r = importTrends(csv, [], opts);
+  assert.equal(r.added, 1);
+  assert.equal(r.duplicates, 1);
+  assert.equal(r.conflicts, 1);
+  assert.equal(r.rows[0].monthlySearches, 10);
+});

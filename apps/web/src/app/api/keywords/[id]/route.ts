@@ -1,5 +1,6 @@
 import { dbError, isUuid } from "@/lib/articles-db";
 import { parseBlogLink } from "@/lib/blogs";
+import { ARCHIVED_BLOG_MESSAGE, archivedBlogIds } from "@/lib/blogs-db";
 import { KEYWORD_COLUMNS, rowToKeyword, type KeywordRow } from "@/lib/keywords-db";
 import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
@@ -24,6 +25,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   }
   if (await sharedLimited(account.supabase, `kw:${account.user.id}`, 30, 60_000))
     return json({ error: "요청이 너무 잦습니다." }, 429);
+  if (blogId) {
+    // Archived accounts take no new links; keeping the current one is fine.
+    const current = await account.supabase.from("keywords").select("blog_id").eq("id", id).eq("workspace_id", account.workspaceId).maybeSingle();
+    if (current.error) return json({ error: "키워드를 확인하지 못했습니다." }, 500);
+    if (current.data?.blog_id !== blogId) {
+      try {
+        if ((await archivedBlogIds(account, [blogId])).has(blogId)) return json({ error: ARCHIVED_BLOG_MESSAGE }, 409);
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
+      }
+    }
+  }
   const { data, error } = await account.supabase
     .from("keywords")
     .update({ blog_id: blogId })

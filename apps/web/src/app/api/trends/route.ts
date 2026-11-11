@@ -1,9 +1,10 @@
 import { dbError, isUuid } from "@/lib/articles-db";
 import { requireAccount } from "@/lib/api";
+import { ARCHIVED_BLOG_MESSAGE, archivedBlogIds, storedForBlogs } from "@/lib/blogs-db";
 import { fetchAll } from "@/lib/paging";
 import { json, readJson, sharedLimited } from "@/lib/server";
 import { canEdit } from "@/lib/team";
-import { dbToTrend, parseTrendBatch, TREND_COLUMNS, TREND_CONFLICT, trendsToDbRows, type TrendDbRow } from "@/lib/trends";
+import { dbToTrend, parseTrendBatch, TREND_COLUMNS, TREND_CONFLICT, trendKey, trendsToDbRows, type TrendDbRow } from "@/lib/trends";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,19 @@ export async function POST(req: Request) {
   }
   if (await sharedLimited(account.supabase, `trend:${account.user.id}`, 60, 60_000))
     return json({ error: "요청이 너무 잦습니다." }, 429);
+  try {
+    // Archived accounts take no new records; a measurement that is already stored is just ignored.
+    const archived = await archivedBlogIds(account, rows.map((r) => r.blogId));
+    if (archived.size > 0) {
+      const known = new Set(
+        (await storedForBlogs<TrendDbRow>(account, "keyword_trends", TREND_COLUMNS, [...archived])).map((r) => trendKey(dbToTrend(r))),
+      );
+      if (rows.some((r) => r.blogId !== null && archived.has(r.blogId) && !known.has(trendKey(r))))
+        return json({ error: ARCHIVED_BLOG_MESSAGE }, 409);
+    }
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
+  }
   const { data, error } = await account.supabase
     .from("keyword_trends")
     .upsert(trendsToDbRows(rows, account.workspaceId, account.user.id), { onConflict: TREND_CONFLICT, ignoreDuplicates: true })

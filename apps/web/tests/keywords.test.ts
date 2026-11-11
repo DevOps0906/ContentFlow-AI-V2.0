@@ -108,3 +108,20 @@ test("links by keyword id when present, phrase only for articles without an id",
   assert.equal(byId.keywordId, "k-1");
   assert.equal(ideaFromKeyword("x").keywordId, undefined);
 });
+
+test("normalizePhrase follows the fixed rule shared with the SQL keys", () => {
+  const table: [string, string][] = [
+    ["\t\n Hello \r\n", "hello"], // leading and trailing tab/newline are trimmed
+    ["a\tb", "a b"], // tab in the middle
+    ["a \t\r\n\f\v b", "a b"], // runs of the six spaces collapse
+    ["a b", "a b"], // NBSP: NFKC makes it a space
+    ["　A　B　", "a b"], // ideographic space
+    ["﻿a", "﻿a"], // BOM is not touched
+    ["  ﻿ a  ", "﻿ a"],
+    ["a b", "a b"],
+    ["a b", "a b"],
+    ["a b", "a b"],
+    ["ＨＥＬＬＯ", "hello"],
+  ];
+  for (const [input, expected] of table) assert.equal(normalizePhrase(input), expected, JSON.stringify(input));
+});

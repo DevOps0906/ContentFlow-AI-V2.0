@@ -325,27 +325,63 @@ export function pageSummaries(rows: RevenueRow[], articles: Article[], limit = 2
 }
 
 /**
- * Which blog each confirmed public URL belongs to. Only `publishedUrl` counts: `remote.url` can be
- * a draft link. Articles on different blogs that share a URL can not be told apart, so it is unknown.
+ * Which blog each article URL belongs to, with the same rule as `pageSummaries`: a confirmed
+ * `publishedUrl` wins and `remote.url` only fills URLs no published article claims. Articles on
+ * different blogs that share a URL can not be told apart, so it is unknown (null).
  */
-function publicUrlBlogs(articles: Article[]) {
+function articleUrlBlogs(articles: Article[]) {
   const byUrl = new Map<string, string | null>();
+  const claim = (url: string, blog: string | null) => {
+    const key = normalizePage(url);
+    byUrl.set(key, byUrl.has(key) && byUrl.get(key) !== blog ? null : blog);
+  };
+  const published = new Set<string>();
   for (const a of articles) {
     if (!a.publishedUrl) continue;
-    const url = normalizePage(a.publishedUrl);
-    const blog = a.blogId ?? null;
-    byUrl.set(url, byUrl.has(url) && byUrl.get(url) !== blog ? null : blog);
+    published.add(normalizePage(a.publishedUrl));
+    claim(a.publishedUrl, a.blogId ?? null);
   }
+  const remote = new Map<string, string | null>();
+  for (const a of articles) {
+    if (!a.remote?.url || published.has(normalizePage(a.remote.url))) continue;
+    const key = normalizePage(a.remote.url);
+    const blog = a.blogId ?? null;
+    remote.set(key, remote.has(key) && remote.get(key) !== blog ? null : blog);
+  }
+  for (const [key, blog] of remote) byUrl.set(key, blog);
   return byUrl;
 }
 /**
- * Rows of one blog filter. A row with no linked public URL (site totals included) is unclassified:
- * revenue that can not be attributed is never assigned to an account by guess.
+ * Page rows of one blog filter. A page row whose URL is not linked to an article with an account is
+ * unclassified. Site totals (no page) belong to no account in any filter but "all": they are shown
+ * apart by `unallocatedRevenue`, so the filters never overlap.
  */
 export function filterRevenueByBlog(rows: RevenueRow[], articles: Article[], filter: BlogFilterValue): RevenueRow[] {
   if (filter === ALL_BLOGS) return rows;
-  const byUrl = publicUrlBlogs(articles);
-  return rows.filter((r) => matchesBlogFilter(r.page === "" ? null : byUrl.get(normalizePage(r.page)), filter));
+  const byUrl = articleUrlBlogs(articles);
+  return rows.filter((r) => r.page !== "" && matchesBlogFilter(byUrl.get(normalizePage(r.page)), filter));
+}
+/** The site-level total rows: revenue no account can claim. */
+export const unallocatedRevenue = (rows: RevenueRow[]) => rows.filter((r) => r.page === "");
+
+/**
+ * Splits a list into chunks of at most `size`. With `groupKey`, consecutive items with the same key
+ * (the values of one CSV row) never end up in two chunks; a chunk may be a little shorter then.
+ */
+export function chunkList<T>(list: T[], size: number, groupKey?: (item: T) => string): T[][] {
+  const chunks: T[][] = [];
+  let i = 0;
+  while (i < list.length) {
+    let end = Math.min(i + size, list.length);
+    if (groupKey && end < list.length) {
+      let cut = end;
+      while (cut > i && groupKey(list[cut - 1]) === groupKey(list[cut])) cut--;
+      if (cut > i) end = cut;
+    }
+    chunks.push(list.slice(i, end));
+    i = end;
+  }
+  return chunks;
 }
 
 export type RevenueSendResult = { added: number; duplicates: number; failure: string | null; reloaded: boolean };
@@ -358,13 +394,14 @@ export async function sendRevenueChunks<T>(
   send: (rows: T[]) => Promise<{ added?: unknown; duplicates?: unknown }>,
   reload: () => Promise<unknown>,
   size = 1000,
+  groupKey?: (item: T) => string,
 ): Promise<RevenueSendResult> {
   let added = 0;
   let duplicates = 0;
   let failure: string | null = null;
   try {
-    for (let i = 0; i < list.length; i += size) {
-      const r = await send(list.slice(i, i + size));
+    for (const chunk of chunkList(list, size, groupKey)) {
+      const r = await send(chunk);
       added += Number(r.added ?? 0);
       duplicates += Number(r.duplicates ?? 0);
     }

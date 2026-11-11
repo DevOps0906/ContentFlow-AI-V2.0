@@ -29,6 +29,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0015_blog_accounts.sql
 \ir ../migrations/0016_keyword_trends.sql
 \ir ../migrations/0017_blog_metric_snapshots.sql
+\ir ../migrations/0018_review_fixes.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -1308,6 +1309,118 @@ select expect_count($$select count(*) from blog_metric_snapshots where tool = 'c
 select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
 delete from blog_metric_snapshots where tool = 'clarity';
 select expect_count($$select count(*) from blog_metric_snapshots where tool = 'clarity'$$, 0, 'an editor can delete a wrong record');
+
+-- ---- 0018 review fixes ----
+-- Fixed character table. The same input -> key pairs are in the app's JS test (normalizePhrase).
+reset role;
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    (1, E'\tAbc\t', 'abc'),
+    (2, E'\n Foo Bar \n', 'foo bar'),
+    (3, E'\r\f' || chr(11) || ' x ' || chr(11) || E'\f\r', 'x'),
+    (4, E'a\tb', 'a b'),
+    (5, E'a \t\n\r\f' || chr(11) || ' b', 'a b'),
+    (6, 'a' || chr(160) || 'b', 'a b'),
+    (7, chr(160) || 'a' || chr(160) || ' ' || E'\t', 'a'),
+    (8, 'a' || chr(12288) || chr(12288) || 'b', 'a b'),
+    (9, chr(12288) || 'a' || chr(12288), 'a'),
+    (10, chr(65279) || 'A', chr(65279) || 'a'),
+    (11, 'a' || chr(65279) || 'b', 'a' || chr(65279) || 'b'),
+    (12, 'a' || chr(8232) || 'b', 'a' || chr(8232) || 'b'),
+    (13, 'a' || chr(8233) || 'b', 'a' || chr(8233) || 'b'),
+    (14, 'a' || chr(5760) || 'b', 'a' || chr(5760) || 'b'),
+    (15, 'ＡＢＣ  Ｄ', 'abc d'),
+    (16, '  여행   준비물 ', '여행 준비물')
+  ) as t(n, input, want)
+  loop
+    if cf_norm_key(r.input) is distinct from r.want then
+      raise exception 'FAIL: key row % (got %, want %)', r.n, encode(convert_to(cf_norm_key(r.input), 'UTF8'), 'hex'), encode(convert_to(r.want, 'UTF8'), 'hex');
+    end if;
+  end loop;
+  raise notice 'PASS: the fixed character table gives the expected keys';
+end $$;
+select expect_count($$select count(*) from pg_proc where proname in ('enforce_keyword_trend_cap', 'enforce_blog_metric_cap') and prosrc like '%pg_advisory_xact_lock%'$$, 2, 'both caps count under an advisory lock');
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- authenticated
+select expect_error($$select assert_blog_active('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a1')$$, 'permission denied', 'authenticated can not call assert_blog_active directly');
+reset role;
+select expect_count($$select count(*) from (select 1 where has_function_privilege('anon', 'assert_blog_active(uuid, uuid)', 'execute') or has_function_privilege('authenticated', 'assert_blog_active(uuid, uuid)', 'execute')) x$$, 0, 'neither anon nor authenticated holds execute on assert_blog_active');
+
+-- the stored key columns follow the same rule
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+select ins_trend('10000000-0000-0000-0000-00000000000a', null, E'\t탭\t키워드\n', '표', '2026-11-03', '00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from keyword_trends where keyword_key = '탭 키워드'$$, 1, 'tabs and line breaks give the same trend key as spaces');
+select ins_trend('10000000-0000-0000-0000-00000000000a', null, '탭 키워드', '표', '2026-11-03', '00000000-0000-0000-0000-0000000000a1', '5');
+select ins_trend('10000000-0000-0000-0000-00000000000a', null, '탭' || chr(160) || chr(12288) || '키워드', '표', '2026-11-03', '00000000-0000-0000-0000-0000000000a1', '5');
+select expect_count($$select count(*) from keyword_trends where keyword_key = '탭 키워드'$$, 1, 'NBSP and ideographic space duplicates are skipped');
+select ins_metric('10000000-0000-0000-0000-00000000000a', null, 'gsc', '클릭수', 'query', E'탭\t질의', '2026-11-03', '00000000-0000-0000-0000-0000000000a1');
+select ins_metric('10000000-0000-0000-0000-00000000000a', null, 'gsc', E'클릭수\n', 'query', '탭 질의', '2026-11-03', '00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from blog_metric_snapshots where scope = 'query' and dimension_key = md5('탭 질의') and measured_on = '2026-11-03'$$, 1, 'a tab inside a query and a trailing line break in a metric are the same measurement');
+insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, evidence_url, created_by) values ('10000000-0000-0000-0000-00000000000a', 'other', 'url', 1, '2026-11-03', 'HTTPS://a.example/x', '00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from blog_metric_snapshots where evidence_url = 'HTTPS://a.example/x'$$, 1, 'an upper-case scheme passes the evidence URL check');
+select expect_error($$insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, evidence_url, created_by) values ('10000000-0000-0000-0000-00000000000a', 'other', 'url2', 1, '2026-11-03', 'JavaScript:alert(1)', '00000000-0000-0000-0000-0000000000a1')$$, 'evidence_url_check', 'a mixed-case javascript scheme is still rejected');
+
+-- archived accounts: no new link, no new record; existing values stay
+reset role;
+insert into blogs (id, workspace_id, platform, domain, display_name, status) values
+  ('20000000-0000-0000-0000-0000000000a3', '10000000-0000-0000-0000-00000000000a', 'naver', 'old.naver.com', '보관 블로그', 'archived'),
+  ('20000000-0000-0000-0000-0000000000a4', '10000000-0000-0000-0000-00000000000a', 'naver', 'soon.naver.com', '곧 보관', 'active');
+insert into keywords (id, workspace_id, phrase, created_by, blog_id) values
+  ('50000000-0000-0000-0000-0000000000c4', '10000000-0000-0000-0000-00000000000a', '곧 보관될 키워드', '00000000-0000-0000-0000-0000000000a1', '20000000-0000-0000-0000-0000000000a4');
+select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a4', '보관 전 기록', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a1');
+select ins_metric('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a4', 'bseupi', '보관 전 지수', 'site', '', '2026-11-04', '00000000-0000-0000-0000-0000000000a1');
+update articles set blog_id = '20000000-0000-0000-0000-0000000000a4' where id = '30000000-0000-0000-0000-000000000104';
+update blogs set status = 'archived' where id = '20000000-0000-0000-0000-0000000000a4';
+
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+select expect_error($$insert into keywords (workspace_id, phrase, created_by, blog_id) values ('10000000-0000-0000-0000-00000000000a', '보관 연결', '00000000-0000-0000-0000-0000000000a1', '20000000-0000-0000-0000-0000000000a3')$$, 'archived', 'a new keyword can not link to an archived blog');
+select expect_error($$update keywords set blog_id = '20000000-0000-0000-0000-0000000000a3' where id = '50000000-0000-0000-0000-0000000000b1'$$, 'archived', 'a keyword can not be moved to an archived blog');
+update keywords set note = '메모', blog_id = '20000000-0000-0000-0000-0000000000a4' where id = '50000000-0000-0000-0000-0000000000c4';
+select expect_count($$select count(*) from keywords where id = '50000000-0000-0000-0000-0000000000c4' and note = '메모' and blog_id = '20000000-0000-0000-0000-0000000000a4'$$, 1, 'a keyword keeps its archived blog when other columns change');
+select expect_error($$update articles set blog_id = '20000000-0000-0000-0000-0000000000a3' where id = '30000000-0000-0000-0000-000000000104'$$, 'archived', 'an article can not be moved to an archived blog');
+update articles set blog_id = '20000000-0000-0000-0000-0000000000a4' where id = '30000000-0000-0000-0000-000000000104';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-000000000104' and blog_id = '20000000-0000-0000-0000-0000000000a4'$$, 1, 'an article keeps an archived blog when the same value is written');
+select expect_error($$insert into articles (workspace_id, owner_id, blog_id) values ('10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1', '20000000-0000-0000-0000-0000000000a3')$$, 'archived', 'a new article can not start in an archived blog');
+select expect_error($$select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a3', '새 기록', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a1')$$, 'archived', 'a new trend row is refused for an archived blog');
+select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a4', '보관 전 기록', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a1', '777');
+select expect_count($$select count(*) from keyword_trends where keyword = '보관 전 기록' and monthly_searches = 100$$, 1, 're-inserting an existing trend row of an archived blog is ignored');
+select expect_error($$select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a4', '보관 후 기록', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a1')$$, 'archived', 'a new key under an archived blog is refused');
+select expect_error($$select ins_metric('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a3', 'other', '새 지표', 'site', '', '2026-11-04', '00000000-0000-0000-0000-0000000000a1')$$, 'archived', 'a new record is refused for an archived blog');
+select ins_metric('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a4', 'bseupi', '보관 전 지수', 'site', '', '2026-11-04', '00000000-0000-0000-0000-0000000000a1', '999');
+select expect_count($$select count(*) from blog_metric_snapshots where metric = '보관 전 지수' and value = 10$$, 1, 're-inserting an existing record of an archived blog is ignored');
+select expect_count($$select count(*) from keyword_trends where blog_id = '20000000-0000-0000-0000-0000000000a4'$$, 1, 'records of an archived blog stay readable');
+-- an editor can not lock blog rows directly, so the check must not need it
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
+select expect_error($$select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a3', '편집자 보관', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a2')$$, 'archived', 'an editor also gets the archived message');
+select ins_trend('10000000-0000-0000-0000-00000000000a', '20000000-0000-0000-0000-0000000000a2', '편집자 활성', '표', '2026-11-04', '00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from keyword_trends where keyword = '편집자 활성'$$, 1, 'an editor can still record for an active blog');
+
+-- limits: a full workspace still ignores duplicates and refuses new rows
+reset role;
+alter table keyword_trends disable trigger keyword_trends_cap;
+insert into keyword_trends (workspace_id, keyword, category, monthly_searches, source, measured_on, created_by)
+  select '10000000-0000-0000-0000-00000000000a', 'fill-' || g, 'IT', 1, 'fill', date '2026-01-01', '00000000-0000-0000-0000-0000000000a1'
+  from generate_series(1, 20000 - (select count(*)::int from keyword_trends where workspace_id = '10000000-0000-0000-0000-00000000000a')) g;
+alter table keyword_trends enable trigger keyword_trends_cap;
+alter table blog_metric_snapshots disable trigger blog_metric_snapshots_cap;
+insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, created_by)
+  select '10000000-0000-0000-0000-00000000000a', 'other', 'fill-' || g, 1, date '2026-01-01', '00000000-0000-0000-0000-0000000000a1'
+  from generate_series(1, 30000 - (select count(*)::int from blog_metric_snapshots where workspace_id = '10000000-0000-0000-0000-00000000000a')) g;
+alter table blog_metric_snapshots enable trigger blog_metric_snapshots_cap;
+select expect_count($$select count(*) from keyword_trends where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 20000, 'the trend table is full');
+select expect_count($$select count(*) from blog_metric_snapshots where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 30000, 'the record table is full');
+
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+select ins_trend('10000000-0000-0000-0000-00000000000a', null, ' FILL-1 ', 'fill', '2026-01-01', '00000000-0000-0000-0000-0000000000a1', '5');
+select expect_count($$select count(*) from keyword_trends where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 20000, 'a duplicate trend row passes a full workspace and adds nothing');
+select expect_error($$select ins_trend('10000000-0000-0000-0000-00000000000a', null, '초과 키워드', 'fill', '2026-01-01', '00000000-0000-0000-0000-0000000000a1')$$, 'keyword trend limit reached \(20000 per workspace\)', 'a new trend row over the limit is refused');
+select ins_metric('10000000-0000-0000-0000-00000000000a', null, 'other', ' FILL-1 ', 'site', '', '2026-01-01', '00000000-0000-0000-0000-0000000000a1', '5');
+select expect_count($$select count(*) from blog_metric_snapshots where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 30000, 'a duplicate record passes a full workspace and adds nothing');
+select expect_error($$select ins_metric('10000000-0000-0000-0000-00000000000a', null, 'other', '초과 지표', 'site', '', '2026-01-01', '00000000-0000-0000-0000-0000000000a1')$$, 'blog metric limit reached \(30000 per workspace\)', 'a new record over the limit is refused');
+reset role;
+delete from keyword_trends where source = 'fill';
+delete from blog_metric_snapshots where metric like 'fill-%';
 
 -- the lifecycle function itself agrees with the table
 reset role;

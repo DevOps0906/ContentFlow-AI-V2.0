@@ -76,6 +76,8 @@ function checkInput(r: MetricInput): MetricInput {
     throw new Error("근거 URL은 http(s)://로 시작하는 2000자 이하 주소여야 합니다.");
   return r;
 }
+/** Trims only the six ASCII spaces, like btrim plus the key rule in SQL (0018): page keys must match the database. */
+export const trimSpaces = (s: string) => s.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
 const round4 = (n: number) => Math.round(n * 10000) / 10000; // value keeps four decimals
 
 /** "1,234" / "-3.5" / "12%" → number; anything else is a label as the tool showed it (e.g. a grade). */
@@ -132,7 +134,7 @@ export function parseMetricBatch(input: unknown, now = new Date()): MetricInput[
         tool: t.tool as MetricTool,
         metric: str(t.metric),
         scope: t.scope as MetricScope,
-        dimension: str(t.dimension),
+        dimension: typeof t.dimension === "string" ? trimSpaces(t.dimension) : str(t.dimension),
         value: t.value === null ? null : round4(t.value),
         valueLabel: t.valueLabel === null ? null : t.valueLabel.trim(),
         unit: str(t.unit),
@@ -149,7 +151,9 @@ export function parseMetricBatch(input: unknown, now = new Date()): MetricInput[
 const SEP = "\u001f";
 /** Same columns and normalization as the blog_metric_snapshots_measurement_key constraint. */
 export const metricKey = (r: MetricInput) =>
-  [r.blogId ?? "", r.tool, normalizePhrase(r.metric), r.scope, r.scope === "query" ? normalizePhrase(r.dimension) : r.dimension.trim(), r.measuredOn].join(SEP);
+  [r.blogId ?? "", r.tool, normalizePhrase(r.metric), r.scope, r.scope === "query" ? normalizePhrase(r.dimension) : trimSpaces(r.dimension), r.measuredOn].join(SEP);
+/** The values of one CSV row share this key: they are sent in the same request. */
+export const metricRowKey = (r: MetricInput) => [r.blogId ?? "", r.tool, r.scope, r.dimension, r.measuredOn].join(SEP);
 const sameValue = (a: MetricInput, b: MetricInput) => a.value === b.value && a.valueLabel === b.valueLabel;
 
 // ---------- Search Console CSV ----------
@@ -187,7 +191,7 @@ export type MetricImport = {
   rows: MetricInput[];
   added: number;
   duplicates: number;
-  /** Same measurement already stored with another value. Skipped: the stored value stays. */
+  /** Same measurement with another value, already stored or earlier in the same file. Skipped: the first value stays. */
   conflicts: number;
   invalid: { line: number; reason: string }[];
 };
@@ -212,12 +216,12 @@ export function importGsc(csv: string, existing: MetricInput[], opts: GscImportO
   const metrics = (Object.keys(GSC_METRICS) as GscMetric[]).filter((m) => cols[m] !== undefined);
   if (metrics.length === 0) throw new Error("클릭수·노출수·CTR·게재순위 중 하나 이상의 열이 필요합니다.");
   const stored = new Map(existing.map((r) => [metricKey(r), r]));
-  const seen = new Set<string>();
+  const seen = new Map<string, MetricInput>();
   const result: MetricImport = { scope, rows: [], added: 0, duplicates: 0, conflicts: 0, invalid: [] };
   rows.slice(1).forEach((r, idx) => {
     const line = idx + 2;
     const bad = (reason: string) => void result.invalid.push({ line, reason });
-    const dimension = (r[cols[scope]!] ?? "").trim();
+    const dimension = trimSpaces(r[cols[scope]!] ?? "");
     if (!dimension) return bad(scope === "query" ? "검색어가 비어 있습니다." : "페이지 주소가 비어 있습니다.");
     let values: MetricInput[];
     try {
@@ -231,20 +235,29 @@ export function importGsc(csv: string, existing: MetricInput[], opts: GscImportO
       return bad(e instanceof Error ? e.message : "값이 올바르지 않습니다.");
     }
     if (values.length === 0) return bad("값이 모두 비어 있습니다.");
+    // Classify first: a row that would pass the limit is left out as a whole, none of its values are added.
+    const fresh: MetricInput[] = [];
+    let dup = 0;
+    let conflict = 0;
+    const inRow = new Map<string, MetricInput>();
     for (const v of values) {
       const key = metricKey(v);
-      const old = stored.get(key);
+      const old = stored.get(key) ?? seen.get(key) ?? inRow.get(key);
       if (old) {
-        if (sameValue(old, v)) result.duplicates++;
-        else result.conflicts++;
-      } else if (seen.has(key)) result.duplicates++;
-      else if (existing.length + result.rows.length >= MAX_METRICS) return bad(`최대 ${MAX_METRICS.toLocaleString("en-US")}개까지 저장할 수 있습니다.`);
-      else {
-        seen.add(key);
-        result.rows.push(v);
-        result.added++;
+        if (sameValue(old, v)) dup++;
+        else conflict++;
+      } else {
+        inRow.set(key, v);
+        fresh.push(v);
       }
     }
+    if (existing.length + result.rows.length + fresh.length > MAX_METRICS)
+      return bad(`최대 ${MAX_METRICS.toLocaleString("en-US")}개까지 저장할 수 있습니다.`);
+    for (const v of fresh) seen.set(metricKey(v), v);
+    result.rows.push(...fresh);
+    result.added += fresh.length;
+    result.duplicates += dup;
+    result.conflicts += conflict;
   });
   return result;
 }

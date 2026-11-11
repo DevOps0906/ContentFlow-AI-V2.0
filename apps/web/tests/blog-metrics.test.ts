@@ -10,7 +10,11 @@ import {
   METRIC_COLUMNS,
   METRIC_CONFLICT,
   METRIC_LIMITS,
+  MAX_METRICS,
   METRIC_TOOLS,
+  metricKey,
+  metricRowKey,
+  trimSpaces,
   metricFromForm,
   parseMetricBatch,
   TOOL_INFO,
@@ -19,6 +23,7 @@ import {
   type MetricSnapshot,
 } from "../src/lib/blog-metrics";
 import { ALL_BLOGS, UNCLASSIFIED_BLOGS, type Blog } from "../src/lib/blogs";
+import { chunkList } from "../src/lib/revenue";
 import { BlogMetrics, IndexTrend, MetricTable, ToolBundles } from "../src/components/blog-metrics";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
@@ -209,4 +214,45 @@ test("the record table labels every cell and hides actions from read-only member
 
 test("the analytics page shows the records under the shared blog filter", () => {
   assert.match(read("../src/components/analytics.tsx"), /<BlogMetrics account=\{mode === "account"\} blogFilter=\{blogFilter\} \/>/);
+});
+
+test("a file's same query twice with other values is a conflict, the first stays", () => {
+  const csv = "Top queries,Clicks\na,10\nA,10\na,99\n";
+  const r = importGsc(csv, [], opts);
+  assert.equal(r.added, 1);
+  assert.equal(r.duplicates, 1);
+  assert.equal(r.conflicts, 1);
+  assert.equal(r.rows[0].value, 10);
+});
+
+test("a row that would pass the limit is left out as a whole, none of its values are added", () => {
+  const csv = "Top queries,Clicks,Impressions\na,1,2\nb,3,4\n";
+  const existing = Array.from({ length: MAX_METRICS - 3 }, (_, i) => snap({ dimension: `q${i}`, scope: "query", tool: "gsc", metric: "클릭수", value: 1, valueLabel: null, measuredOn: "2026-10-01" }));
+  const r = importGsc(csv, existing, opts);
+  assert.deepEqual(r.rows.map((x) => x.dimension), ["a", "a"]); // row "b" needs 2 values and only 1 slot is left
+  assert.equal(r.added, 2);
+  assert.deepEqual(r.invalid.map((i) => i.line), [3]);
+});
+
+test("sending in chunks never splits the values of one CSV row", () => {
+  const csv = "Top queries,Clicks,Impressions,CTR\n" + Array.from({ length: 5 }, (_, i) => `q${i},1,2,3%`).join("\n");
+  const list = importGsc(csv, [], opts).rows; // 15 values, 3 per row
+  const chunks = chunkList(list, 4, metricRowKey);
+  assert.deepEqual(chunks.map((c) => c.length), [3, 3, 3, 3, 3]);
+  for (const c of chunks) assert.equal(new Set(c.map((x) => x.dimension)).size, 1);
+  assert.equal(chunks.flat().length, list.length);
+  assert.deepEqual(chunkList([1, 2, 3, 4, 5], 2).map((c) => c.length), [2, 2, 1]); // without a key: plain split
+  assert.deepEqual(chunkList(list.slice(0, 3), 2, metricRowKey).map((c) => c.length), [2, 1]); // a group larger than the size can only be split
+});
+
+test("page keys trim only the six ASCII spaces, like the database", () => {
+  const url = "https://a.example/p";
+  assert.equal(trimSpaces(`\t\n ${url} \r\f\v`), url);
+  assert.equal(trimSpaces(` ${url}　`), ` ${url}　`); // NBSP and ideographic space stay
+  const a = importGsc(`Top pages,Clicks\n ${url},1\n`, [], opts).rows[0];
+  assert.equal(a.dimension, ` ${url}`);
+  assert.notEqual(metricKey(a), metricKey({ ...a, dimension: url }));
+  assert.equal(metricKey({ ...a, dimension: ` ${url}\t` }), metricKey({ ...a, dimension: url }));
+  const row = { ...snap({ scope: "page", dimension: `\n${url} `, value: 1, valueLabel: null }), id: undefined };
+  assert.equal(parseMetricBatch({ rows: [row] }, NOW)[0].dimension, url);
 });

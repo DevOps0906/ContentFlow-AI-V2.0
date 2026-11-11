@@ -2616,10 +2616,9 @@ footer {
   color: var(--ink);
   font-weight: 550;
 }
-.trend-actions {
-  display: flex;
+.trend-actions .table-actions {
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
 }
 .trend-more {
   margin-top: 12px;

@@ -81,7 +81,7 @@ export type TrendImport = {
   rows: KeywordTrendInput[];
   added: number;
   duplicates: number;
-  /** Same measurement already stored with other values. Skipped: the stored values stay. */
+  /** Same measurement with other values, already stored or earlier in the same file. Skipped: the first values stay. */
   conflicts: number;
   invalid: { line: number; reason: string }[];
 };
@@ -103,7 +103,7 @@ export function importTrends(csv: string, existing: KeywordTrendInput[], opts: T
   const cell = (r: string[], c: number | undefined) => (c === undefined ? "" : (r[c] ?? "").trim());
   const stored = new Map(existing.map((t) => [trendKey(t), t]));
   const result: TrendImport = { rows: [], added: 0, duplicates: 0, conflicts: 0, invalid: [] };
-  const seen = new Set<string>();
+  const seen = new Map<string, KeywordTrendInput>();
   rows.slice(1).forEach((r, idx) => {
     const line = idx + 2;
     const bad = (reason: string) => void result.invalid.push({ line, reason });
@@ -133,9 +133,10 @@ export function importTrends(csv: string, existing: KeywordTrendInput[], opts: T
       else result.conflicts++;
       return;
     }
-    if (seen.has(key)) return void result.duplicates++;
+    const dup = seen.get(key);
+    if (dup) return void (sameValues(dup, row) ? result.duplicates++ : result.conflicts++);
     if (existing.length + result.rows.length >= MAX_TRENDS) return bad(`최대 ${MAX_TRENDS}행까지 저장할 수 있습니다.`);
-    seen.add(key);
+    seen.set(key, row);
     result.rows.push(row);
     result.added++;
   });
@@ -277,13 +278,36 @@ const missingInputs = (t: KeywordTrend) => [
   ...(t.documentCount === null ? ["문서 수"] : []),
 ];
 
-/** The most recent measurement of each keyword within one blog, category and tool. */
+const METRIC_FIELDS = ["monthlySearches", "growthPct", "documentCount"] as const;
+/**
+ * One record per keyword within one blog, category and tool: each of the three values comes from its
+ * own most recent measurement, so a value entered on another day is merged. A value no row has stays null.
+ * `measuredOn` is the latest day among the rows.
+ */
 export function latestTrends(rows: KeywordTrend[]): KeywordTrend[] {
   const latest = new Map<string, KeywordTrend>();
+  const dates = new Map<string, Partial<Record<(typeof METRIC_FIELDS)[number], string>>>();
   for (const t of rows) {
     const key = groupKey(t) + SEP + k(t.keyword);
     const held = latest.get(key);
-    if (!held || t.measuredOn > held.measuredOn) latest.set(key, t);
+    const seen = dates.get(key) ?? {};
+    if (!held) {
+      latest.set(key, { ...t });
+      dates.set(key, Object.fromEntries(METRIC_FIELDS.filter((f) => t[f] !== null).map((f) => [f, t.measuredOn])));
+      continue;
+    }
+    for (const f of METRIC_FIELDS) {
+      if (t[f] !== null && (seen[f] === undefined || t.measuredOn > seen[f]!)) {
+        held[f] = t[f];
+        seen[f] = t.measuredOn;
+      }
+    }
+    if (t.measuredOn > held.measuredOn) {
+      held.measuredOn = t.measuredOn;
+      held.id = t.id;
+      held.keyword = t.keyword;
+    }
+    dates.set(key, seen);
   }
   return [...latest.values()];
 }
