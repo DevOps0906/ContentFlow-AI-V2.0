@@ -21,7 +21,19 @@
 |---|---|---|
 | ![로그인](docs/07-design/screens/14-login.png) | ![목록](docs/07-design/screens/11-content-list-data.png) | ![편집기](docs/07-design/screens/12-editor-approved.png) |
 
-## 진행 현황 (2026-11-11 기준)
+## 진행 현황 (2026-11-12 기준)
+
+**2026-11-12 추가:** 아래 2026-11-11 목록 이후 작업이다. 마이그레이션 0018까지 로컬 적용.
+
+| 묶음 | 내용 | 제한 |
+|---|---|---|
+| W9~11 리뷰 수정 (0018) | 키 정규화 JS·SQL 통일, 보관 블로그 계정 새 연결·기록 차단, 수익 미배분 합계 분리, 트렌드 카테고리별 점수 | lower()의 일부 특수 문자(Σ·İ) 차이 수용 |
+| W8 브라우저 검증 | e2e 67건: 팀·인증 복구·수익·AI 검수·블로그 계정·트렌드·성과, 키보드, 저장 실패, 500/768/1000/1440px | 실제 운영 메일 미검증 |
+| Supabase 로컬·Cloud 분리 | 주소로 대상 판정, Cloud 필수 설정 점검, env 예시 2종, 로컬·Cloud 스크립트 | Cloud 실제 생성·적용 안 함(승인 필요) |
+| AI API 탭 · Gemini | 설정 → AI API에서 제공자(Gemini·OpenAI)·초안/검수 모델 선택·연결 테스트, 실제 Gemini 초안 생성 확인 | Gemini 단가 미설정 → 비용 N/A |
+| 템플릿 예시 글 | 템플릿 10종 "예시 보기"(가상 정보 예시 글) | 예시 이미지는 Gemini 이미지 결제 전까지 자리표시자 |
+| 화면 정리 | 좌측 메뉴 "나의 워크스페이스" 삭제, 첫 메뉴 대시보드, "환경설정" 이름 변경, 날짜 표시 Asia/Seoul 고정 | — |
+| 모바일 앱 (Capacitor 8) | Android 앱(글 목록·상세·승인 대기, 읽기 전용), 서버 토큰(Bearer) 세션, 대시보드 APK 다운로드 카드, 개발용 APK 첫 빌드·서명 | iOS 미지원, 실기기 설치 확인 전, 개발용은 내부망 http |
 
 **2026-11-11 추가 (MVP 잔여 작업, [계획](tasks/PLAN_MVP_REMAINING.md)):** 아래 표보다 이 목록이 최신이다. 마이그레이션 0007~0017 추가(로컬만 적용, 운영 DB 미적용).
 
@@ -46,7 +58,8 @@
 |---|---|---|
 | PRD MVP 기능 (P0-01~14) | 약 93% (완료 12, 부분 2) | 부분: P0-04 템플릿 예제·필수 블록 차단 없음, P0-12 L02 목차·비교표 없음 |
 | 추가 범위 (블로그 계정·트렌드·성과 도구) | 구현·리뷰 수정 완료 | 0018: 키 정규화 JS·SQL 통일, 보관 계정 새 연결·기록 차단, 미배분 수익 합계 분리, 트렌드 카테고리별 점수 |
-| 출시 준비 항목 8개 | 5/8 (기능 구현·리뷰 수정·브라우저 검증·AI 실키(Gemini)·문서 정합화) | 아래 "남은 개발 단계" 2~8번 미완료 |
+| 출시 준비 항목 8개 | 5/8 (기능 구현·리뷰 수정·브라우저 검증·AI 실키(Gemini)·문서 정합화) |
+| 모바일 앱 (추가 범위) | W0 완료 | 개발용 APK 빌드·대시보드 배포까지. 남음: 실기기 확인, 정식(https) 채널, 구글 로그인, 쓰기 기능 | 아래 "남은 개발 단계" 2~8번 미완료 |
 
 | 마일스톤 (PRD #10) | 상태 |
 |---|---|
@@ -158,7 +171,10 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 비밀번호 재설정 | `/reset` (메일 링크 경유) | [PRD](docs/01-planning/PRD.md) | [reset-form](apps/web/src/components/reset-form.tsx) |
 | 템플릿 라이브러리 | `/templates` | [템플릿](docs/04-content/CONTENT_TEMPLATES.md) | [catalog](apps/web/src/components/catalog.tsx) · [예시 보기](apps/web/src/components/template-example.tsx) |
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
-| 설정/백업·팀 관리 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) |
+| 환경설정(백업·팀·AI API) | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) · [ai-api-panel](apps/web/src/components/ai-api-panel.tsx) |
+| 트렌드 분석 | `/trends` | [계획](tasks/PLAN_MVP_REMAINING.md) | [trends](apps/web/src/components/trends.tsx) |
+| 모바일 앱 다운로드 | `/` 대시보드 카드 | [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) | [mobile-app-card](apps/web/src/components/mobile-app-card.tsx) |
+| 모바일 앱 (Android) | 앱: 로그인·글 목록·상세·승인 대기 | [Capacitor 계획](tasks/PLAN_CAPACITOR_W0.md) | [apps/mobile](apps/mobile/README.md) · [shell-bridge](packages/shell-bridge/src/index.ts) |
 
 [전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
