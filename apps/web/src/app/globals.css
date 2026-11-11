@@ -285,6 +285,7 @@ svg {
 }
 .main-wrap {
   margin-left: var(--sidebar);
+  min-width: 0;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -364,6 +365,7 @@ main {
   width: 100%;
   margin: 0 auto;
   flex: 1;
+  min-width: 0;
 }
 .page-heading {
   display: flex;
@@ -632,7 +634,7 @@ h1 {
 }
 .overview-grid {
   display: grid;
-  grid-template-columns: 1.7fr 1fr;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
   gap: 22px;
   margin-bottom: 24px;
 }
@@ -882,7 +884,13 @@ h1 {
   margin-left: auto;
 }
 .table-scroll {
+  position: relative;
   overflow-x: auto;
+  max-width: 100%;
+}
+.panel,
+.table-scroll {
+  min-width: 0;
 }
 table {
   width: 100%;
@@ -1787,7 +1795,7 @@ footer {
   }
   .overview-grid {
     gap: 16px;
-    grid-template-columns: 1.3fr 1fr;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
   }
   .activity-panel,
   .start-panel {
@@ -1961,9 +1969,10 @@ footer {
   }
   .banner-illustration {
     position: absolute;
-    right: -40px;
+    right: 0;
     top: 35px;
     transform: scale(0.66);
+    transform-origin: right center;
     opacity: 0.7;
     width: 200px;
     height: 180px;
@@ -2004,7 +2013,7 @@ footer {
     font-size: 9px;
   }
   .overview-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     margin-bottom: 18px;
   }

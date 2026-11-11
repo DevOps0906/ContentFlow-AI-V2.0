@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ARCHIVED_BLOG_MESSAGE } from "../src/lib/blogs-db";
-import { appOrigin, parseCredentials, parseEmail, parseNewPassword, safeNext } from "../src/lib/auth";
+import { appOrigin, redirectTarget, parseCredentials, parseEmail, parseNewPassword, safeNext } from "../src/lib/auth";
 import {
   articleToFields,
   dbError,
@@ -148,4 +148,12 @@ test("an archived-account trigger error is a conflict with its own message", () 
   assert.equal(e.status, 409);
   assert.equal(e.message, ARCHIVED_BLOG_MESSAGE);
   assert.match(dbError({ code: "P0001", message: "state change not allowed" }).message, /상태 규칙/);
+});
+
+test("callback redirect uses APP_URL and rejects external next", () => {
+  const env = { APP_URL: "http://127.0.0.1:3392" } as unknown as NodeJS.ProcessEnv;
+  const r = new Request("http://localhost:3392/auth/callback?code=x");
+  assert.equal(redirectTarget(r, "/reset", env).href, "http://127.0.0.1:3392/reset");
+  for (const bad of ["https://evil.example", "//evil.example", "/\\evil.example", null])
+    assert.equal(redirectTarget(r, bad, env).href, "http://127.0.0.1:3392/");
 });

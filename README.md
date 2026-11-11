@@ -46,7 +46,7 @@
 |---|---|---|
 | PRD MVP 기능 (P0-01~14) | 약 93% (완료 12, 부분 2) | 부분: P0-04 템플릿 예제·필수 블록 차단 없음, P0-12 L02 목차·비교표 없음 |
 | 추가 범위 (블로그 계정·트렌드·성과 도구) | 구현·리뷰 수정 완료 | 0018: 키 정규화 JS·SQL 통일, 보관 계정 새 연결·기록 차단, 미배분 수익 합계 분리, 트렌드 카테고리별 점수 |
-| 출시 준비 항목 8개 | 1/8 (기능 구현만 완료) | 아래 "남은 개발 단계" 2~8번 미완료 |
+| 출시 준비 항목 8개 | 3/8 (기능 구현·리뷰 수정·브라우저 검증 완료) | 아래 "남은 개발 단계" 2~8번 미완료 |
 
 | 마일스톤 (PRD #10) | 상태 |
 |---|---|
@@ -61,7 +61,7 @@
 
 1. [x] MVP 잔여 기능(W1~W7)과 블로그 계정별 트렌드·성과 분석(W9~W11) 구현
 2. [x] W9~W11 리뷰 수정 (마이그레이션 0018, [계획](tasks/PLAN_MVP_REMAINING.md)의 "W9~11 리뷰 수정")
-3. [ ] W8 브라우저 검증: 3구간 화면, 키보드 조작, 저장 실패, 실제 WordPress 컨테이너로 slug 선조회 확인 (미완성 스크립트는 로컬에만 있음)
+3. [x] W8 브라우저 검증 (2026-11-12): e2e 67건 통과 — 팀·인증 복구·수익·AI 검수(가짜 서버)·블로그 계정·트렌드·성과, 키보드, 저장 실패, 500/768/1000/1440px 가로 넘침 0, 실제 WordPress 컨테이너 slug 선조회·유지
 4. [ ] 실제 OpenAI 키로 AI 초안·검수 호출과 토큰·비용 기록 검증 (키 필요)
 5. [ ] 클라우드 Supabase 생성과 마이그레이션 0001~0018 적용 (계정·비용 승인 필요). 준비 완료: 로컬/Cloud 환경 분리·점검·스크립트([Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md))
 6. [ ] https 운영 배포와 운영 메일(가입 확인·비밀번호 복구·팀 초대) 설정 (승인 필요)
@@ -140,6 +140,7 @@
 | 로그인(DB 저장) | `.env`에 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` 설정 → 비로그인은 `/login`으로 이동. 미설정이면 로컬 모드. 컨테이너에서는 `host.docker.internal`, https 운영에서는 `COOKIE_SECURE=true`, 가입 차단은 `ALLOW_SIGNUP=false` |
 | DB 마이그레이션 | `npx supabase migration up` (새 환경은 `npx supabase db reset`) |
 | DB 규칙 테스트 | `powershell -File supabase/tests/run.ps1` (Docker 필요) |
+| 브라우저 e2e (W8) | WordPress 컨테이너·로컬 Supabase 실행 → `node apps/web/tests/e2e/start-server.mjs <WP 자격 파일>` → `cd apps/web && node tests/e2e/w8.mjs <WP 자격 파일> <출력 폴더>` (Chrome/Edge 필요, 새 의존성 없음) |
 | WordPress 테스트 | `docker compose -f docker-compose.wp-dev.yml up -d` 후 WP-CLI로 설치·비밀번호 발급 |
 
 AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 `[확인 필요]` 표시가 남아 있으면 검수가 차단되고, WordPress에는 승인된 글만 초안으로 전송된다.

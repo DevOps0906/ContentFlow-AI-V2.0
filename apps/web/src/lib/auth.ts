@@ -45,3 +45,9 @@ export function appOrigin(req: Request, env = process.env): string {
   if (configured) return configured;
   return new URL(req.headers.get("origin") ?? req.url).origin;
 }
+
+/** Redirect target after a callback: always on the app origin, `next` only as a same-site path. */
+export function redirectTarget(req: Request, next: string | null | undefined, env = process.env): URL {
+  const origin = appOrigin(req, env);
+  return new URL(safeNext(next), origin);
+}
