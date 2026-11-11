@@ -141,6 +141,7 @@
 | DB 마이그레이션 | `npx supabase migration up` (새 환경은 `npx supabase db reset`) |
 | DB 규칙 테스트 | `powershell -File supabase/tests/run.ps1` (Docker 필요) |
 | 브라우저 e2e (W8) | WordPress 컨테이너·로컬 Supabase 실행 → `node apps/web/tests/e2e/start-server.mjs <WP 자격 파일>` → `cd apps/web && node tests/e2e/w8.mjs <WP 자격 파일> <출력 폴더>` (Chrome/Edge 필요, 새 의존성 없음) |
+| 모바일 앱 (Capacitor 8, Android) | 개발: `npm run dev -w apps/mobile`(/api를 3410으로 프록시). APK: `CAP_ENV=release VITE_API_BASE=https://… node apps/mobile/scripts/build-apk.mjs`(JDK 21·Android SDK·서명 키 env 필요) → `mobile-dist/app.apk`·`app.json` → 대시보드 "모바일 앱" 카드에서 다운로드. 개발용 채널은 `CAP_ENV=dev`(appId `.dev`). 앱은 읽기 전용(글 목록·상세·승인 대기). 상세: [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md), [apps/mobile/README](apps/mobile/README.md), [계획](tasks/PLAN_CAPACITOR_W0.md) |
 | WordPress 테스트 | `docker compose -f docker-compose.wp-dev.yml up -d` 후 WP-CLI로 설치·비밀번호 발급 |
 
 AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 `[확인 필요]` 표시가 남아 있으면 검수가 차단되고, WordPress에는 승인된 글만 초안으로 전송된다.
@@ -159,7 +160,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
 | 설정/백업·팀 관리 | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) |
 
-[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ContentFlow</string>
+    <string name="title_activity_main">ContentFlow</string>
+    <string name="package_name">com.devops0906.contentflow</string>
+    <string name="custom_url_scheme">com.devops0906.contentflow</string>
+</resources>

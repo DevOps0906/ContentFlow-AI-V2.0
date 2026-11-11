@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { safeNext } from "@/lib/auth";
+import { bearerAllowed, bearerToken, corsHeaders, isTokenPath } from "@/lib/mobile";
 import { sessionCookieOptions, supabaseEnv } from "@/lib/supabase";
 
 // Refreshes the Supabase session cookie and keeps anonymous visitors out. Without Supabase
@@ -9,8 +10,27 @@ import { sessionCookieOptions, supabaseEnv } from "@/lib/supabase";
 const OPEN_PATHS = ["/login", "/auth/callback", "/api/health", "/api/session", "/api/auth/"];
 
 export async function proxy(req: NextRequest) {
+  const path = req.nextUrl.pathname;
+  const cors = path.startsWith("/api/") ? corsHeaders(req.headers.get("origin")) : null;
+  const res = await handle(req, path);
+  if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+  return res;
+}
+
+async function handle(req: NextRequest, path: string): Promise<NextResponse> {
+  if (req.method === "OPTIONS" && path.startsWith("/api/")) {
+    // Preflight: CORS headers (if the Origin is allowed) are added by proxy(). Nothing else.
+    return new NextResponse(null, { status: 204 });
+  }
   const env = supabaseEnv();
   if (!env) return NextResponse.next();
+
+  // Mobile Bearer: no cookie is read. Only read-only routes pass; each route verifies the token.
+  const token = bearerToken(req.headers);
+  if (token !== null) {
+    if (isTokenPath(path) || bearerAllowed(req.method, path)) return NextResponse.next();
+    return NextResponse.json({ error: "허용되지 않은 요청입니다." }, { status: 403 });
+  }
 
   let res = NextResponse.next({ request: req });
   const supabase = createServerClient(env.url, env.key, {
@@ -25,7 +45,6 @@ export async function proxy(req: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getUser();
-  const path = req.nextUrl.pathname;
   const open = OPEN_PATHS.some((p) => path === p || (p.endsWith("/") && path.startsWith(p)));
 
   if (!data.user && !open) {

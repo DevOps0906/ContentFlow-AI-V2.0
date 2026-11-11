@@ -1,0 +1,34 @@
+{
+  "name": "@contentflow/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "check:release": "node scripts/check-release.mjs",
+    "cap:sync": "cap sync android && node scripts/patch-android.mjs"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.1",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/core": "8.6.0",
+    "@contentflow/shell-bridge": "*",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.3",
+    "vite": "8.3.8"
+  }
+}

@@ -9,3 +9,8 @@ out/
 !.env.local.example
 !.env.cloud.example
 .nomad/
+/mobile-dist/
+*.apk
+*.aab
+*.keystore
+*.jks

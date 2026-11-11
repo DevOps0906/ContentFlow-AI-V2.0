@@ -21,6 +21,7 @@ import { dayKey, formatDate, lastDayKeys, shortDay } from "@/lib/date";
 import { NewContentButton, PageHeading } from "./shell";
 import { TemplateCard } from "./template-card";
 import { StatusBadge } from "./status-badge";
+import { MobileAppCard } from "./mobile-app-card";
 
 export function Dashboard() {
   const { articles, ready, mode } = useWorkspace();
@@ -288,6 +289,7 @@ export function Dashboard() {
           </div>
         )}
       </section>
+      {mode === "account" ? <MobileAppCard /> : null}
       <section className="recommended">
         <div className="section-heading">
           <div>

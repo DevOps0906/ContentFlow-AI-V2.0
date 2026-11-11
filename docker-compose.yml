@@ -12,6 +12,11 @@ services:
         required: false
       - path: ${ENV_FILE:-.env.local}
         required: false
+    environment:
+      # APK offered on the dashboard (app.apk + app.json). The folder may be missing.
+      MOBILE_APK_DIR: /app/mobile-dist
+    volumes:
+      - ./mobile-dist:/app/mobile-dist:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

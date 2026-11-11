@@ -49,3 +49,11 @@
 - Bearer: 토큰 발급·갱신·폐기 e2e, 다른 사용자 데이터 접근 불가(RLS), 잘못된 토큰 401, 허용 목록 밖 Origin CORS 거부, 쿠키 경로 회귀 없음(W8 e2e 재실행).
 - 브라우저(모바일 폭)에서 apps/mobile 개발 서버로 로그인→목록→상세 확인.
 - 기존 typecheck·test·build·DB 테스트 통과, `npm audit` high 이상 0.
+
+## 배포 방식 결정 (2026-11-12 사용자): 대시보드에서 내려받아 설치
+- 스토어 대신 대시보드의 "모바일 앱" 카드에서 Android APK를 내려받아 설치(사이드로드). iOS는 사이드로드가 불가하므로 "iOS 미지원(추후 TestFlight)"으로 표시.
+- 서버: `GET /api/mobile/app`(로그인 필요) → {available, version, versionCode, channel(dev|release), sha256, size, builtAt}; `GET /api/mobile/app/download`(로그인 필요) → APK 스트리밍(`Content-Type: application/vnd.android.package-archive`, `Content-Disposition`, `X-Content-SHA256`). 파일은 git·이미지에 넣지 않고 env `MOBILE_APK_DIR`(compose 볼륨 `./mobile-dist` → 컨테이너 읽기 전용 마운트)의 `app.apk` + `app.json`.
+- 화면: 대시보드 카드(버전·채널·크기·SHA-256·설치 방법: "출처를 알 수 없는 앱 설치 허용"·업데이트는 같은 서명 키로만), 파일이 없으면 "아직 배포된 앱 없음"(가짜 버튼 금지). 3구간 반응형, 모바일 브라우저에서 직접 다운로드.
+- 빌드: `apps/mobile/scripts/build-apk.mjs` — `cap sync` → Gradle `assembleRelease`(서명 키는 env `ANDROID_KEYSTORE_PATH`·비밀번호 env, 저장소 밖 보관) → `mobile-dist/app.apk`·`app.json`(sha256) 생성. dev 채널은 `CAP_ENV=dev`(cleartext, LAN IP API)로 구분해 카드에 "개발용" 표시, release는 https API 필수.
+- 제약: 이 PC에 JDK·Android SDK가 없어 APK 빌드는 Android Studio(또는 JDK 21 + SDK) 설치 후. 서명 키를 잃으면 기존 설치본을 업데이트할 수 없다 → 키 백업 필수. release APK가 실제로 동작하려면 https 운영 주소가 필요(로컬 http는 dev 채널만).
+- 스토어 관련 작업(M-011·M-012)은 보류. 계정 삭제 화면(M-009)은 스토어 제출 시 필수였으나 사이드로드에서도 권장.

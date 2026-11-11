@@ -1,3 +1,5 @@
+import { mobileOriginIssues } from "./mobile";
+
 // Pure classification of which Supabase the app points at. No Next.js imports, so it is
 // testable and safe to use from route handlers. Never returns values, only names.
 export type SupabaseTarget = "none" | "local" | "cloud";
@@ -57,5 +59,6 @@ export function supabaseConfigIssues(env = process.env): string[] {
   if (!app) issues.push("APP_URL 필요");
   else if (!app.startsWith("https://")) issues.push("APP_URL은 https여야 함");
   if (!cookieSecure(env)) issues.push("COOKIE_SECURE가 꺼져 있음(cloud는 true 필요)");
+  issues.push(...mobileOriginIssues(env));
   return issues;
 }

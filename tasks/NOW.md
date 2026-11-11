@@ -2,7 +2,8 @@
 
 | 항목 | 상태 |
 |---|---|
-| 진행 중 | Capacitor W0 — 계획 `tasks/PLAN_CAPACITOR_W0.md`(challenger 반영, Bearer 읽기 전용). 다음: builder(서버 Bearer·proxy·CORS) + builder(apps/mobile·shell-bridge) |
+| 직전 완료 3 | Capacitor W0: apps/mobile(Vite+React, Android 프로젝트, 읽기 전용 화면), packages/shell-bridge, 서버 Bearer 세션(읽기 전용 GET 허용 목록·CORS·토큰 발급/갱신/폐기), 대시보드 APK 다운로드 카드(`mobile-dist/`, sha256 검증). e2e: W8 67·모바일 22 통과, 단위 293+8+8 |
+| 다음 | APK 실제 빌드: Android Studio(JDK 21·SDK) 설치 + 서명 키 생성(저장소 밖·백업) 후 `apps/mobile/scripts/build-apk.mjs`. 실기기 확인 시 CF-M-003(보안 저장소) 완료. 휴대폰 접속은 dev 채널(LAN IP, `.dev` appId) 또는 https 운영 |
 | 직전 완료 2 | 템플릿 10종 예시 글·"예시 보기"(이미지는 자리표시자, Gemini 이미지 모델 무료 등급 429 → 결제 후 `scripts/gen-template-images.ts`), GNB 워크스페이스 메뉴 삭제·"환경설정", 하이드레이션 시간대 고정, 로컬 Supabase 가이드 `docs/08-ops/LOCAL_SUPABASE_GUIDE.md`, cloud 스크립트 `--remote` 수정. e2e 27/27, 단위 280 |
 | 직전 완료 | AI 제공자 Gemini(기본)·OpenAI 선택, 설정 "AI API" 탭(제공자·초안/검수 모델·연결 테스트). 실제 Gemini(gemini-3.5-flash) 초안 브라우저 e2e 통과, 키 노출 없음. 단위 277·typecheck·build 통과. 문서 정합화(DB 8절·ERD·WORKFLOWS) 완료. 모두 커밋·푸시 |
 | 키 | 루트 `.env.local`의 `GEMINI_API_KEY`(이름 오타 JEMINI→GEMINI 수정). compose는 `.env` → `${ENV_FILE:-.env.local}` 순서로 읽음. `gemini-3.8-flash`·`gemini-flash-latest`는 이 키에서 무응답이라 기본 3.5-flash |

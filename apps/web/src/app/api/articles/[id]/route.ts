@@ -28,7 +28,7 @@ async function guard(req: Request): Promise<Response | Authed> {
 
 /** The stored copy of one article: the browser compares it with its own before a download. */
 export async function GET(req: Request, ctx: Ctx) {
-  const account = await requireAccount(req);
+  const account = await requireAccount(req, { bearer: true });
   if (account instanceof Response) return account;
   const { id } = await ctx.params;
   if (!isUuid(id)) return json({ error: "잘못된 콘텐츠 ID입니다." }, 400);

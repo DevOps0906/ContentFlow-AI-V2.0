@@ -925,7 +925,12 @@ try {
   await step("인증", "비밀번호 재설정 메일 → 링크 → 새 비밀번호 → 재로그인", async () => {
     await A.clickText("로그아웃");
     await A.waitFor(`location.pathname === "/login"`, 20000, "login");
-    await A.clickText("비밀번호를 잊으셨나요?");
+    // Client handlers attach after hydration: retry the mode switch until the heading changes.
+    for (let i = 0; i < 5; i++) {
+      await sleep(1000);
+      await A.clickText("비밀번호를 잊으셨나요?");
+      if (await A.hasText("재설정 링크를 보내드려요")) break;
+    }
     await A.fill("#email", emailA);
     await A.click("button[type=submit]");
     await A.waitFor(`!!document.querySelector("[role=status], [role=alert]")`, 45000, `reset response (화면: ${await A.eval("location.pathname + ' ' + document.querySelector('h1')?.innerText")})`);

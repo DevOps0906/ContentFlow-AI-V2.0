@@ -2873,3 +2873,79 @@ footer {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* Dashboard: mobile app (APK) card */
+.mobile-app-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.mobile-app-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green);
+  border: 1px solid var(--green);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.mobile-app-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.mobile-app-meta dt {
+  font-size: 10px;
+  color: var(--muted);
+}
+.mobile-app-meta dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.mobile-app-meta .wide {
+  grid-column: 1 / -1;
+}
+.mobile-app-hash {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.mobile-app-card .button {
+  justify-self: start;
+}
+.mobile-app-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+}
+.mobile-app-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mobile-app-card .button:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+@media (max-width: 767px) {
+  .mobile-app-card {
+    padding: 16px;
+  }
+  .mobile-app-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mobile-app-card .button {
+    justify-self: stretch;
+    justify-content: center;
+  }
+  .mobile-app-meta dd,
+  .mobile-app-steps,
+  .mobile-app-note {
+    font-size: 12px;
+  }
+}

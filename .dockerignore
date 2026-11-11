@@ -13,3 +13,9 @@ supabase
 !.env.local.example
 !.env.cloud.example
 **/*.tsbuildinfo
+mobile-dist
+apps/mobile/android
+apps/mobile/dist
+*.apk
+*.keystore
+*.jks
