@@ -28,7 +28,7 @@ export async function GET() {
     }
   }
   return json({
-    ai: { configured: !!ai, model: ai?.model ?? null },
+    ai: { configured: !!ai, model: ai?.model ?? null, provider: ai?.provider ?? null },
     wordpress: { configured: !!wp, host: wp ? new URL(wp.baseUrl).host : null },
     supabase: {
       status: supabase,

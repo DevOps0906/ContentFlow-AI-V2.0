@@ -4,7 +4,7 @@ import type { Article } from "@/lib/content";
 import { parseVerdict, type DeliveryCheck } from "@/lib/delivery";
 
 export type Integrations = {
-  ai: { configured: boolean; model: string | null };
+  ai: { configured: boolean; model: string | null; provider?: "gemini" | "openai" | null };
   wordpress: { configured: boolean; host: string | null };
   supabase: {
     status: "not_configured" | "reachable" | "unreachable";

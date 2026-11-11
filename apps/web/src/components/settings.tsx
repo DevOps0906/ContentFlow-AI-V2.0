@@ -9,6 +9,7 @@ import { TeamPanel } from "./team-panel";
 import { SiteChecks } from "./site-checks";
 import { BlogAccounts } from "./blog-accounts";
 import { ConfirmDialog } from "./dialog";
+import { AiApiPanel } from "./ai-api-panel";
 export function Settings() {
   const { articles, clear, mode, email, importLocal } = useWorkspace();
   const [localCount, setLocalCount] = useState(0);
@@ -25,6 +26,7 @@ export function Settings() {
       setLocalCount(0);
     }
   }, [mode]);
+  const [tab, setTab] = useState<"general" | "ai">("general");
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState("");
   const integrations = useIntegrations();
@@ -35,6 +37,26 @@ export function Settings() {
         title="워크스페이스 설정"
         description="작업 환경과 로컬 콘텐츠의 보관 상태를 확인하세요."
       />
+      <div className="filter-tabs" role="tablist" aria-label="설정 구분">
+        {([["general", "일반"], ["ai", "AI API"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            className={`filter-tab ${tab === id ? "selected" : ""}`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "ai" ? (
+        <section className="panel settings-panel" aria-labelledby="ai-api-title">
+          <h2 id="ai-api-title">AI API</h2>
+          <AiApiPanel />
+        </section>
+      ) : (
+      <>
       <section className="panel settings-panel">
         <h2>나의 블로그 스튜디오</h2>
         <dl className="detail-list">
@@ -53,8 +75,8 @@ export function Settings() {
             {!integrations
               ? "확인 중…"
               : integrations.ai.configured
-                ? `연결됨 · 모델 ${integrations.ai.model}`
-                : "미연결 · OPENAI_API_KEY 필요"}
+                ? `연결됨 · ${integrations.ai.provider === "gemini" ? "Gemini" : "OpenAI"} · 모델 ${integrations.ai.model}`
+                : "미연결 · GEMINI_API_KEY 또는 OPENAI_API_KEY 필요"}
           </dd>
           <dt>WordPress</dt>
           <dd>
@@ -197,6 +219,8 @@ export function Settings() {
           <ExternalLink size={13} />
         </a>
       </section>
+      </>
+      )}
       {confirm && (
         <ConfirmDialog
           title="모든 로컬 콘텐츠를 초기화할까요?"

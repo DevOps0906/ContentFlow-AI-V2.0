@@ -4,7 +4,7 @@ import { estimateCost, parseUsage, runModel, runSummary, type RunLog } from "../
 import { aiConfig, reviewConfig, type AiConfig } from "../src/lib/server";
 
 const price = { inputPer1M: 1, outputPer1M: 2, currency: "USD" };
-const config: AiConfig = { apiKey: "secret-key", model: "m", baseUrl: "https://ai.example/v1", price };
+const config: AiConfig = { provider: "openai" as const, apiKey: "secret-key", model: "m", baseUrl: "https://ai.example/v1", price };
 const answer = (extra: object = {}) => ({ choices: [{ message: { content: "ok" } }], ...extra });
 const usage = { usage: { prompt_tokens: 1000, completion_tokens: 500 } };
 

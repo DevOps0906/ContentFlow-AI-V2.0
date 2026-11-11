@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { WpConfig } from "./wordpress";
 
 export type AiPrice = { inputPer1M: number; outputPer1M: number; currency: string };
-export type AiConfig = { apiKey: string; model: string; baseUrl: string; price: AiPrice | null };
+export type AiConfig = { provider: AiProvider; apiKey: string; model: string; baseUrl: string; price: AiPrice | null };
 
 /** Unit prices are optional. Anything missing or invalid means no price, so the cost reads N/A. */
 function parsePrice(input: string | undefined, output: string | undefined, currency: string | undefined): AiPrice | null {
@@ -16,25 +16,65 @@ function parsePrice(input: string | undefined, output: string | undefined, curre
   return /^[A-Z]{3}$/.test(code) ? { inputPer1M, outputPer1M, currency: code } : null;
 }
 
-export function aiConfig(env = process.env): AiConfig | null {
-  const apiKey = env.OPENAI_API_KEY?.trim();
+export type AiProvider = "gemini" | "openai";
+export const AI_PROVIDERS: readonly AiProvider[] = ["gemini", "openai"];
+export const AI_PROVIDER_LABEL: Record<AiProvider, string> = { gemini: "Google Gemini", openai: "OpenAI" };
+export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+export type AiSelection = { provider?: AiProvider; model?: string; qaModel?: string };
+
+function providerKey(provider: AiProvider, env: NodeJS.ProcessEnv) {
+  return (provider === "gemini" ? env.GEMINI_API_KEY : env.OPENAI_API_KEY)?.trim() || "";
+}
+/** Providers whose key is set on the server. The key itself never leaves this module's callers. */
+export function configuredProviders(env = process.env): AiProvider[] {
+  return AI_PROVIDERS.filter((p) => !!providerKey(p, env));
+}
+/** AI_PROVIDER when its key is set; otherwise Gemini, then OpenAI, whichever has a key. */
+export function defaultProvider(env = process.env): AiProvider | null {
+  const wanted = env.AI_PROVIDER?.trim().toLowerCase();
+  const ready = configuredProviders(env);
+  if (wanted && (AI_PROVIDERS as readonly string[]).includes(wanted) && ready.includes(wanted as AiProvider))
+    return wanted as AiProvider;
+  return ready[0] ?? null;
+}
+export function providerModels(provider: AiProvider, env = process.env): { model: string; qaModel: string | null } {
+  if (provider === "gemini")
+    return { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash", qaModel: env.GEMINI_QA_MODEL?.trim() || null };
+  return { model: env.OPENAI_MODEL?.trim() || "gpt-4o-mini", qaModel: env.QA_MODEL?.trim() || null };
+}
+
+export function aiConfig(env = process.env, sel?: AiSelection): AiConfig | null {
+  const provider = sel?.provider ?? defaultProvider(env);
+  if (!provider) return null;
+  const apiKey = providerKey(provider, env);
   if (!apiKey) return null;
+  const defaultModel = providerModels(provider, env).model;
   return {
+    provider,
     apiKey,
-    model: env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
-    baseUrl: (env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, ""),
-    price: parsePrice(env.AI_PRICE_INPUT_PER_1M, env.AI_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY),
+    model: sel?.model || defaultModel,
+    baseUrl:
+      provider === "gemini"
+        ? GEMINI_BASE_URL
+        : (env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, ""),
+    // The configured unit price belongs to the default model; a chosen other model reads N/A.
+    price:
+      sel?.model && sel.model !== defaultModel
+        ? null
+        : parsePrice(env.AI_PRICE_INPUT_PER_1M, env.AI_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY),
   };
 }
 /** Model used for the second opinion. Using the writer model would defeat the purpose, so a
- * separate QA_MODEL is preferred; falling back to the same model is reported to the user. */
-export function reviewConfig(env = process.env): (AiConfig & { sameModel: boolean }) | null {
-  const base = aiConfig(env);
+ * separate QA model (QA_MODEL / GEMINI_QA_MODEL) is preferred; falling back to the same model
+ * is reported to the user. */
+export function reviewConfig(env = process.env, sel?: AiSelection): (AiConfig & { sameModel: boolean }) | null {
+  const base = aiConfig(env, sel);
   if (!base) return null;
-  const model = env.QA_MODEL?.trim() || base.model;
+  const model = sel?.qaModel || providerModels(base.provider, env).qaModel || base.model;
   const sameModel = model === base.model;
   // A different model is never costed at the writer model's price.
-  const price = sameModel ? base.price : parsePrice(env.QA_PRICE_INPUT_PER_1M, env.QA_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY);
+  const qaPriced = !sel?.qaModel || sel.qaModel === providerModels(base.provider, env).qaModel;
+  const price = sameModel ? base.price : !qaPriced ? null : parsePrice(env.QA_PRICE_INPUT_PER_1M, env.QA_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY);
   return { ...base, model, price, sameModel };
 }
 export function wpConfig(env = process.env): WpConfig | null {

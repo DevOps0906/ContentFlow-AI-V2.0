@@ -46,12 +46,12 @@
 |---|---|---|
 | PRD MVP 기능 (P0-01~14) | 약 93% (완료 12, 부분 2) | 부분: P0-04 템플릿 예제·필수 블록 차단 없음, P0-12 L02 목차·비교표 없음 |
 | 추가 범위 (블로그 계정·트렌드·성과 도구) | 구현·리뷰 수정 완료 | 0018: 키 정규화 JS·SQL 통일, 보관 계정 새 연결·기록 차단, 미배분 수익 합계 분리, 트렌드 카테고리별 점수 |
-| 출시 준비 항목 8개 | 3/8 (기능 구현·리뷰 수정·브라우저 검증 완료) | 아래 "남은 개발 단계" 2~8번 미완료 |
+| 출시 준비 항목 8개 | 5/8 (기능 구현·리뷰 수정·브라우저 검증·AI 실키(Gemini)·문서 정합화) | 아래 "남은 개발 단계" 2~8번 미완료 |
 
 | 마일스톤 (PRD #10) | 상태 |
 |---|---|
 | M0 보안·DB | 로컬 완료. 클라우드 Supabase와 운영 마이그레이션 적용 없음 |
-| M1 3종 제작·QA·승인 | 코드 완료. 실제 OpenAI 키 미검증 |
+| M1 3종 제작·QA·승인 | 코드 완료. 실제 Gemini(gemini-3.5-flash) 초안 호출 확인, OpenAI 실키 미검증 |
 | M2 WP 초안·티스토리 패키지 | 코드 완료. 브라우저 흐름과 실제 WordPress에서 slug 동작 미확인 |
 | M3 성과·원가·개선 큐 | 코드 완료. 외부 지표는 CSV·수동 입력 |
 | M4 파일럿 | 시작 전 |
@@ -62,10 +62,10 @@
 1. [x] MVP 잔여 기능(W1~W7)과 블로그 계정별 트렌드·성과 분석(W9~W11) 구현
 2. [x] W9~W11 리뷰 수정 (마이그레이션 0018, [계획](tasks/PLAN_MVP_REMAINING.md)의 "W9~11 리뷰 수정")
 3. [x] W8 브라우저 검증 (2026-11-12): e2e 67건 통과 — 팀·인증 복구·수익·AI 검수(가짜 서버)·블로그 계정·트렌드·성과, 키보드, 저장 실패, 500/768/1000/1440px 가로 넘침 0, 실제 WordPress 컨테이너 slug 선조회·유지
-4. [ ] 실제 OpenAI 키로 AI 초안·검수 호출과 토큰·비용 기록 검증 (키 필요)
+4. [x] 실제 AI 키 검증: Gemini 초안 호출 확인(2026-11-12). OpenAI 실키는 미검증(키 없음)
 5. [ ] 클라우드 Supabase 생성과 마이그레이션 0001~0018 적용 (계정·비용 승인 필요). 준비 완료: 로컬/Cloud 환경 분리·점검·스크립트([Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md))
 6. [ ] https 운영 배포와 운영 메일(가입 확인·비밀번호 복구·팀 초대) 설정 (승인 필요)
-7. [ ] 문서 정합화: `docs/03-database/DATABASE_SCHEMA.md`의 새 테이블, `WORKFLOWS.md` 티스토리 이미지 제외, ERD 재생성, 블스피·블로그AI 정확한 주소
+7. [x] 문서 정합화: DATABASE_SCHEMA 8절(0007~0018), ERD 재생성([ERD](docs/03-database/ERD.mmd)), WORKFLOWS 티스토리 이미지 제외. 남음: 블스피·블로그AI 정확한 주소
 8. [ ] M4 파일럿: 운영자 3~5명의 편집 시간과 반복 사용 검증 (실제 사용자 필요)
 
 후속(MVP 이후): P0-04 템플릿 예제·필수 블록 차단, L02 목차·비교표, 외부 분석 도구 API 연동, 이전 렌더 묶음 복원.
@@ -134,7 +134,7 @@
 | Supabase 대상 분류 | `SUPABASE_URL` 호스트가 localhost·127.0.0.1·::1·host.docker.internal이면 Docker 로컬, 그 외는 Cloud(https·`APP_URL` https 필수, 쿠키 Secure 기본 켜짐, http면 계정 모드 꺼짐). 설정 화면(로그인 후)에 대상·문제 표시. 상세: [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) |
 | 로컬 Supabase (Docker) | `pwsh scripts/supabase-local.ps1 <start·status·migrate·test·stop>` (`reset -Confirm`은 데이터 삭제) · 포트 60321~ (`supabase/config.toml`) |
 | Supabase Cloud | `pwsh scripts/supabase-cloud.ps1 link -ProjectRef <ref>` → `diff`(dry-run) → `push -Yes`. 프로젝트 생성·적용은 비용·외부 공개 승인 후 |
-| AI 초안·검수 | `OPENAI_API_KEY`(필수), `OPENAI_MODEL`, `OPENAI_BASE_URL`(호환 API), `QA_MODEL`(선택; 생략 시 작성 모델과 동일) |
+| AI 초안·검수 | 설정 → **AI API** 탭에서 제공자(Gemini·OpenAI)·초안/검수 모델 선택과 연결 테스트. 키는 서버 env에만: `GEMINI_API_KEY`(기본 제공자, 기본 모델 `GEMINI_MODEL`=gemini-3.5-flash, `GEMINI_QA_MODEL`), `OPENAI_API_KEY`·`OPENAI_MODEL`·`OPENAI_BASE_URL`·`QA_MODEL`. `AI_PROVIDER`로 기본 제공자 지정, `AI_ALLOWED_MODELS`로 허용 모델 제한. 기본 모델 외를 고르면 비용은 N/A |
 | 인증 메일 | `APP_URL`에 공개 앱 주소 설정, Supabase의 Site URL·허용 redirect URL에 `/auth/callback` 등록, 운영 SMTP 설정. 비밀번호 복구는 `/login` → 메일 → `/reset` |
 | WordPress | `WP_BASE_URL`(https, 로컬만 http), `WP_USERNAME`, `WP_APP_PASSWORD`(애플리케이션 비밀번호) |
 | 로그인(DB 저장) | `.env`에 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` 설정 → 비로그인은 `/login`으로 이동. 미설정이면 로컬 모드. 컨테이너에서는 `host.docker.internal`, https 운영에서는 `COOKIE_SECURE=true`, 가입 차단은 `ALLOW_SIGNUP=false` |

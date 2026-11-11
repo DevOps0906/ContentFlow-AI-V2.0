@@ -1,4 +1,4 @@
-# Web app container. Pick env file with ENV_FILE=.env.local or .env.cloud (default .env). Local Supabase: scripts/supabase-local.ps1.
+# Web app container. Pick env file with ENV_FILE=.env.local or .env.cloud (default .env.local; a plain .env is read first and overridden by it). Local Supabase: scripts/supabase-local.ps1.
 #   docker compose up -d --build
 services:
   web:
@@ -8,7 +8,9 @@ services:
       # No login yet: keep it on localhost. Change the host port with WEB_PORT.
       - "127.0.0.1:${WEB_PORT:-3410}:3000"
     env_file:
-      - path: ${ENV_FILE:-.env}
+      - path: .env
+        required: false
+      - path: ${ENV_FILE:-.env.local}
         required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"

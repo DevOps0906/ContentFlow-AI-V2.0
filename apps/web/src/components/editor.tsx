@@ -41,6 +41,7 @@ import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 import { PhaseSteps, StatusBadge } from "./status-badge";
+import { loadChoice } from "@/lib/ai-settings";
 import { accountDeliveryCheck, fetchStoredArticle, postJson, useIntegrations } from "./integrations";
 import { useBlogs } from "./blog-filter";
 import { blogOptionLabel, selectableBlogs } from "@/lib/blogs";
@@ -298,6 +299,7 @@ function EditorForm({
         templateId: form.templateId,
         keyword: form.keyword,
         title: form.title,
+        ai: loadChoice(),
       });
       update("body", body);
       setPreview(false);
@@ -317,7 +319,7 @@ function EditorForm({
     setReview(null);
     try {
       // Account mode sends only the id (the server reads the saved article); local mode sends it all.
-      const payload = mode === "account" ? { id: form.id } : form;
+      const payload = { ...(mode === "account" ? { id: form.id } : form), ai: loadChoice() };
       setReview(await postJson("/api/ai/review", payload));
     } catch (e) {
       setReviewError(e instanceof Error ? e.message : "AI 검수를 하지 못했습니다.");
@@ -691,7 +693,7 @@ function EditorForm({
               title={
                 aiReady
                   ? "핵심 키워드와 템플릿으로 초안을 만듭니다."
-                  : "AI가 연결되지 않았습니다. OPENAI_API_KEY를 설정해주세요."
+                  : "AI가 연결되지 않았습니다. GEMINI_API_KEY 또는 OPENAI_API_KEY를 설정해주세요."
               }
             >
               <Sparkles size={13} />
@@ -1076,7 +1078,7 @@ function EditorForm({
                   )}
                   <p className="metric-note">
                     모델 {review.model}
-                    {review.sameModel ? " — 글 작성과 같은 모델이라 독립적인 검수가 아니에요(QA_MODEL로 다른 모델 지정)." : ""} · 승인이나
+                    {review.sameModel ? " — 글 작성과 같은 모델이라 독립적인 검수가 아니에요(설정의 AI API에서 검수 모델을 따로 지정)." : ""} · 승인이나
                     상태를 바꾸지 않습니다.
                   </p>
                   <p className="metric-note">{runSummary(review.run)}</p>

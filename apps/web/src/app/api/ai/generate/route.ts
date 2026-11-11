@@ -1,6 +1,7 @@
 import { runModel } from "@/lib/agent-runs";
 import { buildMessages, DRAFT_PROMPT_VERSION, parseCompletion, validateAiRequest } from "@/lib/ai";
-import { aiConfig, json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
+import { parseSelection, resolveDraft } from "@/lib/ai-models";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 import { canEdit } from "@/lib/team";
 
@@ -8,9 +9,6 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: "허용되지 않은 요청입니다." }, 403);
-  const config = aiConfig();
-  if (!config)
-    return json({ error: "AI가 연결되지 않았습니다. OPENAI_API_KEY를 설정해주세요." }, 503);
   // The proxy already turns anonymous visitors away; the route checks again and spends API
   // credits only for people who may edit.
   const account = await getAccount();
@@ -21,11 +19,17 @@ export async function POST(req: Request) {
   if (await sharedLimited(account.mode === "account" ? account.supabase : null, limitKey, 10, 60_000))
     return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   let request;
+  let selection;
   try {
-    request = validateAiRequest(await readJson(req, 20_000));
+    const body = await readJson(req, 20_000);
+    request = validateAiRequest(body);
+    selection = parseSelection((body as { ai?: unknown }).ai);
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
+  const resolved = await resolveDraft(selection);
+  if (!resolved.ok) return json({ error: resolved.error }, resolved.status);
+  const config = resolved.config;
   const result = await runModel({
     config,
     task: "draft",
@@ -40,7 +44,7 @@ export async function POST(req: Request) {
   });
   if (result.ok)
     // The draft is returned for the operator to edit; nothing is saved or approved here.
-    return json({ body: result.value, model: config.model, run: result.run });
+    return json({ body: result.value, model: config.model, provider: config.provider, run: result.run });
   if (result.reason === "http")
     return json({ error: `AI 서비스 응답 오류(${result.httpStatus}). 키, 모델, 한도를 확인해주세요.` }, 502);
   return json(

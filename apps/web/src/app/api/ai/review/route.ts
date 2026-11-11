@@ -2,7 +2,8 @@ import { runModel } from "@/lib/agent-runs";
 import { isUuid, ARTICLE_COLUMNS, rowToArticle, type ArticleRow } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
 import { buildReviewMessages, parseReview, REVIEW_PROMPT_VERSION } from "@/lib/review";
-import { json, readJson, reviewConfig, sameOrigin, sharedLimited } from "@/lib/server";
+import { parseSelection, resolveReview } from "@/lib/ai-models";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 import { canEdit, canDecide } from "@/lib/team";
 
@@ -15,8 +16,6 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request) {
   if (!sameOrigin(req)) return json({ error: "허용되지 않은 요청입니다." }, 403);
-  const config = reviewConfig();
-  if (!config) return json({ error: "AI가 연결되지 않았습니다. OPENAI_API_KEY를 설정해주세요." }, 503);
   const account = await getAccount();
   if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
   if (account.mode === "account" && !(canEdit(account.role) || canDecide(account.role)))
@@ -37,6 +36,15 @@ export async function POST(req: Request) {
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
+  let selection;
+  try {
+    selection = parseSelection((body as { ai?: unknown } | null)?.ai);
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
+  }
+  const resolved = await resolveReview(selection);
+  if (!resolved.ok) return json({ error: resolved.error }, resolved.status);
+  const config = resolved.config;
   let article;
   if (account.mode === "account") {
     const id = (body as { id?: unknown } | null)?.id;
@@ -68,7 +76,7 @@ export async function POST(req: Request) {
       ? { client: account.supabase, workspaceId: account.workspaceId, userId: account.user.id }
       : null,
   });
-  if (result.ok) return json({ findings: result.value, model: config.model, sameModel: config.sameModel, run: result.run });
+  if (result.ok) return json({ findings: result.value, model: config.model, provider: config.provider, sameModel: config.sameModel, run: result.run });
   if (result.reason === "http") return json({ error: `AI 서비스 응답 오류(${result.httpStatus}). 키, 모델, 한도를 확인해주세요.` }, 502);
   if (result.reason === "timeout") return json({ error: "AI 응답 시간이 초과되었습니다." }, 502);
   return json({ error: result.error instanceof Error && /검수 응답/.test(result.error.message) ? result.error.message : "AI 검수를 하지 못했습니다." }, 502);
