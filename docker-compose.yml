@@ -7,6 +7,9 @@ services:
     ports:
       # No login yet: keep it on localhost. Change the host port with WEB_PORT.
       - "127.0.0.1:${WEB_PORT:-3410}:3000"
+      # Optional LAN access for the dev mobile app: set WEB_LAN_BIND (this PC's LAN IP) and WEB_LAN_PORT in .env.
+      # Defaults keep it on localhost only.
+      - "${WEB_LAN_BIND:-127.0.0.1}:${WEB_LAN_PORT:-3411}:3000"
     env_file:
       - path: .env
         required: false

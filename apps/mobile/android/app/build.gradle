@@ -7,8 +7,8 @@ android {
         applicationId System.getenv("CF_APPLICATION_ID") ?: "com.devops0906.contentflow"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode (System.getenv("CF_VERSION_CODE") ?: "1").toInteger()
-        versionName System.getenv("CF_VERSION_NAME") ?: "1.0"
+        versionCode = (System.getenv("CF_VERSION_CODE") ?: "1").toInteger()
+        versionName = System.getenv("CF_VERSION_NAME") ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
