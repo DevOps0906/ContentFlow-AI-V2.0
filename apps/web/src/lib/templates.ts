@@ -181,6 +181,19 @@ export const templates: Template[] = [
   },
 ];
 
+/**
+ * MVP templates whose blocks and evidence are pinned. Bump the number when either changes
+ * (a test holds the pinned contents). The other seven templates are not versioned yet.
+ */
+const TEMPLATE_VERSIONS: Record<string, string | undefined> = {
+  T01: "T01@1",
+  T02: "T02@1",
+  T04: "T04@1",
+};
+export function templateVersion(id: string) {
+  return TEMPLATE_VERSIONS[id];
+}
+
 export function findTemplate(id: string) {
   return templates.find((t) => t.id === id) ?? templates[0];
 }

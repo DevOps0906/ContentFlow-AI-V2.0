@@ -1,12 +1,15 @@
 import {
   ARTICLE_COLUMNS,
+  approvalFields,
   articleToFields,
   dbError,
   isUuid,
   parseIncomingArticle,
   rowToArticle,
+  templateVersionFields,
   type ArticleRow,
 } from "@/lib/articles-db";
+import { requireAccount } from "@/lib/api";
 import { json, readJson, sameOrigin } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 
@@ -20,6 +23,23 @@ async function guard(req: Request): Promise<Response | Authed> {
   if (account.mode === "local") return json({ error: "로컬 모드입니다." }, 404);
   if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
   return account;
+}
+
+/** The stored copy of one article: the browser compares it with its own before a download. */
+export async function GET(req: Request, ctx: Ctx) {
+  const account = await requireAccount(req);
+  if (account instanceof Response) return account;
+  const { id } = await ctx.params;
+  if (!isUuid(id)) return json({ error: "잘못된 콘텐츠 ID입니다." }, 400);
+  const { data, error } = await account.supabase
+    .from("articles")
+    .select(ARTICLE_COLUMNS)
+    .eq("id", id)
+    .eq("workspace_id", account.workspaceId)
+    .maybeSingle();
+  if (error) return json({ error: "콘텐츠를 불러오지 못했습니다." }, 500);
+  if (!data) return json({ error: "콘텐츠를 찾을 수 없습니다." }, 404);
+  return json({ article: rowToArticle(data as ArticleRow) });
 }
 
 /**
@@ -41,7 +61,7 @@ export async function PUT(req: Request, ctx: Ctx) {
 
   const existing = await account.supabase
     .from("articles")
-    .select("id")
+    .select("id,state,template_id")
     .eq("id", id)
     .eq("workspace_id", account.workspaceId)
     .maybeSingle();
@@ -49,18 +69,30 @@ export async function PUT(req: Request, ctx: Ctx) {
 
   if (article.keywordId !== undefined && !isUuid(article.keywordId))
     return json({ error: "잘못된 키워드 ID입니다." }, 400);
+  if (typeof article.blogId === "string" && !isUuid(article.blogId))
+    return json({ error: "잘못된 블로그 ID입니다." }, 400);
   const fields = articleToFields(article);
   const result = existing.data
     ? await account.supabase
         .from("articles")
-        .update(fields)
+        .update({
+          ...fields,
+          ...approvalFields(article.status, existing.data.state),
+          ...templateVersionFields(article.templateId, existing.data),
+        })
         .eq("id", id)
         .eq("workspace_id", account.workspaceId)
         .select(ARTICLE_COLUMNS)
         .maybeSingle()
     : await account.supabase
         .from("articles")
-        .insert({ id, workspace_id: account.workspaceId, owner_id: account.user.id, ...fields })
+        .insert({
+          id,
+          workspace_id: account.workspaceId,
+          owner_id: account.user.id,
+          ...fields,
+          ...templateVersionFields(article.templateId),
+        })
         .select(ARTICLE_COLUMNS)
         .maybeSingle();
   if (result.error) {

@@ -15,6 +15,8 @@ import { generateTitles, type TitleCandidate } from "@/lib/titles";
 import { PageHeading } from "./shell";
 import { useWorkspace } from "./workspace";
 import { StatusBadge } from "./status-badge";
+import { useBlogs } from "./blog-filter";
+import { blogOptionLabel, selectableBlogs } from "@/lib/blogs";
 
 export function Keywords() {
   const [keywords, setKeywords] = useState<Keyword[]>([]);
@@ -30,6 +32,8 @@ export function Keywords() {
   const [localCount, setLocalCount] = useState(0);
   const [creating, setCreating] = useState<string | null>(null);
   const [created, setCreated] = useState<{ id: string; title: string } | null>(null);
+  const account = mode === "account";
+  const { blogs, canManage: canLinkBlog } = useBlogs(account);
 
   const readLocal = () => parseKeywords(localStorage.getItem(KEYWORD_STORAGE_KEY));
 
@@ -108,6 +112,17 @@ export function Keywords() {
     }
   }
 
+  /** On failure the select keeps showing the stored account. */
+  async function linkBlog(id: string, blogId: string | null) {
+    setMessage("");
+    try {
+      const r = await callApi(`/api/keywords/${id}`, { method: "PATCH", body: JSON.stringify({ blogId }) });
+      setKeywords((list) => list.map((x) => (x.id === id ? (r.keyword as Keyword) : x)));
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "블로그 계정을 바꾸지 못했습니다.");
+    }
+  }
+
   function persist(next: Keyword[]) {
     if (error) return false;
     try {
@@ -165,13 +180,13 @@ export function Keywords() {
   }
 
   /** Creates an article at the `idea` stage; the editor takes it from there. */
-  async function createIdea(keyword: Pick<Keyword, "id" | "phrase">, title?: string) {
+  async function createIdea(keyword: Pick<Keyword, "id" | "phrase" | "blogId">, title?: string) {
     if (creating) return;
     setCreating(keyword.id + (title ?? ""));
     setMessage("");
     setCreated(null);
     try {
-      const stored = await save(ideaFromKeyword(keyword.phrase, { title, keywordId: keyword.id }));
+      const stored = await save(ideaFromKeyword(keyword.phrase, { title, keywordId: keyword.id, blogId: keyword.blogId }));
       setCreated({ id: stored.id, title: stored.title || stored.keyword });
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "글을 만들지 못했습니다.");
@@ -292,6 +307,7 @@ export function Keywords() {
                     <th scope="col">검색의도</th>
                     <th scope="col">우선순위</th>
                     <th scope="col">메모</th>
+                    {account && <th scope="col">블로그 계정</th>}
                     <th scope="col">연결된 글</th>
                     <th scope="col">
                       <span className="sr-only">작업</span>
@@ -310,6 +326,29 @@ export function Keywords() {
                         <td>{k.intent || "—"}</td>
                         <td>{k.priority}</td>
                         <td>{k.note || "—"}</td>
+                        {account && (
+                          <td>
+                            {canLinkBlog ? (
+                              <select
+                                aria-label={`${k.phrase} 블로그 계정`}
+                                value={k.blogId ?? ""}
+                                onChange={(e) => linkBlog(k.id, e.target.value || null)}
+                              >
+                                <option value="">미분류</option>
+                                {selectableBlogs(blogs, k.blogId).map((b) => (
+                                  <option key={b.id} value={b.id}>
+                                    {blogOptionLabel(b)}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              (() => {
+                                const blog = blogs.find((b) => b.id === k.blogId);
+                                return blog ? blogOptionLabel(blog) : "미분류";
+                              })()
+                            )}
+                          </td>
+                        )}
                         <td>
                           {linked.length === 0 ? (
                             "—"

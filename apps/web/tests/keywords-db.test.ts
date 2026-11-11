@@ -31,7 +31,7 @@ test("invalid keyword requests are rejected with a message", () => {
 
 test("rows map to the browser keyword shape", () => {
   assert.deepEqual(
-    rowToKeyword({ id: "i", phrase: "p", intent: "n", priority: 2, note: "m", created_at: "2026-11-06T00:00:00Z" }),
+    rowToKeyword({ id: "i", phrase: "p", intent: "n", priority: 2, note: "m", created_at: "2026-11-06T00:00:00Z", blog_id: null }),
     { id: "i", phrase: "p", intent: "n", priority: 2, note: "m", importedAt: "2026-11-06T00:00:00Z" },
   );
 });

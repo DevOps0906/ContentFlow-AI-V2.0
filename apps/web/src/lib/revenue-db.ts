@@ -1,8 +1,8 @@
-// Mapping and validation for `revenue_rows` (migration 0005).
-import { isRevenueRow, rowKey, type RevenueRow } from "./revenue";
+// Mapping and validation for `revenue_rows` (migrations 0005, 0012).
+import { isRevenueRow, normalizeTimezone, rowKey, type RevenueRow } from "./revenue";
 
 export const REVENUE_COLUMNS =
-  "source,status,currency,report_date,page,revenue,pageviews,impressions,clicks,created_at";
+  "source,status,currency,report_date,page,revenue,pageviews,impressions,clicks,created_at,timezone,period_start,period_end";
 export const MAX_ROWS_PER_REQUEST = 1000;
 
 export type RevenueDbRow = {
@@ -16,6 +16,9 @@ export type RevenueDbRow = {
   impressions: number | string | null;
   clicks: number | string | null;
   created_at: string;
+  timezone: string | null;
+  period_start: string | null;
+  period_end: string | null;
 };
 // numeric/bigint columns may come back as strings
 const num = (v: number | string | null) => (v === null ? null : Number(v));
@@ -30,7 +33,12 @@ export const dbToRevenue = (r: RevenueDbRow): RevenueRow => ({
   impressions: num(r.impressions),
   clicks: num(r.clicks),
   importedAt: r.created_at,
+  timezone: r.timezone,
+  periodStart: r.period_start,
+  periodEnd: r.period_end,
 });
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validates rows sent by the browser. The dedupe key is computed here from the row itself:
@@ -46,7 +54,11 @@ export function parseRevenueBatch(input: unknown): RevenueRow[] {
       throw new Error(`${i + 1}번째 행의 출처·통화·페이지가 올바르지 않습니다.`);
     if (v.revenue === null && v.pageviews === null && v.impressions === null && v.clicks === null)
       throw new Error(`${i + 1}번째 행에 값이 없습니다.`);
-    return v;
+    const timezone = normalizeTimezone(v.timezone ?? "");
+    const { periodStart: start, periodEnd: end } = v;
+    if (!timezone || !start || !end || !ISO_DATE.test(start) || !ISO_DATE.test(end) || start > end || v.date < start || v.date > end)
+      throw new Error(`${i + 1}번째 행의 시간대·기간이 없거나 올바르지 않습니다.`);
+    return { ...v, timezone };
   });
 }
 export function toDbRows(rows: RevenueRow[], workspaceId: string, userId: string) {
@@ -62,6 +74,9 @@ export function toDbRows(rows: RevenueRow[], workspaceId: string, userId: string
     pageviews: r.pageviews,
     impressions: r.impressions,
     clicks: r.clicks,
+    timezone: r.timezone,
+    period_start: r.periodStart,
+    period_end: r.periodEnd,
     created_by: userId,
   }));
 }

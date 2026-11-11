@@ -24,6 +24,8 @@ const article: Article = {
   status: "approved",
   updatedAt: "2026-11-06T00:00:00Z",
   remote: { postId: 7, url: "https://x/?p=7", syncedAt: "2026-11-06T00:00:00Z" },
+  layoutProfile: "L01",
+  adProfile: "A00",
 };
 
 test("credentials: signup enforces the password policy, login only bounds input", () => {
@@ -75,8 +77,22 @@ test("row ↔ article mapping keeps remote info but never writes it from the bro
     updated_at: article.updatedAt,
     remote: article.remote ?? null,
     keyword_id: null,
+    published_url: null,
+    layout_profile: "L01",
+    ad_profile: "A00",
+    renderer_version: null,
+    brief_purpose: "",
+    brief_audience: "",
+    evidence_status: "unreviewed",
+    rights_status: "unreviewed",
+    title_evaluation: null,
+    template_version: null,
+    blog_id: null,
   };
   assert.deepEqual(rowToArticle(row), article);
+  assert.equal(rowToArticle({ ...row, published_url: "https://blog.example/p" }).publishedUrl, "https://blog.example/p");
+  assert.equal(articleToFields({ ...article, status: "published", publishedUrl: "https://blog.example/p" }).published_url, "https://blog.example/p");
+  assert.ok(!("published_url" in articleToFields({ ...article, status: "drafting", publishedUrl: "https://blog.example/p" })));
   assert.deepEqual(rowToArticle({ ...row, remote: null }).remote, undefined);
   assert.equal(rowToArticle({ ...row, keyword_id: "7c9e6679-7425-40de-944b-e07fc1f90ae7" }).keywordId, "7c9e6679-7425-40de-944b-e07fc1f90ae7");
   assert.equal(articleToFields({ ...article, keywordId: "7c9e6679-7425-40de-944b-e07fc1f90ae7" }).keyword_id, "7c9e6679-7425-40de-944b-e07fc1f90ae7");

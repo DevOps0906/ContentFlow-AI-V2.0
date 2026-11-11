@@ -25,6 +25,10 @@ export const canEdit = (r?: Role | null) => r === "owner" || r === "admin" || r 
 export const canDecide = (r?: Role | null) => r === "owner" || r === "admin" || r === "reviewer";
 export const canManageTeam = (r?: Role | null) => r === "owner" || r === "admin";
 export const canImportRevenue = canManageTeam;
+export const canRecordSiteChecks = canManageTeam;
+export const canRecordCosts = canManageTeam;
+export const canManageBlogs = canManageTeam;
+export const canManageImprovements = (r?: Role | null) => canEdit(r) || canDecide(r);
 
 /** Roles the actor may grant when inviting or changing a role (never `owner`). */
 export function grantableRoles(actor?: Role | null): Role[] {

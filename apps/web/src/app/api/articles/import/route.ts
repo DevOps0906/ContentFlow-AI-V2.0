@@ -1,4 +1,4 @@
-import { dbError, articleToFields, isUuid, toImportable } from "@/lib/articles-db";
+import { dbError, articleToFields, isUuid, templateVersionFields, toImportable } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
 import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
@@ -43,6 +43,7 @@ export async function POST(req: Request) {
       workspace_id: account.workspaceId,
       owner_id: account.user.id,
       ...articleToFields(a),
+      ...templateVersionFields(a.templateId),
     });
     if (error) {
       failed++;

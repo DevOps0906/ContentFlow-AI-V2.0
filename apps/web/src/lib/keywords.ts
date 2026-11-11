@@ -7,6 +7,8 @@ export type Keyword = {
   priority: number;
   note: string;
   importedAt: string;
+  /** Blog account (account mode). Absent means unclassified. */
+  blogId?: string;
 };
 export const KEYWORD_STORAGE_KEY = "contentflow.keywords.v1";
 export const MAX_KEYWORDS = 5000;
@@ -154,7 +156,7 @@ export function linkedArticles(keyword: Pick<Keyword, "id" | "phrase">, articles
  */
 export function ideaFromKeyword(
   phrase: string,
-  opts: { title?: string; templateId?: string; id?: string; now?: string; keywordId?: string } = {},
+  opts: { title?: string; templateId?: string; id?: string; now?: string; keywordId?: string; blogId?: string } = {},
 ): Article {
   const keyword = phrase.trim();
   if (!keyword) throw new Error("키워드가 비어 있습니다.");
@@ -171,5 +173,6 @@ export function ideaFromKeyword(
     status: "idea",
     updatedAt: opts.now ?? new Date().toISOString(),
     ...(opts.keywordId ? { keywordId: opts.keywordId } : {}),
+    ...(opts.blogId ? { blogId: opts.blogId } : {}),
   };
 }

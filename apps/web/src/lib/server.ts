@@ -3,7 +3,18 @@
 import { createHash } from "node:crypto";
 import type { WpConfig } from "./wordpress";
 
-export type AiConfig = { apiKey: string; model: string; baseUrl: string };
+export type AiPrice = { inputPer1M: number; outputPer1M: number; currency: string };
+export type AiConfig = { apiKey: string; model: string; baseUrl: string; price: AiPrice | null };
+
+/** Unit prices are optional. Anything missing or invalid means no price, so the cost reads N/A. */
+function parsePrice(input: string | undefined, output: string | undefined, currency: string | undefined): AiPrice | null {
+  const inputPer1M = input?.trim() ? Number(input) : NaN;
+  const outputPer1M = output?.trim() ? Number(output) : NaN;
+  const code = currency?.trim().toUpperCase() ?? "";
+  if (!Number.isFinite(inputPer1M) || inputPer1M < 0) return null;
+  if (!Number.isFinite(outputPer1M) || outputPer1M < 0) return null;
+  return /^[A-Z]{3}$/.test(code) ? { inputPer1M, outputPer1M, currency: code } : null;
+}
 
 export function aiConfig(env = process.env): AiConfig | null {
   const apiKey = env.OPENAI_API_KEY?.trim();
@@ -12,6 +23,7 @@ export function aiConfig(env = process.env): AiConfig | null {
     apiKey,
     model: env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
     baseUrl: (env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, ""),
+    price: parsePrice(env.AI_PRICE_INPUT_PER_1M, env.AI_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY),
   };
 }
 /** Model used for the second opinion. Using the writer model would defeat the purpose, so a
@@ -20,7 +32,10 @@ export function reviewConfig(env = process.env): (AiConfig & { sameModel: boolea
   const base = aiConfig(env);
   if (!base) return null;
   const model = env.QA_MODEL?.trim() || base.model;
-  return { ...base, model, sameModel: model === base.model };
+  const sameModel = model === base.model;
+  // A different model is never costed at the writer model's price.
+  const price = sameModel ? base.price : parsePrice(env.QA_PRICE_INPUT_PER_1M, env.QA_PRICE_OUTPUT_PER_1M, env.AI_PRICE_CURRENCY);
+  return { ...base, model, price, sameModel };
 }
 export function wpConfig(env = process.env): WpConfig | null {
   const baseUrl = env.WP_BASE_URL?.trim();

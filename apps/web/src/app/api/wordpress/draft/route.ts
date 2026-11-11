@@ -1,5 +1,6 @@
 import { ARTICLE_COLUMNS, isUuid, rowToArticle, type ArticleRow } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
+import { assertDeliverable, DeliveryError, rpcDeliveryCheck, trackDelivery } from "@/lib/delivery";
 import { sendDraft, type WpConfig } from "@/lib/wordpress";
 import { json, readJson, sameOrigin, sharedLimited, wpConfig } from "@/lib/server";
 import { canEdit } from "@/lib/team";
@@ -39,6 +40,7 @@ export async function POST(req: Request) {
 async function localFlow(config: WpConfig, body: unknown) {
   if (!isArticle(body)) return json({ error: "콘텐츠 형식이 올바르지 않습니다." }, 400);
   try {
+    await assertDeliverable(body);
     const r = await sendDraft(config, body, body.remote?.postId);
     return json({ postId: r.postId, url: r.url, created: r.created });
   } catch (e) {
@@ -68,6 +70,16 @@ async function accountFlow(account: Authed, config: WpConfig, body: unknown) {
   if (current.status !== "export_ready" && current.status !== "publish_failed")
     return json({ error: "내보내기 준비 또는 발행 실패 상태의 글만 전송할 수 있습니다." }, 409);
 
+  // Before the claim: a refused article keeps its state and leaves no send attempt.
+  try {
+    await assertDeliverable(current, rpcDeliveryCheck(supabase));
+  } catch (e) {
+    return json(
+      { error: e instanceof Error ? e.message : "전달 가능 여부를 확인하지 못했습니다." },
+      e instanceof DeliveryError && e.failureType === "not_sendable" ? 409 : 500,
+    );
+  }
+
   const claim = await supabase
     .from("articles")
     .update({ state: "publishing" })
@@ -80,10 +92,8 @@ async function accountFlow(account: Authed, config: WpConfig, body: unknown) {
   if (!claim.data) return json({ error: "이미 전송 중이거나 상태가 바뀌었습니다." }, 409);
 
   try {
-    const sent = await sendDraft(
-      config,
-      { ...current, status: "publishing" },
-      current.remote?.postId,
+    const sent = await trackDelivery({ client: supabase, workspaceId, userId: account.user.id }, id, () =>
+      sendDraft(config, { ...current, status: "publishing" }, current.remote?.postId),
     );
     const done = await supabase
       .from("articles")

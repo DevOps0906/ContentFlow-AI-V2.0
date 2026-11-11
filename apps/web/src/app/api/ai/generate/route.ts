@@ -1,4 +1,5 @@
-import { buildMessages, parseCompletion, validateAiRequest } from "@/lib/ai";
+import { runModel } from "@/lib/agent-runs";
+import { buildMessages, DRAFT_PROMPT_VERSION, parseCompletion, validateAiRequest } from "@/lib/ai";
 import { aiConfig, json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 import { canEdit } from "@/lib/team";
@@ -25,31 +26,25 @@ export async function POST(req: Request) {
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
-  try {
-    const res = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: buildMessages(request),
-        temperature: 0.6,
-        max_tokens: 3000,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok)
-      return json({ error: `AI 서비스 응답 오류(${res.status}). 키, 모델, 한도를 확인해주세요.` }, 502);
-    const body = parseCompletion(await res.json());
+  const result = await runModel({
+    config,
+    task: "draft",
+    promptVersion: DRAFT_PROMPT_VERSION,
+    messages: buildMessages(request),
+    temperature: 0.6,
+    maxTokens: 3000,
+    parse: parseCompletion,
+    log: account.mode === "account"
+      ? { client: account.supabase, workspaceId: account.workspaceId, userId: account.user.id }
+      : null,
+  });
+  if (result.ok)
     // The draft is returned for the operator to edit; nothing is saved or approved here.
-    return json({ body, model: config.model });
-  } catch (e) {
-    const timeout = e instanceof Error && e.name === "TimeoutError";
-    return json(
-      { error: timeout ? "AI 응답 시간이 초과되었습니다." : "AI 초안을 만들지 못했습니다." },
-      502,
-    );
-  }
+    return json({ body: result.value, model: config.model, run: result.run });
+  if (result.reason === "http")
+    return json({ error: `AI 서비스 응답 오류(${result.httpStatus}). 키, 모델, 한도를 확인해주세요.` }, 502);
+  return json(
+    { error: result.reason === "timeout" ? "AI 응답 시간이 초과되었습니다." : "AI 초안을 만들지 못했습니다." },
+    502,
+  );
 }

@@ -1,6 +1,7 @@
+import { runModel } from "@/lib/agent-runs";
 import { isUuid, ARTICLE_COLUMNS, rowToArticle, type ArticleRow } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
-import { buildReviewMessages, parseReview } from "@/lib/review";
+import { buildReviewMessages, parseReview, REVIEW_PROMPT_VERSION } from "@/lib/review";
 import { json, readJson, reviewConfig, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
 import { canEdit, canDecide } from "@/lib/team";
@@ -55,18 +56,20 @@ export async function POST(req: Request) {
   }
   if (!article.body.trim()) return json({ error: "검수할 본문이 없습니다." }, 400);
 
-  try {
-    const res = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: config.model, messages: buildReviewMessages(article), temperature: 0.2, max_tokens: 1500 }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) return json({ error: `AI 서비스 응답 오류(${res.status}). 키, 모델, 한도를 확인해주세요.` }, 502);
-    const content = ((await res.json()) as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
-    return json({ findings: parseReview(content), model: config.model, sameModel: config.sameModel });
-  } catch (e) {
-    const timeout = e instanceof Error && e.name === "TimeoutError";
-    return json({ error: timeout ? "AI 응답 시간이 초과되었습니다." : e instanceof Error && /검수 응답/.test(e.message) ? e.message : "AI 검수를 하지 못했습니다." }, 502);
-  }
+  const result = await runModel({
+    config,
+    task: "review",
+    promptVersion: REVIEW_PROMPT_VERSION,
+    messages: buildReviewMessages(article),
+    temperature: 0.2,
+    maxTokens: 1500,
+    parse: (data) => parseReview((data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content),
+    log: account.mode === "account"
+      ? { client: account.supabase, workspaceId: account.workspaceId, userId: account.user.id }
+      : null,
+  });
+  if (result.ok) return json({ findings: result.value, model: config.model, sameModel: config.sameModel, run: result.run });
+  if (result.reason === "http") return json({ error: `AI 서비스 응답 오류(${result.httpStatus}). 키, 모델, 한도를 확인해주세요.` }, 502);
+  if (result.reason === "timeout") return json({ error: "AI 응답 시간이 초과되었습니다." }, 502);
+  return json({ error: result.error instanceof Error && /검수 응답/.test(result.error.message) ? result.error.message : "AI 검수를 하지 못했습니다." }, 502);
 }

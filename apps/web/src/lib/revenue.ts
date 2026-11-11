@@ -1,12 +1,14 @@
 // Revenue report import and aggregation. Rules from the monetization plan:
 //  - observed/estimated and finalized (settled) amounts are different things: never added together
-//  - a re-import of the same report can not double count (same source+status+date+page is skipped)
+//  - a re-import of the same report can not double count (same source+status+date+page+zone is skipped)
+//  - a report whose period partly overlaps a stored one is refused as a whole
 //  - a site total and the page rows of the same day are never added together
 //  - missing values stay missing (N/A); they are not turned into 0
 //  - amounts in different currencies are never summed
 //  - RPM only uses revenue and page views from the same report rows
 import { parseCsv } from "./keywords";
 import type { Article } from "./content";
+import { ALL_BLOGS, matchesBlogFilter, type BlogFilterValue } from "./blogs";
 
 export type RevenueStatus = "estimated" | "finalized";
 export const statusLabel: Record<RevenueStatus, string> = {
@@ -25,6 +27,11 @@ export type RevenueRow = {
   impressions: number | null;
   clicks: number | null;
   importedAt: string;
+  /** IANA name the report was exported in. null: imported before this was recorded. */
+  timezone: string | null;
+  /** First and last day the whole import covered (YYYY-MM-DD). null as for `timezone`. */
+  periodStart: string | null;
+  periodEnd: string | null;
 };
 export const REVENUE_STORAGE_KEY = "contentflow.revenue.v1";
 export const MAX_REVENUE_ROWS = 20000;
@@ -51,7 +58,7 @@ export function normalizePage(page: string): string {
   }
 }
 
-function parseDate(raw: string, now: Date): string | null {
+export function parseDate(raw: string, now: Date): string | null {
   const m = raw.trim().match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (!m) return null;
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
@@ -71,16 +78,64 @@ function parseAmount(raw: string | undefined, integer: boolean): number | null {
   return n;
 }
 
-export const rowKey = (r: Pick<RevenueRow, "source" | "status" | "currency" | "date" | "page">) =>
-  [r.source.toLowerCase(), r.status, r.currency, r.date, normalizePage(r.page)].join("|");
+export const rowKey = (r: Pick<RevenueRow, "source" | "status" | "currency" | "date" | "page" | "timezone">) =>
+  [r.source.toLowerCase(), r.status, r.currency, r.date, normalizePage(r.page), ...(r.timezone ? [r.timezone] : [])].join("|");
+
+/** Canonical IANA name, or null when the runtime does not know the zone. */
+export function normalizeTimezone(value: string): string | null {
+  const v = value.trim();
+  if (!v || v.length > 64 || !/^[A-Za-z0-9_+/-]+$/.test(v)) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: v }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+
+type ReportRow = Pick<RevenueRow, "source" | "status" | "currency" | "page">;
+const reportKey = (r: ReportRow) =>
+  [r.source.trim().toLowerCase(), r.status, r.currency, r.page === "" ? "site" : "page"].join("|");
+
+/**
+ * The stored row that makes this import a partial overlap, or null. The same report with exactly
+ * the same period is not an overlap (its rows are skipped); a different period touching the same
+ * days is. Stored rows with no time zone can not be told apart, so any shared date counts.
+ */
+export function findOverlap(
+  existing: RevenueRow[],
+  incoming: ReportRow[],
+  report: { timezone: string; periodStart: string; periodEnd: string },
+): RevenueRow | null {
+  const { timezone, periodStart, periodEnd } = report;
+  const keys = new Set(incoming.map(reportKey));
+  for (const e of existing) {
+    if (!keys.has(reportKey(e))) continue;
+    if (e.timezone === null || e.periodStart === null || e.periodEnd === null) {
+      if (e.date >= periodStart && e.date <= periodEnd) return e;
+      continue;
+    }
+    if (e.timezone !== timezone) continue;
+    if (e.periodStart === periodStart && e.periodEnd === periodEnd) continue;
+    if (e.periodStart <= periodEnd && periodStart <= e.periodEnd) return e;
+  }
+  return null;
+}
+
+// revenue is numeric(18,4) in the database, so finer digits are not a difference.
+const sameValue = (a: number | null, b: number | null) =>
+  a === b || (a !== null && b !== null && Math.round(a * 1e4) === Math.round(b * 1e4));
+const sameValues = (a: RevenueRow, b: RevenueRow) =>
+  sameValue(a.revenue, b.revenue) && a.pageviews === b.pageviews && a.impressions === b.impressions && a.clicks === b.clicks;
 
 export type RevenueImport = {
   rows: RevenueRow[];
   added: number;
   duplicates: number;
+  /** Rows of the same report and period whose stored values differ. Skipped: stored values stay. */
+  conflicts: number;
   invalid: { line: number; reason: string }[];
 };
-export type ImportOptions = { source: string; status: RevenueStatus; currency: string; now?: Date };
+export type ImportOptions = { source: string; status: RevenueStatus; currency: string; timezone: string; now?: Date };
 
 export function importRevenue(csv: string, existing: RevenueRow[], opts: ImportOptions): RevenueImport {
   if (csv.length > MAX_REVENUE_CSV) throw new Error("CSV 파일이 너무 큽니다. (최대 2MB)");
@@ -89,6 +144,8 @@ export function importRevenue(csv: string, existing: RevenueRow[], opts: ImportO
   if (!["estimated", "finalized"].includes(opts.status)) throw new Error("예상/확정 구분을 선택해주세요.");
   const defCurrency = opts.currency.trim().toUpperCase();
   if (!/^[A-Z]{3}$/.test(defCurrency)) throw new Error("통화는 KRW, USD 같은 3글자 코드여야 합니다.");
+  const timezone = normalizeTimezone(opts.timezone);
+  if (!timezone) throw new Error("시간대는 Asia/Seoul, UTC 같은 IANA 이름이어야 합니다.");
   const rows = parseCsv(csv);
   if (rows.length < 2) throw new Error("헤더와 데이터 행이 필요합니다.");
   const cols: Record<string, number> = {};
@@ -100,9 +157,11 @@ export function importRevenue(csv: string, existing: RevenueRow[], opts: ImportO
   if (!("revenue" in cols) && !("pageviews" in cols) && !("impressions" in cols) && !("clicks" in cols))
     throw new Error("수익, 조회수, 노출, 클릭 중 하나 이상의 열이 필요합니다.");
   const now = opts.now ?? new Date();
-  const seen = new Set(existing.map(rowKey));
-  const result: RevenueImport = { rows: [...existing], added: 0, duplicates: 0, invalid: [] };
+  const stored = new Map(existing.map((r) => [rowKey(r), r]));
+  const seen = new Set(stored.keys());
+  const result: RevenueImport = { rows: [...existing], added: 0, duplicates: 0, conflicts: 0, invalid: [] };
   const stamp = now.toISOString();
+  const parsed: (RevenueRow & { line: number })[] = [];
   rows.slice(1).forEach((r, idx) => {
     const line = idx + 2;
     const bad = (reason: string) => void result.invalid.push({ line, reason });
@@ -123,14 +182,45 @@ export function importRevenue(csv: string, existing: RevenueRow[], opts: ImportO
     if (!/^[A-Z]{3}$/.test(currency)) return bad("통화 코드가 올바르지 않습니다.");
     const page = ("page" in cols ? (r[cols.page] ?? "") : "").trim();
     if (page.length > 500) return bad("페이지 주소가 너무 깁니다.");
-    const row: RevenueRow = { source, status: opts.status, currency, date, page, revenue, pageviews, impressions, clicks, importedAt: stamp };
+    parsed.push({
+      source, status: opts.status, currency, date, page, revenue, pageviews, impressions, clicks, importedAt: stamp,
+      timezone, periodStart: null, periodEnd: null, line,
+    });
+  });
+  if (parsed.length === 0) return result;
+  // The period is what the file actually covers, decided before anything is stored.
+  const dates = parsed.map((r) => r.date).sort();
+  const periodStart = dates[0];
+  const periodEnd = dates[dates.length - 1];
+  const clash = findOverlap(existing, parsed, { timezone, periodStart, periodEnd });
+  if (clash) {
+    throw new Error(
+      clash.timezone === null
+        ? `시간대·기간 기록이 없는 기존 데이터(${clash.date})와 날짜가 겹쳐 가져오지 않았습니다. 기존 데이터를 삭제한 뒤 다시 가져와 주세요.`
+        : `기존 보고서 기간(${clash.periodStart} ~ ${clash.periodEnd})과 일부만 겹쳐 가져오지 않았습니다(이번 파일 ${periodStart} ~ ${periodEnd}). 겹치지 않는 기간이나 기존과 똑같은 기간으로 다시 내보내 주세요.`,
+    );
+  }
+  for (const { line, ...r } of parsed) {
+    const row: RevenueRow = { ...r, periodStart, periodEnd };
     const key = rowKey(row);
-    if (seen.has(key)) return void result.duplicates++;
-    if (result.rows.length >= MAX_REVENUE_ROWS) return bad(`최대 ${MAX_REVENUE_ROWS}행까지 저장할 수 있습니다.`);
+    const old = stored.get(key);
+    if (old) {
+      if (sameValues(old, row)) result.duplicates++;
+      else result.conflicts++;
+      continue;
+    }
+    if (seen.has(key)) {
+      result.duplicates++;
+      continue;
+    }
+    if (result.rows.length >= MAX_REVENUE_ROWS) {
+      result.invalid.push({ line, reason: `최대 ${MAX_REVENUE_ROWS}행까지 저장할 수 있습니다.` });
+      continue;
+    }
     seen.add(key);
     result.rows.push(row);
     result.added++;
-  });
+  }
   return result;
 }
 
@@ -138,6 +228,7 @@ export type Summary = {
   source: string;
   status: RevenueStatus;
   currency: string;
+  timezone: string | null;
   from: string;
   to: string;
   days: number;
@@ -155,13 +246,13 @@ export type Summary = {
 const add = (a: number | null, b: number | null) => (b === null ? a : (a ?? 0) + b);
 
 /**
- * One summary per source+status+currency. For each day a site-level total row wins; the page
+ * One summary per source+status+currency+time zone. For each day a site-level total row wins; the page
  * rows of that day are used only when there is no site total, so nothing is counted twice.
  */
 export function summarize(rows: RevenueRow[]): Summary[] {
   const groups = new Map<string, RevenueRow[]>();
   for (const r of rows) {
-    const k = [r.source.toLowerCase(), r.status, r.currency].join("|");
+    const k = [r.source.toLowerCase(), r.status, r.currency, r.timezone ?? ""].join("|");
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
   }
   const out: Summary[] = [];
@@ -191,6 +282,7 @@ export function summarize(rows: RevenueRow[]): Summary[] {
       source: g[0].source,
       status: g[0].status,
       currency: g[0].currency,
+      timezone: g[0].timezone,
       from: dates[0],
       to: dates[dates.length - 1],
       days: dates.length,
@@ -199,27 +291,30 @@ export function summarize(rows: RevenueRow[]): Summary[] {
       siteDays, pageDays,
     });
   }
-  return out.sort((a, b) => a.source.localeCompare(b.source) || a.status.localeCompare(b.status) || a.currency.localeCompare(b.currency));
+  return out.sort((a, b) => a.source.localeCompare(b.source) || a.status.localeCompare(b.status) || a.currency.localeCompare(b.currency) || (a.timezone ?? "").localeCompare(b.timezone ?? ""));
 }
 
 export type PageSummary = {
   page: string;
+  source: string;
   currency: string;
   status: RevenueStatus;
+  timezone: string | null;
   revenue: number | null;
   pageviews: number | null;
   article: Article | null;
 };
-/** Page-level revenue per page, linked to articles whose WordPress URL matches. */
+/** Page-level revenue per page and source. The confirmed public URL wins over a remote draft link. */
 export function pageSummaries(rows: RevenueRow[], articles: Article[], limit = 20): PageSummary[] {
   const byUrl = new Map<string, Article>();
   for (const a of articles) if (a.remote?.url) byUrl.set(normalizePage(a.remote.url), a);
+  for (const a of articles) if (a.publishedUrl) byUrl.set(normalizePage(a.publishedUrl), a);
   const map = new Map<string, PageSummary>();
   for (const r of rows) {
     if (r.page === "") continue;
-    const key = [normalizePage(r.page), r.status, r.currency].join("|");
+    const key = [normalizePage(r.page), r.source.toLowerCase(), r.status, r.currency, r.timezone ?? ""].join("|");
     const cur = map.get(key) ?? {
-      page: r.page, currency: r.currency, status: r.status, revenue: null, pageviews: null,
+      page: r.page, source: r.source, currency: r.currency, status: r.status, timezone: r.timezone, revenue: null, pageviews: null,
       article: byUrl.get(normalizePage(r.page)) ?? null,
     };
     cur.revenue = add(cur.revenue, r.revenue);
@@ -229,14 +324,82 @@ export function pageSummaries(rows: RevenueRow[], articles: Article[], limit = 2
   return [...map.values()].sort((a, b) => (b.revenue ?? -1) - (a.revenue ?? -1)).slice(0, limit);
 }
 
+/**
+ * Which blog each confirmed public URL belongs to. Only `publishedUrl` counts: `remote.url` can be
+ * a draft link. Articles on different blogs that share a URL can not be told apart, so it is unknown.
+ */
+function publicUrlBlogs(articles: Article[]) {
+  const byUrl = new Map<string, string | null>();
+  for (const a of articles) {
+    if (!a.publishedUrl) continue;
+    const url = normalizePage(a.publishedUrl);
+    const blog = a.blogId ?? null;
+    byUrl.set(url, byUrl.has(url) && byUrl.get(url) !== blog ? null : blog);
+  }
+  return byUrl;
+}
+/**
+ * Rows of one blog filter. A row with no linked public URL (site totals included) is unclassified:
+ * revenue that can not be attributed is never assigned to an account by guess.
+ */
+export function filterRevenueByBlog(rows: RevenueRow[], articles: Article[], filter: BlogFilterValue): RevenueRow[] {
+  if (filter === ALL_BLOGS) return rows;
+  const byUrl = publicUrlBlogs(articles);
+  return rows.filter((r) => matchesBlogFilter(r.page === "" ? null : byUrl.get(normalizePage(r.page)), filter));
+}
+
+export type RevenueSendResult = { added: number; duplicates: number; failure: string | null; reloaded: boolean };
+/**
+ * Sends rows in chunks and refreshes afterwards even when a chunk fails: the chunks before it stay
+ * stored, so the caller reports them instead of showing only the error.
+ */
+export async function sendRevenueChunks<T>(
+  list: T[],
+  send: (rows: T[]) => Promise<{ added?: unknown; duplicates?: unknown }>,
+  reload: () => Promise<unknown>,
+  size = 1000,
+): Promise<RevenueSendResult> {
+  let added = 0;
+  let duplicates = 0;
+  let failure: string | null = null;
+  try {
+    for (let i = 0; i < list.length; i += size) {
+      const r = await send(list.slice(i, i + size));
+      added += Number(r.added ?? 0);
+      duplicates += Number(r.duplicates ?? 0);
+    }
+  } catch (e) {
+    failure = e instanceof Error ? e.message : "가져오기에 실패했습니다.";
+  }
+  let reloaded = true;
+  try {
+    await reload();
+  } catch {
+    reloaded = false;
+  }
+  return { added, duplicates, failure, reloaded };
+}
+/** What the operator must be told about a send; empty when it went through and the list is fresh. */
+export function revenueSendNotice(r: RevenueSendResult): string {
+  const parts: string[] = [];
+  if (r.failure) {
+    parts.push(`${r.failure} 저장이 확인된 행은 ${r.added}행입니다(이미 있어서 건너뜀 ${r.duplicates}행).`);
+    if (r.added + r.duplicates > 0) parts.push("같은 파일을 다시 가져오면 저장된 행은 건너뜁니다.");
+  }
+  if (!r.reloaded) parts.push("목록을 새로 불러오지 못했어요. 페이지를 새로고침해 주세요.");
+  return parts.join(" ");
+}
+
 export function isRevenueRow(v: unknown): v is RevenueRow {
   if (!v || typeof v !== "object") return false;
   const r = v as Record<string, unknown>;
   const num = (x: unknown) => x === null || (typeof x === "number" && Number.isFinite(x) && x >= 0);
+  const opt = (x: unknown) => x === undefined || x === null || typeof x === "string";
   return (
     ["source", "currency", "date", "page", "importedAt"].every((k) => typeof r[k] === "string") &&
     (r.status === "estimated" || r.status === "finalized") &&
     /^\d{4}-\d{2}-\d{2}$/.test(String(r.date)) &&
+    [r.timezone, r.periodStart, r.periodEnd].every(opt) &&
     [r.revenue, r.pageviews, r.impressions, r.clicks].every(num)
   );
 }
@@ -244,10 +407,12 @@ export function parseRevenue(raw: string | null): RevenueRow[] {
   if (!raw) return [];
   const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed) || !parsed.every(isRevenueRow)) throw new Error("저장된 수익 데이터 형식을 읽을 수 없습니다.");
-  return parsed;
+  // Rows saved before the time zone and period were recorded read as unknown, never guessed.
+  return parsed.map((r) => ({ ...r, timezone: r.timezone ?? null, periodStart: r.periodStart ?? null, periodEnd: r.periodEnd ?? null }));
 }
-export function formatMoney(n: number | null, currency: string) {
+/** `maxDigits` keeps more precision where a small amount must not round to 0. */
+export function formatMoney(n: number | null, currency: string, maxDigits?: number) {
   if (n === null) return "N/A";
   const digits = currency === "KRW" || currency === "JPY" ? 0 : 2;
-  return `${n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${currency}`;
+  return `${n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: Math.max(digits, maxDigits ?? digits) })} ${currency}`;
 }

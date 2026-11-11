@@ -10,6 +10,8 @@ export type ReviewFinding = {
   message: string;
 };
 export const MAX_FINDINGS = 12;
+/** Recorded with every run. Bump it whenever buildReviewMessages changes what the model is told. */
+export const REVIEW_PROMPT_VERSION = "review-v1";
 const KINDS = ["unsupported-claim", "factual-risk", "copyright", "missing-source", "tone", "other"] as const;
 const SEVERITIES = ["high", "medium", "low"] as const;
 export const kindLabels: Record<ReviewFinding["kind"], string> = {

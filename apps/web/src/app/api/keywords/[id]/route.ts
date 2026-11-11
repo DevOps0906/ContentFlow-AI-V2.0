@@ -1,8 +1,43 @@
-import { isUuid } from "@/lib/articles-db";
-import { json, sameOrigin } from "@/lib/server";
+import { dbError, isUuid } from "@/lib/articles-db";
+import { parseBlogLink } from "@/lib/blogs";
+import { KEYWORD_COLUMNS, rowToKeyword, type KeywordRow } from "@/lib/keywords-db";
+import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { getAccount } from "@/lib/supabase";
+import { canManageBlogs } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
+
+/** Links a keyword to a blog account or clears the link (owner/admin; a trigger enforces it too). */
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  if (!sameOrigin(req)) return json({ error: "허용되지 않은 요청입니다." }, 403);
+  const account = await getAccount();
+  if (account.mode === "local") return json({ error: "로컬 모드입니다." }, 404);
+  if (account.mode === "anonymous") return json({ error: "로그인이 필요합니다." }, 401);
+  if (!canManageBlogs(account.role)) return json({ error: "키워드의 블로그 계정은 소유자·관리자만 바꿀 수 있습니다." }, 403);
+  const { id } = await ctx.params;
+  if (!isUuid(id)) return json({ error: "잘못된 키워드 ID입니다." }, 400);
+  let blogId;
+  try {
+    blogId = parseBlogLink(await readJson(req, 1_000));
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
+  }
+  if (await sharedLimited(account.supabase, `kw:${account.user.id}`, 30, 60_000))
+    return json({ error: "요청이 너무 잦습니다." }, 429);
+  const { data, error } = await account.supabase
+    .from("keywords")
+    .update({ blog_id: blogId })
+    .eq("id", id)
+    .eq("workspace_id", account.workspaceId)
+    .select(KEYWORD_COLUMNS)
+    .maybeSingle();
+  if (error) {
+    const e = dbError(error);
+    return json({ error: e.message }, e.status);
+  }
+  if (!data) return json({ error: "키워드를 찾을 수 없습니다." }, 404);
+  return json({ keyword: rowToKeyword(data as KeywordRow) });
+}
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   if (!sameOrigin(req)) return json({ error: "허용되지 않은 요청입니다." }, 403);

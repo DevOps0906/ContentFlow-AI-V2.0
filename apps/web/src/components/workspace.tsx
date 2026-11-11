@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import type { Role } from "@/lib/team";
+import type { ReviewDecision } from "@/lib/articles-db";
 import {
+  applyBriefRule,
+  applyPublishedUrlRule,
+  applyRendererRule,
+  applyReviewRule,
+  applyTemplateVersionRule,
   type Article,
   LEGACY_STORAGE_KEY,
   loadArticles,
@@ -34,6 +40,8 @@ type Workspace = {
   role: Role | null;
   /** Stores the article and resolves to what was stored. Throws an Error with a user message. */
   save: (a: Article) => Promise<Article>;
+  /** Stores a person's evidence and rights decision on the saved article. */
+  saveReview: (a: Article, decision: ReviewDecision) => Promise<Article>;
   remove: (id: string) => Promise<boolean>;
   clear: () => boolean;
   /** WordPress draft. Local mode drives the state in the browser; account mode asks the server. */
@@ -181,8 +189,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setArticles((list) => upsert(list, article));
       return article;
     }
-    persistLocal(upsert(articles, a));
-    return a;
+    const previous = articles.find((x) => x.id === a.id);
+    const next = applyTemplateVersionRule(
+      applyReviewRule(applyBriefRule(applyRendererRule(applyPublishedUrlRule(a, previous), previous), previous), previous),
+      previous,
+    );
+    persistLocal(upsert(articles, next));
+    return next;
+  }
+  async function saveReview(a: Article, decision: ReviewDecision) {
+    if (mode === "account") {
+      const { article } = await api<{ article: Article }>(`/api/articles/${a.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify(decision),
+      });
+      setArticles((list) => upsert(list, article));
+      return article;
+    }
+    return save({ ...a, ...decision, updatedAt: new Date().toISOString() });
   }
   async function remove(id: string) {
     if (mode === "account") {
@@ -287,6 +311,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         email,
         role,
         save,
+        saveReview,
         remove,
         clear,
         sendWordpress,
@@ -303,7 +328,7 @@ export function useWorkspace() {
   if (!state) throw new Error("WorkspaceProvider is required");
   return state;
 }
-export function download(name: string, content: string, type = "text/html") {
+export function download(name: string, content: string | Uint8Array<ArrayBuffer>, type = "text/html") {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement("a");
   a.href = url;

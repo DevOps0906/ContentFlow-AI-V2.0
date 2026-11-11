@@ -1,7 +1,7 @@
 // Mapping and validation for the `keywords` table (migration 0003).
 import type { Keyword } from "./keywords";
 
-export const KEYWORD_COLUMNS = "id,phrase,intent,priority,note,created_at";
+export const KEYWORD_COLUMNS = "id,phrase,intent,priority,note,created_at,blog_id";
 export const MAX_PER_REQUEST = 500;
 
 export type KeywordRow = {
@@ -11,6 +11,7 @@ export type KeywordRow = {
   priority: number;
   note: string;
   created_at: string;
+  blog_id: string | null;
 };
 export const rowToKeyword = (r: KeywordRow): Keyword => ({
   id: r.id,
@@ -19,6 +20,7 @@ export const rowToKeyword = (r: KeywordRow): Keyword => ({
   priority: r.priority,
   note: r.note,
   importedAt: r.created_at,
+  ...(r.blog_id ? { blogId: r.blog_id } : {}),
 });
 
 export type NewKeyword = { phrase: string; intent: string; priority: number; note: string };

@@ -4,6 +4,7 @@ import { buildMessages, parseCompletion, validateAiRequest } from "../src/lib/ai
 import { sendDraft, toWpContent, normalizeBaseUrl } from "../src/lib/wordpress";
 import { aiConfig, rateLimited, resetRateLimits, sameOrigin, wpConfig } from "../src/lib/server";
 import { isArticle, type Article } from "../src/lib/content";
+import type { DeliveryError } from "../src/lib/delivery";
 
 const article: Article = {
   id: "a1",
@@ -89,6 +90,7 @@ test("only approved, reviewed content is sent, and creation is always a draft", 
   await assert.rejects(sendDraft(cfg, { ...article, sourceUrl: "javascript:1" }, undefined, async () => wpRes({})));
   let sent: { url: string; init?: RequestInit } | undefined;
   const r = await sendDraft(cfg, article, undefined, async (url, init) => {
+    if (!init?.method) return wpRes([]); // the slug lookup finds nothing
     sent = { url, init };
     return wpRes({ id: 7, link: "https://blog.example.com/?p=7", status: "draft" }, 201);
   });
@@ -102,7 +104,9 @@ test("only approved, reviewed content is sent, and creation is always a draft", 
 
 test("a response that is not a draft is reported, not accepted silently", async () => {
   await assert.rejects(
-    sendDraft(cfg, article, undefined, async () => wpRes({ id: 1, link: "https://x/?p=1", status: "publish" }, 201)),
+    sendDraft(cfg, article, undefined, async (_url, init) =>
+      init?.method ? wpRes({ id: 1, link: "https://x/?p=1", status: "publish" }, 201) : wpRes([]),
+    ),
     /초안이 아닌/,
   );
 });
@@ -129,6 +133,15 @@ test("retry updates the existing draft without sending a status; published remot
     /초안이 아닙니다/,
   );
   assert.deepEqual(calls2, ["GET"]);
+});
+
+test("an update response without id or link is invalid_response, as on create", async () => {
+  for (const reply of [{ link: "https://x/?p=7" }, { id: "7", link: "https://x/?p=7" }, { id: 7 }, { id: 7, link: null }]) {
+    await assert.rejects(
+      sendDraft(cfg, article, 7, async (_url, init) => (init?.method ? wpRes(reply) : wpRes({ status: "draft" }))),
+      (e: DeliveryError) => e.failureType === "invalid_response",
+    );
+  }
 });
 
 test("WordPress errors are mapped without echoing credentials", async () => {

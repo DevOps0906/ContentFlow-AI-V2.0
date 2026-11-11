@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
+import type { Article } from "@/lib/content";
+import { parseVerdict, type DeliveryCheck } from "@/lib/delivery";
 
 export type Integrations = {
   ai: { configured: boolean; model: string | null };
@@ -39,3 +41,15 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   }
   return data as T;
 }
+
+/** Account mode: the article as stored right now. A failed request throws, so nothing is handed off. */
+export async function fetchStoredArticle(id: string): Promise<Article> {
+  const res = await fetch(`/api/articles/${id}`, { cache: "no-store" });
+  const data = (await res.json().catch(() => null)) as { article?: Article; error?: string } | null;
+  if (!res.ok || !data?.article) throw new Error(data?.error || `요청에 실패했습니다(${res.status}).`);
+  return data.article;
+}
+
+/** Account mode: the server's verdict. A failed request throws, so nothing is handed off. */
+export const accountDeliveryCheck: DeliveryCheck = async (id) =>
+  parseVerdict(await postJson(`/api/articles/${id}/delivery-check`, {}));

@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   BookOpen,
   ChevronDown,
+  ChartLine,
   ChevronRight,
   CircleHelp,
   FileText,
@@ -28,6 +29,7 @@ const nav = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
   { href: "/content", label: "콘텐츠", icon: FileText },
   { href: "/keywords", label: "키워드 · 제목 랩", icon: Search },
+  { href: "/trends", label: "트렌드 분석", icon: ChartLine },
   { href: "/templates", label: "템플릿 라이브러리", icon: LayoutTemplate },
   { href: "/analytics", label: "수익 분석", icon: TrendingUp },
 ];

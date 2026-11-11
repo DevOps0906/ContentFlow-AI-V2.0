@@ -6,12 +6,16 @@ import {
   parseRevenue,
   summarize,
   formatMoney,
+  findOverlap,
+  normalizeTimezone,
+  revenueSendNotice,
+  sendRevenueChunks,
   type RevenueRow,
 } from "../src/lib/revenue";
 import type { Article } from "../src/lib/content";
 
 const NOW = new Date("2026-11-06T00:00:00Z");
-const opts = { source: "AdSense", status: "estimated" as const, currency: "krw", now: NOW };
+const opts = { source: "AdSense", status: "estimated" as const, currency: "krw", timezone: "Asia/Seoul", now: NOW };
 const csv = (s: string) => s.trim().replace(/^ +/gm, "");
 
 test("imports a report with Korean headers, thousands separators and a default currency", () => {
@@ -57,10 +61,10 @@ test("headers, columns, source, status and currency are validated", () => {
 
 test("re-importing the same report never double counts, even with different spelling of the page", () => {
   const first = importRevenue("date,page,revenue\n2026-11-01,https://Blog.example/a/,100", [], opts);
-  const again = importRevenue("date,page,revenue\n2026-11-01,https://blog.example/a,100\n2026-11-02,https://blog.example/a,50", first.rows, opts);
-  assert.equal(again.added, 1);
+  const again = importRevenue("date,page,revenue\n2026-11-01,https://blog.example/a,100", first.rows, opts);
+  assert.equal(again.added, 0);
   assert.equal(again.duplicates, 1);
-  assert.equal(summarize(again.rows)[0].revenue, 150);
+  assert.equal(summarize(again.rows)[0].revenue, 100);
   // Within one file too.
   const dup = importRevenue("date,revenue\n2026-11-01,1\n2026-11-01,1", [], opts);
   assert.equal(dup.added, 1);
@@ -132,6 +136,59 @@ test("page revenue is linked to articles by WordPress URL and sorted by revenue"
   assert.equal(pages[1].article?.id, "1");
 });
 
+test("a confirmed public URL wins over a remote draft link, which stays a fallback", () => {
+  const base = { id: "1", title: "글", keyword: "k", templateId: "T01", platform: "wordpress", body: "", sourceUrl: "", status: "published", updatedAt: "t" } as Article;
+  const published = { ...base, id: "pub", publishedUrl: "https://blog.example/live", remote: { postId: 1, url: "https://blog.example/draft-a", syncedAt: "t" } } as Article;
+  const draftOnly = { ...base, id: "draft", remote: { postId: 2, url: "https://blog.example/live", syncedAt: "t" } } as Article;
+  const fallback = { ...base, id: "fallback", remote: { postId: 3, url: "https://blog.example/old", syncedAt: "t" } } as Article;
+  const r = importRevenue("date,page,revenue\n2026-11-01,https://blog.example/live,10\n2026-11-01,https://blog.example/old,5", [], opts);
+  for (const list of [[published, draftOnly, fallback], [draftOnly, published, fallback]]) {
+    const pages = pageSummaries(r.rows, list);
+    assert.equal(pages.find((p) => p.page.endsWith("/live"))?.article?.id, "pub");
+    assert.equal(pages.find((p) => p.page.endsWith("/old"))?.article?.id, "fallback");
+  }
+});
+
+test("page totals stay apart per source and name it", () => {
+  let rows = importRevenue("date,page,revenue\n2026-11-01,/a,10", [], opts).rows;
+  rows = importRevenue("date,page,revenue\n2026-11-01,/a,3", rows, { ...opts, source: "Kakao" }).rows;
+  assert.deepEqual(pageSummaries(rows, []).map((p) => [p.source, p.revenue]), [["AdSense", 10], ["Kakao", 3]]);
+});
+
+test("a send that stops part way still refreshes and reports what was stored", async () => {
+  const rows = importRevenue("date,revenue\n2026-11-01,1\n2026-11-02,2\n2026-11-03,3", [], opts).rows;
+  let reloads = 0;
+  const sent: number[] = [];
+  const r = await sendRevenueChunks(
+    rows,
+    async (chunk) => {
+      sent.push(chunk.length);
+      if (sent.length === 2) throw new Error("두 번째 묶음 실패");
+      return { added: 2, duplicates: 0 };
+    },
+    async () => void reloads++,
+    2,
+  );
+  assert.deepEqual(sent, [2, 1]);
+  assert.equal(reloads, 1);
+  assert.deepEqual(r, { added: 2, duplicates: 0, failure: "두 번째 묶음 실패", reloaded: true });
+  assert.match(revenueSendNotice(r), /두 번째 묶음 실패 저장이 확인된 행은 2행/);
+  assert.match(revenueSendNotice(r), /다시 가져오면/);
+});
+
+test("a send notice is empty on success and honest when nothing was stored or the refresh failed", async () => {
+  const ok = await sendRevenueChunks([], async () => ({}), async () => ({}));
+  assert.deepEqual(ok, { added: 0, duplicates: 0, failure: null, reloaded: true });
+  assert.equal(revenueSendNotice(ok), "");
+  const refused = revenueSendNotice({ added: 0, duplicates: 0, failure: "기간 겹침", reloaded: true });
+  assert.match(refused, /0행/);
+  assert.doesNotMatch(refused, /다시 가져오면/);
+  const stale = await sendRevenueChunks([], async () => ({}), async () => {
+    throw new Error("x");
+  });
+  assert.match(revenueSendNotice(stale), /새로고침/);
+});
+
 test("stored revenue is validated and corrupt data is rejected, not replaced", () => {
   const rows = importRevenue("date,revenue\n2026-11-01,10", [], opts).rows;
   assert.deepEqual(parseRevenue(JSON.stringify(rows)), rows);
@@ -139,4 +196,88 @@ test("stored revenue is validated and corrupt data is rejected, not replaced", (
   assert.throws(() => parseRevenue("{bad"));
   assert.throws(() => parseRevenue(JSON.stringify([{ ...rows[0], revenue: -1 }])));
   assert.throws(() => parseRevenue(JSON.stringify([{ ...rows[0], status: "x" }])));
+});
+
+const report = "date,page,revenue\n2026-11-01,,100\n2026-11-05,,50";
+
+test("the time zone and the file's whole period are kept on every row", () => {
+  const r = importRevenue(report, [], opts);
+  assert.deepEqual(r.rows.map((x) => [x.date, x.timezone, x.periodStart, x.periodEnd]), [
+    ["2026-11-01", "Asia/Seoul", "2026-11-01", "2026-11-05"],
+    ["2026-11-05", "Asia/Seoul", "2026-11-01", "2026-11-05"],
+  ]);
+  assert.throws(() => importRevenue(report, [], { ...opts, timezone: "Mars/Base" }), /시간대/);
+  assert.throws(() => importRevenue(report, [], { ...opts, timezone: " " }), /시간대/);
+  assert.equal(normalizeTimezone("not a zone"), null);
+  // Invalid lines do not stretch the period.
+  const trimmed = importRevenue("date,revenue\n2026-11-02,1\n2026-11-03,x", [], opts);
+  assert.equal(trimmed.rows[0].periodEnd, "2026-11-02");
+});
+
+test("re-importing the identical period is skipped and changes nothing", () => {
+  const first = importRevenue(report, [], opts);
+  const again = importRevenue(report, first.rows, opts);
+  assert.equal(again.added, 0);
+  assert.equal(again.duplicates, 2);
+  assert.equal(again.conflicts, 0);
+  assert.equal(again.rows.length, 2);
+  assert.equal(summarize(again.rows)[0].revenue, 150);
+});
+
+test("the same period with different values keeps the stored value and says so", () => {
+  const first = importRevenue(report, [], opts);
+  const changed = importRevenue("date,page,revenue\n2026-11-01,,999\n2026-11-05,,50", first.rows, opts);
+  assert.equal(changed.added, 0);
+  assert.equal(changed.duplicates, 1);
+  assert.equal(changed.conflicts, 1);
+  assert.equal(summarize(changed.rows)[0].revenue, 150);
+});
+
+test("a partly overlapping period is refused as a whole, nothing is added", () => {
+  const first = importRevenue(report, [], opts);
+  const overlaps = [
+    "date,page,revenue\n2026-11-04,,1\n2026-11-06,,1", // extends past the end
+    "date,page,revenue\n2026-10-30,,1\n2026-11-01,,1", // touches the first day
+    "date,page,revenue\n2026-11-02,,1\n2026-11-03,,1", // inside
+    "date,page,revenue\n2026-10-30,,1\n2026-11-06,,1", // encloses
+  ];
+  for (const csvText of overlaps) assert.throws(() => importRevenue(csvText, first.rows, opts), /일부만 겹쳐/);
+  assert.equal(first.rows.length, 2);
+});
+
+test("adjacent periods and different reports are not an overlap", () => {
+  const first = importRevenue(report, [], opts).rows;
+  const adjacent = "date,page,revenue\n2026-11-06,,1";
+  assert.equal(importRevenue(adjacent, first, opts).added, 1);
+  const inside = "date,page,revenue\n2026-11-02,,1";
+  assert.equal(importRevenue(inside, first, { ...opts, status: "finalized" }).added, 1);
+  assert.equal(importRevenue(inside, first, { ...opts, currency: "USD" }).added, 1);
+  assert.equal(importRevenue(inside, first, { ...opts, source: "Other" }).added, 1);
+  assert.equal(importRevenue(inside, first, { ...opts, timezone: "UTC" }).added, 1);
+  // A page report over the same days is a different report from the site total.
+  assert.equal(importRevenue("date,page,revenue\n2026-11-02,/a,1", first, opts).added, 1);
+  // The source name is matched without regard to case.
+  assert.throws(() => importRevenue(inside, first, { ...opts, source: "adsense" }), /일부만 겹쳐/);
+});
+
+test("different time zones are never added together", () => {
+  let rows = importRevenue("date,revenue\n2026-11-01,100", [], opts).rows;
+  rows = importRevenue("date,revenue\n2026-11-01,70", rows, { ...opts, timezone: "UTC" }).rows;
+  const s = summarize(rows);
+  assert.deepEqual(s.map((x) => [x.timezone, x.revenue]), [["Asia/Seoul", 100], ["UTC", 70]]);
+  rows = importRevenue("date,page,revenue\n2026-11-02,/a,1", [], opts).rows;
+  rows = importRevenue("date,page,revenue\n2026-11-02,/a,2", rows, { ...opts, timezone: "UTC" }).rows;
+  assert.deepEqual(pageSummaries(rows, []).map((p) => p.revenue).sort(), [1, 2]);
+});
+
+test("older rows with no recorded time zone stay unknown and block overlapping dates", () => {
+  const legacy = { source: "AdSense", status: "estimated", currency: "KRW", date: "2026-11-02", page: "", revenue: 7, pageviews: null, impressions: null, clicks: null, importedAt: "2026-11-03T00:00:00Z" };
+  const [read] = parseRevenue(JSON.stringify([legacy]));
+  assert.equal(read.timezone, null);
+  assert.equal(read.periodStart, null);
+  assert.equal(summarize([read])[0].timezone, null);
+  assert.throws(() => importRevenue(report, [read], opts), /기록이 없는/);
+  // Outside its date there is nothing to confuse.
+  assert.equal(importRevenue("date,revenue\n2026-11-03,1", [read], opts).added, 1);
+  assert.equal(findOverlap([read], [{ source: "x", status: "estimated", currency: "KRW", page: "" }], { timezone: "UTC", periodStart: "2026-11-02", periodEnd: "2026-11-02" }), null);
 });

@@ -16,10 +16,17 @@ import {
 import { findTemplate, templateBody, templates } from "@/lib/templates";
 import {
   type Article,
+  approvalBlockers,
+  briefErrors,
+  contentChanged,
   exportHtml,
   isApprovedContent,
+  isPublishedUrl,
+  REVIEW_STATUSES,
   reviewErrors,
+  reviewStatusLabels,
   saveRevision,
+  type ReviewStatus,
 } from "@/lib/content";
 import {
   afterEdit,
@@ -34,10 +41,27 @@ import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 import { PhaseSteps, StatusBadge } from "./status-badge";
-import { postJson, useIntegrations } from "./integrations";
+import { accountDeliveryCheck, fetchStoredArticle, postJson, useIntegrations } from "./integrations";
+import { useBlogs } from "./blog-filter";
+import { blogOptionLabel, selectableBlogs } from "@/lib/blogs";
 import { runQa } from "@/lib/qa";
 import { kindLabels, type ReviewFinding } from "@/lib/review";
+import { runSummary, type RunInfo } from "@/lib/agent-runs";
+import { DeliveryHistory } from "./delivery-history";
+import { TitleEvaluationPanel } from "./title-evaluation";
+import type { TitleEvaluationEntry } from "@/lib/titles";
 import { canDecide, canEdit, roleLabels } from "@/lib/team";
+import { tistoryPackage } from "@/lib/tistory";
+import { assertDeliverable, assertSameAsStored } from "@/lib/delivery";
+import {
+  AD_PROFILES,
+  adLabels,
+  DEFAULT_AD,
+  DEFAULT_LAYOUT,
+  LAYOUT_PROFILES,
+  layoutLabels,
+  previewBlocks,
+} from "@/lib/render";
 
 function actionLabel(from: LifecycleState, to: LifecycleState) {
   switch (to) {
@@ -131,7 +155,7 @@ function EditorForm({
   templateId: string;
 }) {
   const router = useRouter();
-  const { articles, save, sendWordpress, error, role, mode } = useWorkspace();
+  const { articles, save, saveReview, sendWordpress, error, role, mode } = useWorkspace();
   // Local mode has one user who can do everything; in an account the role decides.
   const editable = role === null || canEdit(role);
   const decider = role === null || canDecide(role);
@@ -147,6 +171,8 @@ function EditorForm({
         sourceUrl: "",
         status: "drafting",
         updatedAt: new Date().toISOString(),
+        layoutProfile: DEFAULT_LAYOUT,
+        adProfile: DEFAULT_AD,
       },
   );
   const [saved, setSaved] = useState(initial);
@@ -155,38 +181,44 @@ function EditorForm({
   const [preview, setPreview] = useState(false);
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState<"ai" | "wp" | "save" | null>(null);
+  const [busy, setBusy] = useState<"ai" | "wp" | "save" | "download" | null>(null);
   const [aiOverwrite, setAiOverwrite] = useState(false);
-  const [review, setReview] = useState<{ findings: ReviewFinding[]; model: string; sameModel: boolean } | null>(null);
+  const [review, setReview] = useState<{ findings: ReviewFinding[]; model: string; sameModel: boolean; run: RunInfo } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [reviewError, setReviewError] = useState("");
+  const [publishedUrl, setPublishedUrl] = useState("");
+  const [askManual, setAskManual] = useState(false);
   const integrations = useIntegrations();
+  const blogAccounts = useBlogs(mode === "account");
   const aiReady = !!integrations?.ai.configured;
   const cmsConnected =
     !!integrations?.wordpress.configured && form.platform === "wordpress";
   const template = findTemplate(form.templateId);
+  const deliveryCheck = mode === "account" ? accountDeliveryCheck : undefined;
   const dirty = saved
-    ? ["title", "keyword", "templateId", "platform", "body", "sourceUrl"].some(
-        (k) => form[k as keyof Article] !== saved[k as keyof Article],
-      )
+    ? contentChanged(form, saved)
     : !!(
         form.title ||
         form.keyword ||
         form.sourceUrl ||
+        form.briefPurpose ||
+        form.briefAudience ||
         form.body !== templateBody(form.templateId)
       );
   // Unsaved edits void any review/approval until the operator saves and reviews again.
   const currentStatus = dirty ? afterEdit(form.status) : form.status;
-  const allActions = localActions(currentStatus, { cmsConnected });
   // Editors can not approve; reviewers can only approve or send back what waits for approval;
   // viewers get nothing. The database enforces the same, this just avoids offering dead buttons.
-  const actions = allActions.filter((a) => {
-    if (!editable) return decider && currentStatus === "approval_pending" && (a.to === "approved" || a.to === "needs_revision");
-    if (a.to === "approved") return decider;
-    return true;
-  });
+  const actionsFor = (status: LifecycleState) =>
+    localActions(status, { cmsConnected }).filter((a) => {
+      if (!editable) return decider && status === "approval_pending" && (a.to === "approved" || a.to === "needs_revision");
+      if (a.to === "approved") return decider;
+      return true;
+    });
+  const actions = actionsFor(currentStatus);
   const qa = runQa(form, articles);
   const canExport = !dirty && isApprovedContent(form);
+  const reviewBlockers = approvalBlockers(form);
   useEffect(() => {
     const handle = (e: BeforeUnloadEvent) => {
       if (dirty) {
@@ -231,6 +263,7 @@ function EditorForm({
   function update<K extends keyof Article>(key: K, value: Article[K]) {
     setForm((f) => ({ ...f, [key]: value }));
     setConfirmed(false);
+    setAskManual(false);
     setMessage("");
     setErrors([]);
   }
@@ -261,7 +294,7 @@ function EditorForm({
     setErrors([]);
     setMessage("");
     try {
-      const { body } = await postJson<{ body: string }>("/api/ai/generate", {
+      const { body, run } = await postJson<{ body: string; run: RunInfo }>("/api/ai/generate", {
         templateId: form.templateId,
         keyword: form.keyword,
         title: form.title,
@@ -269,7 +302,7 @@ function EditorForm({
       update("body", body);
       setPreview(false);
       setMessage(
-        "AI 초안을 채웠어요. 사실·출처·경험을 직접 확인하고 [확인 필요] 표시를 지운 뒤 검수를 요청해주세요.",
+        `AI 초안을 채웠어요. 사실·출처·경험을 직접 확인하고 [확인 필요] 표시를 지운 뒤 검수를 요청해주세요. 모델 ${run.model} · ${runSummary(run)}`,
       );
     } catch (e) {
       setErrors([e instanceof Error ? e.message : "AI 초안을 만들지 못했습니다."]);
@@ -307,16 +340,57 @@ function EditorForm({
     setErrors([]);
     setMessage("");
     try {
+      await assertDeliverable(form, deliveryCheck);
       const r = await sendWordpress(form);
       adopt(r.article);
       setMessage(
-        `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
+        `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시 전에 WordPress에서 slug를 읽기 좋은 값으로 변경해주세요(cf-로 시작하는 현재 값은 자동 식별용입니다). 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
       );
     } catch (e) {
       fail(e, "WordPress 전송에 실패했습니다.");
       // The failed state was stored by the server/provider; show it.
       const stored = (e as { article?: Article }).article;
       if (stored) adopt(stored);
+    } finally {
+      setBusy(null);
+    }
+  }
+  /** What may be handed off: in account mode the server's copy, refused when this screen is behind it. */
+  async function latestCopy(): Promise<Article> {
+    if (mode !== "account") return form;
+    const stored = await fetchStoredArticle(form.id);
+    assertSameAsStored(form, stored);
+    return stored;
+  }
+  /** The state moves only after the operator confirms, so a download alone changes nothing. */
+  async function downloadTistory() {
+    if (dirty || busy) return;
+    setBusy("download");
+    setErrors([]);
+    setMessage("");
+    try {
+      const copy = await latestCopy();
+      const pack = await tistoryPackage(copy, deliveryCheck);
+      download(pack.name, pack.data, "application/zip");
+      if (actionsFor(copy.status).some((a) => a.to === "manual_pending")) setAskManual(true);
+      else setMessage("티스토리 패키지를 내려받았어요.");
+    } catch (e) {
+      fail(e, "티스토리 패키지를 만들지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function downloadHtml() {
+    if (dirty || busy) return;
+    setBusy("download");
+    setErrors([]);
+    setMessage("");
+    try {
+      const copy = await latestCopy();
+      await assertDeliverable(copy, deliveryCheck);
+      download(`contentflow-${copy.id}.html`, exportHtml(copy));
+    } catch (e) {
+      fail(e, "HTML을 내보내지 못했습니다.");
     } finally {
       setBusy(null);
     }
@@ -339,6 +413,55 @@ function EditorForm({
       setBusy(null);
     }
   }
+  /** A person's evidence and rights decision, stored on the saved article. */
+  async function decideReview(field: "evidenceStatus" | "rightsStatus", value: ReviewStatus) {
+    if (busy || dirty || !saved) return;
+    setBusy("save");
+    setErrors([]);
+    setMessage("");
+    try {
+      adopt(
+        await saveReview(saved, {
+          evidenceStatus: saved.evidenceStatus ?? "unreviewed",
+          rightsStatus: saved.rightsStatus ?? "unreviewed",
+          [field]: value,
+        }),
+      );
+      setConfirmed(false);
+    } catch (e) {
+      fail(e, "근거·권리 상태를 저장하지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  /** Stored on the saved copy, so unsaved manuscript edits stay in the form and approval is untouched. */
+  async function saveTitleEvaluation(entries: TitleEvaluationEntry[]) {
+    if (!saved) return;
+    const stored = await save({ ...saved, titleEvaluation: entries, updatedAt: new Date().toISOString() });
+    setSaved(stored);
+    setForm((f) => ({ ...f, titleEvaluation: stored.titleEvaluation, updatedAt: stored.updatedAt }));
+  }
+  /** Stored on the saved copy like the title ratings: the account is not part of the approved content. */
+  async function chooseBlog(value: string) {
+    const blogId = value || null;
+    if (!saved) {
+      setForm((f) => ({ ...f, blogId }));
+      return;
+    }
+    if (busy) return;
+    setBusy("save");
+    setErrors([]);
+    try {
+      const stored = await save({ ...saved, blogId, updatedAt: new Date().toISOString() });
+      setSaved(stored);
+      setForm((f) => ({ ...f, blogId: stored.blogId, updatedAt: stored.updatedAt }));
+      setMessage("블로그 계정을 바꿨어요. 검수·승인 상태는 그대로예요.");
+    } catch (e) {
+      fail(e, "블로그 계정을 바꾸지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
   /** Saves the manuscript and, if given, moves it to `target` via the lifecycle rules. */
   async function persist(target?: LifecycleState) {
     if (busy) return;
@@ -347,6 +470,10 @@ function EditorForm({
     if (target) {
       if (["qa_pending", "approval_pending", "approved"].includes(target))
         issues = reviewErrors(next);
+      // Same rule as applyBriefRule: without a brief the checklist fails and review is refused.
+      if (target === "qa_pending") issues = [...new Set([...issues, ...briefErrors(next)])];
+      if (target === "drafting" && next.status === "briefing") issues = briefErrors(next);
+      if (target === "approved") issues.push(...approvalBlockers(next));
       if (target === "approved" && !confirmed)
         issues.push("근거와 권리를 직접 검토했다는 항목을 확인해주세요.");
       try {
@@ -362,6 +489,7 @@ function EditorForm({
           return;
         }
         next = { ...next, status };
+        if (target === "published") next.publishedUrl = publishedUrl.trim();
       } catch (e) {
         fail(e, "상태를 바꿀 수 없습니다.");
         return;
@@ -369,11 +497,14 @@ function EditorForm({
     }
     setBusy("save");
     try {
+      // Checked before the save: a refused export must not move the article to export_ready.
+      if (target === "export_ready") await assertDeliverable(await latestCopy(), deliveryCheck);
       // In account mode the server and database decide whether this state is legal.
       const stored = await save(next);
       if (target === "export_ready" && stored.status === "export_ready")
         download(`contentflow-${stored.id}.html`, exportHtml(stored));
       adopt(stored);
+      if (stored.status === "published") setPublishedUrl("");
       setErrors(issues);
       setConfirmed(false);
       setMessage(
@@ -447,6 +578,27 @@ function EditorForm({
               </select>
             </div>
           </div>
+          {mode === "account" ? (
+            <div className="field">
+              <label htmlFor="blog-account">블로그 계정</label>
+              <select
+                id="blog-account"
+                disabled={!editable || !!busy || blogAccounts.loading || !!blogAccounts.error}
+                value={form.blogId ?? ""}
+                onChange={(e) => chooseBlog(e.target.value)}
+              >
+                <option value="">미분류</option>
+                {selectableBlogs(blogAccounts.blogs, form.blogId).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {blogOptionLabel(b)}
+                  </option>
+                ))}
+              </select>
+              {blogAccounts.error && <small role="alert">{blogAccounts.error}</small>}
+            </div>
+          ) : (
+            mode === "local" && <p className="metric-note">블로그 계정 연결은 계정 모드에서 사용 가능합니다.</p>
+          )}
           <div className="field">
             <label htmlFor="keyword">핵심 키워드</label>
             <input
@@ -456,6 +608,66 @@ function EditorForm({
               value={form.keyword}
               onChange={(e) => update("keyword", e.target.value)}
             />
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="brief-purpose">브리프 목적</label>
+              <input
+                id="brief-purpose"
+                disabled={!editable}
+                maxLength={1000}
+                placeholder="이 글로 독자의 어떤 문제를 해결하나요?"
+                value={form.briefPurpose ?? ""}
+                onChange={(e) => update("briefPurpose", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="brief-audience">대상 독자</label>
+              <input
+                id="brief-audience"
+                disabled={!editable}
+                maxLength={1000}
+                placeholder="예: Windows에서 개발하는 입문자"
+                value={form.briefAudience ?? ""}
+                onChange={(e) => update("briefAudience", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label htmlFor="layout-profile">표시 프로필</label>
+              <select
+                id="layout-profile"
+                disabled={!editable}
+                value={form.layoutProfile ?? DEFAULT_LAYOUT}
+                onChange={(e) => update("layoutProfile", e.target.value as Article["layoutProfile"])}
+              >
+                {LAYOUT_PROFILES.map((p) => (
+                  <option value={p} key={p}>
+                    {p} · {layoutLabels[p]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="ad-profile">광고 프로필</label>
+              <select
+                id="ad-profile"
+                disabled={!editable}
+                aria-describedby="ad-profile-note"
+                value={form.adProfile ?? DEFAULT_AD}
+                onChange={(e) => update("adProfile", e.target.value as Article["adProfile"])}
+              >
+                {AD_PROFILES.map((p) => (
+                  <option value={p} key={p}>
+                    {p} · {adLabels[p]}
+                  </option>
+                ))}
+              </select>
+              <small id="ad-profile-note">
+                후보 위치는 미리보기에만 표시되고 내보내는 글에는 들어가지 않아요. 프로필을 바꾸면 다시 승인해야 합니다.
+              </small>
+            </div>
           </div>
           <div className="editor-tabs">
             <button
@@ -489,17 +701,19 @@ function EditorForm({
           </div>
           {preview ? (
             <div className="content-preview">
-              {form.body
-                .split("\n")
-                .map((line, i) =>
-                  line.startsWith("## ") ? (
-                    <h2 key={i}>{line.slice(3)}</h2>
-                  ) : line.startsWith("# ") ? (
-                    <h1 key={i}>{line.slice(2)}</h1>
-                  ) : (
-                    <p key={i}>{line || "\u00a0"}</p>
-                  ),
-                )}
+              {previewBlocks(form).map((block, i) =>
+                block.kind === "heading" ? (
+                  <h2 key={i}>{block.text}</h2>
+                ) : block.kind === "paragraph" ? (
+                  <p key={i}>{block.text}</p>
+                ) : block.kind === "source" ? (
+                  <p key={i}>출처: {block.url}</p>
+                ) : (
+                  <p key={i} className="ad-slot-preview">
+                    광고 후보 위치 (미리보기 전용)
+                  </p>
+                ),
+              )}
             </div>
           ) : (
             <div className="field">
@@ -580,12 +794,17 @@ function EditorForm({
               {canExport && (
                 <button
                   className="button secondary"
-                  onClick={() =>
-                    download(`contentflow-${form.id}.html`, exportHtml(form))
-                  }
+                  onClick={downloadHtml}
+                  disabled={busy !== null}
                 >
                   <Download size={15} />
                   HTML 다시 받기
+                </button>
+              )}
+              {canExport && form.platform === "tistory" && (
+                <button className="button secondary" onClick={downloadTistory} disabled={busy !== null}>
+                  <Download size={15} />
+                  티스토리 패키지 받기
                 </button>
               )}
             </div>
@@ -604,7 +823,10 @@ function EditorForm({
               </span>
               <div>
                 <b>{template.name}</b>
-                <small>{template.id} · 글쓰기 구조</small>
+                <small>
+                  {template.id} · 글쓰기 구조
+                  {form.templateVersion ? ` · 버전 ${form.templateVersion}` : ""}
+                </small>
               </div>
             </div>
             <ol className="block-list">
@@ -622,6 +844,39 @@ function EditorForm({
             </div>
             <PhaseSteps state={currentStatus} />
             {currentStatus === "approval_pending" && (
+              <div className="field-row">
+                {(
+                  [
+                    ["evidenceStatus", "근거 검토"],
+                    ["rightsStatus", "권리 검토"],
+                  ] as const
+                ).map(([field, label]) => (
+                  <div className="field" key={field}>
+                    <label htmlFor={field}>{label}</label>
+                    <select
+                      id={field}
+                      disabled={!decider || busy !== null}
+                      value={form[field] ?? "unreviewed"}
+                      onChange={(e) => decideReview(field, e.target.value as ReviewStatus)}
+                    >
+                      {REVIEW_STATUSES.map((s) => (
+                        <option value={s} key={s}>
+                          {reviewStatusLabels[s]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+            {currentStatus === "approval_pending" && reviewBlockers.length > 0 && (
+              <ul className="qa-list">
+                {reviewBlockers.map((b) => (
+                  <li key={b} className="blocker">{b}</li>
+                ))}
+              </ul>
+            )}
+            {currentStatus === "approval_pending" && (
               <label className="approval-label">
                 <input
                   type="checkbox"
@@ -630,6 +885,30 @@ function EditorForm({
                 />
                 <span>사실·출처·이미지 권리를 직접 확인했습니다.</span>
               </label>
+            )}
+            {actions.some((a) => a.to === "published") && (
+              <div className="field">
+                <label htmlFor="published-url">공개 URL</label>
+                <input
+                  id="published-url"
+                  type="url"
+                  placeholder="https://게시한 글의 주소"
+                  aria-describedby="published-url-note"
+                  value={publishedUrl}
+                  onChange={(e) => setPublishedUrl(e.target.value)}
+                />
+                <small id="published-url-note">
+                  초안 링크가 아니라 실제로 공개된 글의 http/https 주소를 입력하면 게시 완료를 확인할 수 있어요.
+                </small>
+              </div>
+            )}
+            {!dirty && form.publishedUrl && (
+              <p className="metric-note published-url">
+                공개 URL{" "}
+                <a href={form.publishedUrl} target="_blank" rel="noreferrer">
+                  {form.publishedUrl}
+                </a>
+              </p>
             )}
             <div className="lifecycle-actions" role="group" aria-label="다음 단계">
               {actions
@@ -663,7 +942,11 @@ function EditorForm({
                       key={to}
                       className={`button ${to === "approved" ? "primary" : "secondary"}`}
                       onClick={() => persist(to)}
-                      disabled={!!error || (to === "approved" && !confirmed)}
+                      disabled={
+                        !!error ||
+                        (to === "approved" && (!confirmed || reviewBlockers.length > 0)) ||
+                        (to === "published" && !isPublishedUrl(publishedUrl.trim()))
+                      }
                     >
                       {to === "approved" ? (
                         <ShieldCheck size={15} />
@@ -699,7 +982,7 @@ function EditorForm({
               )}
               {actions.some((a) => a.to === "qa_pending") && (
                 <p className="metric-note">
-                  제목, 실제 본문, 근거 URL을 채운 뒤 본문 하단의 &lsquo;검수 요청&rsquo;을
+                  제목, 실제 본문, 근거 URL, 브리프 목적과 대상 독자를 채운 뒤 본문 하단의 &lsquo;검수 요청&rsquo;을
                   누르세요.
                 </p>
               )}
@@ -718,6 +1001,14 @@ function EditorForm({
               </p>
             )}
           </section>
+          <TitleEvaluationPanel
+            keyword={form.keyword}
+            value={form.titleEvaluation}
+            editable={editable}
+            saved={!!saved}
+            onSave={saveTitleEvaluation}
+          />
+          {saved && <DeliveryHistory articleId={saved.id} version={saved.updatedAt} account={mode === "account"} />}
           {phaseOf(currentStatus) !== "plan" && (
             <section className="panel qa-panel" aria-live="polite">
               <h2>검수 점검</h2>
@@ -788,6 +1079,7 @@ function EditorForm({
                     {review.sameModel ? " — 글 작성과 같은 모델이라 독립적인 검수가 아니에요(QA_MODEL로 다른 모델 지정)." : ""} · 승인이나
                     상태를 바꾸지 않습니다.
                   </p>
+                  <p className="metric-note">{runSummary(review.run)}</p>
                 </>
               )}
             </section>
@@ -801,6 +1093,18 @@ function EditorForm({
           confirmLabel="AI 초안으로 교체"
           onCancel={() => setAiOverwrite(false)}
           onConfirm={generateDraft}
+        />
+      )}
+      {askManual && !dirty && actions.some((a) => a.to === "manual_pending") && (
+        <ConfirmDialog
+          title="수동 게시 대기로 표시할까요?"
+          description="내려받은 패키지를 티스토리에 직접 게시하는 단계입니다. 자동으로 게시되지 않으며, 게시한 뒤 공개 URL을 입력해 완료를 확인합니다."
+          confirmLabel="수동 게시 대기로 표시"
+          onCancel={() => setAskManual(false)}
+          onConfirm={() => {
+            setAskManual(false);
+            persist("manual_pending");
+          }}
         />
       )}
       {pendingTemplate && (

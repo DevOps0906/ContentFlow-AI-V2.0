@@ -6,6 +6,8 @@ import { LEGACY_STORAGE_KEY, loadArticles, STORAGE_KEY } from "@/lib/content";
 import { PageHeading } from "./shell";
 import { useIntegrations } from "./integrations";
 import { TeamPanel } from "./team-panel";
+import { SiteChecks } from "./site-checks";
+import { BlogAccounts } from "./blog-accounts";
 import { ConfirmDialog } from "./dialog";
 export function Settings() {
   const { articles, clear, mode, email, importLocal } = useWorkspace();
@@ -100,6 +102,14 @@ export function Settings() {
           <TeamPanel />
         </section>
       )}
+      <section className="panel settings-panel" aria-labelledby="blog-accounts-title">
+        <h2 id="blog-accounts-title">블로그 계정</h2>
+        <BlogAccounts account={mode === "account"} />
+      </section>
+      <section className="panel settings-panel" aria-labelledby="site-checks-title">
+        <h2 id="site-checks-title">사이트 준비 점검</h2>
+        <SiteChecks account={mode === "account"} />
+      </section>
       <section className="panel settings-panel">
         <h2>콘텐츠 백업</h2>
         <p>

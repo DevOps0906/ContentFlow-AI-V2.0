@@ -26,7 +26,10 @@ export async function GET(req: Request) {
   }
 }
 
-/** Adds rows. Rows already stored (same key) are skipped by the database, never overwritten. */
+/**
+ * Adds rows. Rows already stored (same key) are skipped by the database, never overwritten; a
+ * partly overlapping report period is refused by the database as a whole.
+ */
 export async function POST(req: Request) {
   const account = await requireAccount(req);
   if (account instanceof Response) return account;
@@ -48,6 +51,8 @@ export async function POST(req: Request) {
     })
     .select("row_key");
   if (error) {
+    if (/period overlap/.test(error.message ?? ""))
+      return json({ error: "기존 보고서 기간과 일부만 겹쳐 저장하지 않았습니다. 겹치지 않는 기간이나 똑같은 기간으로 다시 내보내 주세요." }, 409);
     const limit = /limit reached/.test(error.message ?? "");
     const e = dbError(error);
     return json(

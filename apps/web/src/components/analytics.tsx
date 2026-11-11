@@ -3,8 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChartNoAxesCombined, FileUp, Info, Trash2, Wallet } from "lucide-react";
 import {
+  filterRevenueByBlog,
   formatMoney,
   importRevenue,
+  revenueSendNotice,
+  sendRevenueChunks,
   pageSummaries,
   parseRevenue,
   REVENUE_STORAGE_KEY,
@@ -18,13 +21,18 @@ import {
 import { PageHeading } from "./shell";
 import { useWorkspace } from "./workspace";
 import { ConfirmDialog } from "./dialog";
+import { CostLedger } from "./cost-ledger";
+import { ImprovementQueue } from "./improvement-queue";
+import { BlogFilter } from "./blog-filter";
+import { BlogMetrics } from "./blog-metrics";
+import { ALL_BLOGS, type BlogFilterValue } from "@/lib/blogs";
 
 const num = (n: number | null) => (n === null ? "N/A" : n.toLocaleString("ko-KR"));
 
 /** One value for a stat card only when it is unambiguous; otherwise point at the table. */
 function single(summaries: Summary[], status: RevenueStatus, pick: (s: Summary) => string | null) {
   const list = summaries.filter((s) => s.status === status);
-  if (list.length === 0) return { value: "—", note: "가져온 보고서 없음" };
+  if (list.length === 0) return { value: "N/A", note: "가져온 보고서 없음" };
   if (list.length > 1) return { value: "표 참고", note: "출처·통화별로 구분해 표시" };
   const v = pick(list[0]);
   return v === null ? { value: "N/A", note: "필요한 열이 보고서에 없음" } : { value: v, note: `${list[0].from} ~ ${list[0].to}` };
@@ -42,8 +50,10 @@ export function Analytics() {
   const [source, setSource] = useState("AdSense");
   const [status, setStatus] = useState<RevenueStatus>("estimated");
   const [currency, setCurrency] = useState("KRW");
+  const [timezone, setTimezone] = useState("Asia/Seoul");
   const [confirmClear, setConfirmClear] = useState(false);
-  const file = useRef<HTMLInputElement>(null);
+  const [blogFilter, setBlogFilter] = useState<BlogFilterValue>(ALL_BLOGS);
+  const file =useRef<HTMLInputElement>(null);
 
   const readLocal = () => parseRevenue(localStorage.getItem(REVENUE_STORAGE_KEY));
   async function api(url: string, init?: RequestInit) {
@@ -58,15 +68,8 @@ export function Analytics() {
     setCanImport(d.canImport === true);
   }
   /** Sends rows to the account in chunks. The database decides what is a duplicate. */
-  async function sendRows(list: RevenueRow[]) {
-    let added = 0;
-    let duplicates = 0;
-    for (let i = 0; i < list.length; i += 1000) {
-      const r = await api("/api/revenue", { method: "POST", body: JSON.stringify({ rows: list.slice(i, i + 1000) }) });
-      added += Number(r.added ?? 0);
-      duplicates += Number(r.duplicates ?? 0);
-    }
-    return { added, duplicates };
+  function sendRows(list: RevenueRow[]) {
+    return sendRevenueChunks(list, (rows) => api("/api/revenue", { method: "POST", body: JSON.stringify({ rows }) }), loadAccount);
   }
 
   useEffect(() => {
@@ -99,9 +102,21 @@ export function Analytics() {
   async function importLocalRows() {
     setMessage("");
     try {
-      const r = await sendRows(readLocal());
-      await loadAccount();
-      setMessage(`브라우저의 수익 ${r.added}행을 계정으로 가져왔어요(이미 있어서 건너뜀 ${r.duplicates}행).`);
+      const local = readLocal();
+      // The account requires a recorded time zone and period; older browser rows have neither.
+      const sendable = local.filter((r) => r.timezone);
+      const skipped = local.length - sendable.length;
+      const r = await sendRows(sendable);
+      const notice = revenueSendNotice(r);
+      if (r.failure) {
+        setMessage(notice);
+        return;
+      }
+      setMessage(
+        `브라우저의 수익 ${r.added}행을 계정으로 가져왔어요(이미 있어서 건너뜀 ${r.duplicates}행` +
+          (skipped ? `, 시간대·기간 기록이 없어 제외 ${skipped}행). 제외된 행은 CSV를 다시 가져와 주세요.` : ").") +
+          (notice && ` ${notice}`),
+      );
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
     }
@@ -123,12 +138,12 @@ export function Analytics() {
     setReport(null);
     if (!f) return;
     try {
-      const result = importRevenue(await f.text(), rows, { source, status, currency });
+      const result = importRevenue(await f.text(), rows, { source, status, currency, timezone });
       if (mode === "account") {
         const fresh = result.rows.slice(rows.length);
-        const sent = fresh.length ? await sendRows(fresh) : { added: 0, duplicates: 0 };
-        await loadAccount();
-        setReport({ ...result, added: sent.added, duplicates: result.duplicates + sent.duplicates });
+        const sent = await sendRows(fresh);
+        setMessage(revenueSendNotice(sent));
+        if (!sent.failure) setReport({ ...result, added: sent.added, duplicates: result.duplicates + sent.duplicates });
         return;
       }
       if (result.added > 0 && !persist(result.rows)) return;
@@ -140,12 +155,14 @@ export function Analytics() {
     }
   }
 
-  const summaries = summarize(rows);
-  const pages = pageSummaries(rows, articles);
+  // Imports and duplicates always work on every row; only what is shown below follows the filter.
+  const shown = filterRevenueByBlog(rows, articles, blogFilter);
+  const summaries = summarize(shown);
+  const pages = pageSummaries(shown, articles);
   const est = single(summaries, "estimated", (s) => (s.revenue === null ? null : formatMoney(s.revenue, s.currency)));
   const fin = single(summaries, "finalized", (s) => (s.revenue === null ? null : formatMoney(s.revenue, s.currency)));
   const rpm = single(summaries, "estimated", (s) => (s.rpm === null ? null : formatMoney(s.rpm, s.currency)));
-  const linked = pages.filter((p) => p.article).length;
+  const linked = new Set(pages.flatMap((p) => (p.article ? [p.article.id] : []))).size;
 
   return (
     <>
@@ -167,11 +184,21 @@ export function Analytics() {
           {error}
         </p>
       )}
+      {mode && (
+        <section className="panel keywords-panel" aria-label="블로그 계정 필터">
+          <BlogFilter account={mode === "account"} value={blogFilter} onChange={setBlogFilter} />
+          {mode === "account" && (
+            <p className="metric-note">
+              보고서 행은 공개 URL로 연결된 글의 블로그 계정으로 분류합니다. 사이트 합계 행과 공개 URL이 연결되지 않은 행은 미분류입니다.
+            </p>
+          )}
+        </section>
+      )}
       <div className="stats-grid">
         {[
           { label: "관측 예상 수익", ...est },
           { label: "확정 정산", ...fin },
-          { label: "페이지 RPM(예상)", ...rpm, note: rpm.value === "—" ? "수익과 조회수가 같은 보고서에 필요" : rpm.note },
+          { label: "페이지 RPM(예상)", ...rpm, note: summaries.every((s) => s.status !== "estimated") ? "수익과 조회수가 같은 보고서에 필요" : rpm.note },
           { label: mode === "account" ? "계정 콘텐츠" : "로컬 콘텐츠", value: String(articles.length), note: `보고서 URL과 연결된 글 ${linked}개` },
         ].map((m) => (
           <article className="stat-card" key={m.label}>
@@ -189,8 +216,9 @@ export function Analytics() {
         <h2>보고서 CSV 가져오기</h2>
         <p className="metric-note">
           필수 열은 날짜(date)이고, 수익(revenue)·조회수(pageviews)·노출(impressions)·클릭(clicks) 중 하나 이상이
-          필요해요. 페이지(page/url) 열이 비어 있으면 사이트 전체 합계로 읽습니다. 같은 출처·구분·통화·날짜·페이지는
-          다시 가져와도 건너뜁니다. 최대 2MB · 20,000행.
+          필요해요. 페이지(page/url) 열이 비어 있으면 사이트 전체 합계로 읽습니다. 보고 기간은 파일의 첫 날짜와
+          마지막 날짜로 기록해요. 같은 출처·구분·통화·시간대·기간을 다시 가져오면 건너뛰고, 기존 기간과 일부만 겹치는
+          파일은 통째로 거절합니다. 최대 2MB · 20,000행.
         </p>
         <div className="revenue-form">
           <div className="field">
@@ -207,6 +235,10 @@ export function Analytics() {
           <div className="field">
             <label htmlFor="rev-currency">통화</label>
             <input id="rev-currency" value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+          </div>
+          <div className="field">
+            <label htmlFor="rev-timezone">보고서 시간대</label>
+            <input id="rev-timezone" value={timezone} maxLength={64} placeholder="Asia/Seoul" onChange={(e) => setTimezone(e.target.value)} />
           </div>
         </div>
         <input
@@ -234,7 +266,8 @@ export function Analytics() {
         )}
         {report && (
           <div role="status" className="success-message">
-            {report.added}행 추가 · 중복 {report.duplicates}행 건너뜀 · 오류 {report.invalid.length}행
+            {report.added}행 추가 · 중복 {report.duplicates}행 건너뜀
+            {report.conflicts > 0 && ` · 값이 달라 건너뜀 ${report.conflicts}행(기존 값 유지)`} · 오류 {report.invalid.length}행
             {report.invalid.length > 0 && (
               <ul>
                 {report.invalid.slice(0, 10).map((i) => (
@@ -264,8 +297,14 @@ export function Analytics() {
         </section>
       ) : (
         <>
-          <section className="panel keywords-panel">
-            <h2>기간·구분별 요약 ({rows.length.toLocaleString("ko-KR")}행)</h2>
+          {shown.length === 0 && (
+            <section className="panel analytics-empty">
+              <h2>이 필터로 분류된 수익 행이 없습니다.</h2>
+              <p>값이 없는 계정의 수익을 0원으로 표시하지 않습니다.</p>
+            </section>
+          )}
+          {shown.length > 0 && <section className="panel keywords-panel">
+            <h2>기간·구분별 요약 ({shown.length.toLocaleString("ko-KR")}행)</h2>
             <div className="table-scroll">
               <table>
                 <thead>
@@ -273,6 +312,7 @@ export function Analytics() {
                     <th scope="col">출처</th>
                     <th scope="col">구분</th>
                     <th scope="col">기간</th>
+                    <th scope="col">시간대</th>
                     <th scope="col">수익</th>
                     <th scope="col">조회수</th>
                     <th scope="col">RPM</th>
@@ -281,12 +321,13 @@ export function Analytics() {
                 </thead>
                 <tbody>
                   {summaries.map((s) => (
-                    <tr key={`${s.source}${s.status}${s.currency}`}>
+                    <tr key={`${s.source}${s.status}${s.currency}${s.timezone}`}>
                       <td>{s.source}</td>
                       <td>{statusLabel[s.status]}</td>
                       <td>
                         {s.from} ~ {s.to} ({s.days}일)
                       </td>
+                      <td>{s.timezone ?? "기록 없음"}</td>
                       <td>{formatMoney(s.revenue, s.currency)}</td>
                       <td>{num(s.pageviews)}</td>
                       <td>{formatMoney(s.rpm, s.currency)}</td>
@@ -299,10 +340,10 @@ export function Analytics() {
               </table>
             </div>
             <p className="metric-note">
-              예상 수익과 확정 정산, 서로 다른 통화는 합치지 않습니다. 같은 날 사이트 합계와 페이지 행이 함께 있으면
+              예상 수익과 확정 정산, 서로 다른 통화·시간대는 합치지 않습니다. 같은 날 사이트 합계와 페이지 행이 함께 있으면
               사이트 합계만 사용합니다. RPM은 같은 행에 수익과 조회수가 모두 있을 때만 계산합니다.
             </p>
-          </section>
+          </section>}
 
           {pages.length > 0 && (
             <section className="panel keywords-panel">
@@ -312,6 +353,7 @@ export function Analytics() {
                   <thead>
                     <tr>
                       <th scope="col">페이지</th>
+                      <th scope="col">출처</th>
                       <th scope="col">연결된 글</th>
                       <th scope="col">구분</th>
                       <th scope="col">수익</th>
@@ -320,8 +362,9 @@ export function Analytics() {
                   </thead>
                   <tbody>
                     {pages.map((p) => (
-                      <tr key={`${p.page}${p.status}${p.currency}`}>
+                      <tr key={`${p.page}${p.source}${p.status}${p.currency}${p.timezone}`}>
                         <td>{p.page}</td>
+                        <td>{p.source}</td>
                         <td>
                           {p.article ? (
                             <Link href={`/content/${p.article.id}`}>{p.article.title || p.article.keyword}</Link>
@@ -329,7 +372,9 @@ export function Analytics() {
                             "연결 안 됨"
                           )}
                         </td>
-                        <td>{statusLabel[p.status]}</td>
+                        <td>
+                          {statusLabel[p.status]} · {p.timezone ?? "시간대 기록 없음"}
+                        </td>
                         <td>{formatMoney(p.revenue, p.currency)}</td>
                         <td>{num(p.pageviews)}</td>
                       </tr>
@@ -338,7 +383,7 @@ export function Analytics() {
                 </table>
               </div>
               <p className="metric-note">
-                글과의 연결은 WordPress 초안의 주소와 같은 페이지만 표시합니다. 주소가 다르면 &lsquo;연결 안 됨&rsquo;이며,
+                글과의 연결은 확인된 공개 URL을 우선하고, 공개 URL이 없는 글은 WordPress 초안 주소로 찾습니다. 주소가 다르면 &lsquo;연결 안 됨&rsquo;이며,
                 귀속할 수 없는 수익을 글에 임의로 배분하지 않습니다.
               </p>
             </section>
@@ -377,10 +422,10 @@ export function Analytics() {
           }}
         />
       )}
-      <p className="metric-note">
-        관측 예상 수익 · 확정 정산 · 모델 추정은 별도입니다. Search Console·GA4 연동과 제작 원가 장부는 아직
-        없습니다.
-      </p>
+      {mode && <BlogMetrics account={mode === "account"} blogFilter={blogFilter} />}
+      <CostLedger account={mode === "account"} />
+      <ImprovementQueue account={mode === "account"} articles={articles} />
+      <p className="metric-note">관측 예상 수익 · 확정 정산 · 모델 추정은 별도입니다. Search Console·GA4 연동은 아직 없습니다.</p>
     </>
   );
 }

@@ -3,6 +3,8 @@
 import { findTemplate } from "./templates";
 
 export const AI_LIMITS = { keyword: 120, title: 200, notes: 2000, output: 20000 };
+/** Recorded with every run. Bump it whenever buildMessages changes what the model is told. */
+export const DRAFT_PROMPT_VERSION = "draft-v1";
 
 export type AiRequest = {
   templateId: string;

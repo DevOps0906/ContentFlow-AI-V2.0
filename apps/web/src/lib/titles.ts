@@ -22,6 +22,53 @@ export function titleWarnings(title: string): string[] {
   return w;
 }
 
+export const TITLE_RATINGS = ["good", "fair", "poor"] as const;
+export type TitleRating = (typeof TITLE_RATINGS)[number];
+export const titleRatingLabels: Record<TitleRating, string> = { good: "적합", fair: "보통", poor: "부적합" };
+/** A person's judgement of one candidate. `null` means not rated yet. */
+export type TitleEvaluationEntry = {
+  title: string;
+  pattern: string;
+  intent: TitleRating | null;
+  clarity: TitleRating | null;
+  exaggeration: TitleRating | null;
+};
+export const TITLE_AXES = [
+  { key: "intent", label: "검색 의도" },
+  { key: "clarity", label: "명확성" },
+  { key: "exaggeration", label: "과장 없음" },
+] as const;
+const TITLE_CANDIDATES = 5;
+
+const isRating = (v: unknown) => v === null || TITLE_RATINGS.includes(v as TitleRating);
+/** Keep the length in sync with the articles_title_evaluation_shape check in migration 0013. */
+export function isTitleEvaluation(value: unknown): value is TitleEvaluationEntry[] {
+  return (
+    Array.isArray(value) &&
+    value.length === TITLE_CANDIDATES &&
+    value.every((e: Record<string, unknown> | null) => {
+      if (!e || typeof e !== "object") return false;
+      return (
+        typeof e.title === "string" &&
+        e.title.length > 0 &&
+        e.title.length <= 300 &&
+        typeof e.pattern === "string" &&
+        e.pattern.length <= 32 &&
+        TITLE_AXES.every((a) => isRating(e[a.key]))
+      );
+    })
+  );
+}
+export function newTitleEvaluation(keyword: string): TitleEvaluationEntry[] {
+  return generateTitles(keyword).map(({ title, pattern }) => ({
+    title,
+    pattern,
+    intent: null,
+    clarity: null,
+    exaggeration: null,
+  }));
+}
+
 export function generateTitles(keyword: string): TitleCandidate[] {
   const k = keyword.normalize("NFKC").trim().replace(/\s+/g, " ");
   if (!k) throw new Error("키워드를 입력해주세요.");
