@@ -39,6 +39,7 @@ import {
 } from "@/lib/lifecycle";
 import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
+import { useFeedback } from "./feedback";
 import { ConfirmDialog } from "./dialog";
 import { TemplateExampleButton } from "./template-example";
 import { PhaseSteps, StatusBadge } from "./status-badge";
@@ -158,6 +159,7 @@ function EditorForm({
 }) {
   const router = useRouter();
   const { articles, save, saveReview, sendWordpress, error, role, mode } = useWorkspace();
+  const { toast } = useFeedback();
   // Local mode has one user who can do everything; in an account the role decides.
   const editable = role === null || canEdit(role);
   const decider = role === null || canDecide(role);
@@ -277,7 +279,7 @@ function EditorForm({
     }));
     setConfirmed(false);
     setPendingTemplate(null);
-    setMessage("템플릿 골격을 적용했어요. 각 항목에 내용을 작성해주세요.");
+    toast("템플릿 골격을 적용했어요. 각 항목에 내용을 작성해주세요.");
   }
   function chooseTemplate(next: string) {
     if (next === form.templateId) return;
@@ -376,7 +378,7 @@ function EditorForm({
       const pack = await tistoryPackage(copy, deliveryCheck);
       download(pack.name, pack.data, "application/zip");
       if (actionsFor(copy.status).some((a) => a.to === "manual_pending")) setAskManual(true);
-      else setMessage("티스토리 패키지를 내려받았어요.");
+      else toast("티스토리 패키지를 내려받았어요.");
     } catch (e) {
       fail(e, "티스토리 패키지를 만들지 못했습니다.");
     } finally {
@@ -458,7 +460,7 @@ function EditorForm({
       const stored = await save({ ...saved, blogId, updatedAt: new Date().toISOString() });
       setSaved(stored);
       setForm((f) => ({ ...f, blogId: stored.blogId, updatedAt: stored.updatedAt }));
-      setMessage("블로그 계정을 바꿨어요. 검수·승인 상태는 그대로예요.");
+      toast("블로그 계정을 바꿨어요. 검수·승인 상태는 그대로예요.");
     } catch (e) {
       fail(e, "블로그 계정을 바꾸지 못했습니다.");
     } finally {
@@ -510,11 +512,10 @@ function EditorForm({
       if (stored.status === "published") setPublishedUrl("");
       setErrors(issues);
       setConfirmed(false);
-      setMessage(
-        !target && saved && stored.status !== saved.status
-          ? "내용이 바뀌어 기존 검수·승인이 해제됐어요. 다시 검수해주세요."
-          : savedMessage(stored.status, target),
-      );
+      if (!target && saved && stored.status !== saved.status)
+        setMessage("내용이 바뀌어 기존 검수·승인이 해제됐어요. 다시 검수해주세요.");
+      else if (!target) toast(savedMessage(stored.status, target));
+      else setMessage(savedMessage(stored.status, target));
       if (!initial) router.replace(`/content/${stored.id}`);
     } catch (e) {
       fail(e, "저장하지 못했습니다.");

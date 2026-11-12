@@ -34,6 +34,8 @@
 | 템플릿 예시 글 | 템플릿 10종 "예시 보기"(가상 정보 예시 글) | 예시 이미지는 Gemini 이미지 결제 전까지 자리표시자 |
 | 화면 정리 | 좌측 메뉴 "나의 워크스페이스" 삭제, 첫 메뉴 대시보드, "환경설정" 이름 변경, 날짜 표시 Asia/Seoul 고정 | — |
 | 필수 블록 차단 · 렌더러 r2 (CF-19) | T01/T02/T04 필수 소제목 누락 시 검수·승인(로컬·계정 API 422)·전달 차단, 미리보기·HTML에 목차와 GFM 표(모바일 가로 스크롤) | r3(표 래퍼 WordPress 호환), 이전 승인 글은 재승인 필요. W8 e2e 67건 재통과 |
+| PC 데스크톱 앱 (Tauri 2) | Windows 설치 파일(NSIS 25MB), 웹 전체 기능을 내장 Next 서버(127.0.0.1:34110)로 실행, 실행마다 난수 토큰·Host 검사로 다른 프로그램 접근 차단, 오류 화면·외부 링크 시스템 브라우저 | 무서명 개발용, macOS 후속, 계정 모드 메일 링크 흐름 제외 |
+| 토스트·스낵바·⋯ 메뉴 (CF-20) | 성공 알림 토스트, 키워드 삭제·블로그 보관 실행 취소 스낵바(Ctrl+Z), 콘텐츠 목록 ⋯ 메뉴(모바일 액션시트·데스크톱 드롭다운) | 상세가 있는 성공 메시지는 인라인 유지 |
 | 모바일 앱 (Capacitor 8) | Android 앱(글 목록·상세·승인 대기, 읽기 전용), 서버 토큰(Bearer) 세션, 대시보드 APK 다운로드 카드, 개발용 APK 첫 빌드·서명 | iOS 미지원, 실기기 설치 확인 전, 개발용은 내부망 http |
 
 **2026-11-11 추가 (MVP 잔여 작업, [계획](tasks/PLAN_MVP_REMAINING.md)):** 아래 표보다 이 목록이 최신이다. 마이그레이션 0007~0017 추가(로컬만 적용, 운영 DB 미적용).
@@ -174,10 +176,12 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 수익 분석 | `/analytics` | [수익화 기획](docs/01-planning/MONETIZATION_STRATEGY.md) | [analytics](apps/web/src/components/analytics.tsx) |
 | 환경설정(백업·팀·AI API) | `/settings` | [디자인](DESIGN.md) | [settings](apps/web/src/components/settings.tsx) · [team-panel](apps/web/src/components/team-panel.tsx) · [ai-api-panel](apps/web/src/components/ai-api-panel.tsx) |
 | 트렌드 분석 | `/trends` | [계획](tasks/PLAN_MVP_REMAINING.md) | [trends](apps/web/src/components/trends.tsx) |
+| PC 데스크톱 앱 | Windows 설치 파일 | [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) | [apps/desktop](apps/desktop/) |
+| 알림·메뉴 패턴 | 전 화면 | [오버레이 UX](docs/07-design/OVERLAY_UX.md) | [feedback](apps/web/src/components/feedback.tsx) |
 | 모바일 앱 다운로드 | `/` 대시보드 카드 | [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) | [mobile-app-card](apps/web/src/components/mobile-app-card.tsx) |
 | 모바일 앱 (Android) | 앱: 로그인·글 목록·상세·승인 대기 | [Capacitor 계획](tasks/PLAN_CAPACITOR_W0.md) | [apps/mobile](apps/mobile/README.md) · [shell-bridge](packages/shell-bridge/src/index.ts) |
 
-[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

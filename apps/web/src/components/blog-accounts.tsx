@@ -1,8 +1,9 @@
 "use client";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Archive, ArchiveRestore, Pencil } from "lucide-react";
 import { BLOG_PLATFORMS, blogName, blogPlatformLabels, parseBlog, type Blog, type BlogPlatform } from "@/lib/blogs";
 import { useBlogs } from "./blog-filter";
+import { useFeedback } from "./feedback";
 
 async function send(method: "POST" | "PATCH", body: unknown) {
   const res = await fetch("/api/blogs", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -17,18 +18,22 @@ export function BlogAccounts({ account }: { account: boolean }) {
   const { blogs, canManage, loading, error: loadError, reload } = useBlogs(account);
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  const busyRef = useRef(false);
+  const setBusy = (v: boolean) => {
+    busyRef.current = v;
+    setBusyState(v);
+  };
   const [error, setError] = useState("");
-  const [done, setDone] = useState("");
+  const { toast, snackbar } = useFeedback();
 
   if (!account) return <p className="metric-note">블로그 계정 관리는 계정 모드에서 사용 가능합니다.</p>;
 
   /** A failed reload after a successful write is not reported as a failed write. */
-  async function run(write: () => Promise<void>, success: string) {
-    if (busy) return false;
+  async function run(write: () => Promise<void>, success: string, undo?: () => void | Promise<void>) {
+    if (busyRef.current) return false;
     setBusy(true);
     setError("");
-    setDone("");
     try {
       await write();
     } catch (e) {
@@ -37,7 +42,8 @@ export function BlogAccounts({ account }: { account: boolean }) {
       return false;
     }
     await reload();
-    setDone(success);
+    if (undo) snackbar(success, { label: "실행 취소", onAction: undo });
+    else toast(success);
     setBusy(false);
     return true;
   }
@@ -63,7 +69,6 @@ export function BlogAccounts({ account }: { account: boolean }) {
     setEditing(b.id);
     setForm({ displayName: blogName(b), platform: b.platform, domain: b.domain });
     setError("");
-    setDone("");
   }
 
   return (
@@ -123,10 +128,18 @@ export function BlogAccounts({ account }: { account: boolean }) {
                           disabled={busy}
                           aria-label={`${blogName(b)} ${b.status === "archived" ? "복원" : "보관"}`}
                           onClick={() =>
-                            run(
-                              () => send("PATCH", { id: b.id, status: b.status === "archived" ? "active" : "archived" }),
-                              b.status === "archived" ? "블로그 계정을 복원했어요." : "블로그 계정을 보관했어요.",
-                            )
+                            b.status === "archived"
+                              ? run(() => send("PATCH", { id: b.id, status: "active" }), "블로그 계정을 복원했어요.")
+                              : run(
+                                  () => send("PATCH", { id: b.id, status: "archived" }),
+                                  "블로그 계정을 보관했어요.",
+                                  // Same account, same id: restoring simply sets it back to active.
+                                  async () => {
+                                    // A save in progress finishes first; the undo is never dropped silently.
+                                    while (busyRef.current) await new Promise((r) => setTimeout(r, 100));
+                                    await run(() => send("PATCH", { id: b.id, status: "active" }), "되돌렸어요. 블로그 계정을 복원했어요.");
+                                  },
+                                )
                           }
                         >
                           {b.status === "archived" ? <ArchiveRestore size={14} /> : <Archive size={14} />}
@@ -203,11 +216,6 @@ export function BlogAccounts({ account }: { account: boolean }) {
       {error && (
         <p role="alert" className="error-banner">
           {error}
-        </p>
-      )}
-      {done && (
-        <p role="status" className="metric-note">
-          {done}
         </p>
       )}
     </>

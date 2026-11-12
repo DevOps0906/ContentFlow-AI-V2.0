@@ -12,7 +12,10 @@ import {
   type Keyword,
 } from "@/lib/keywords";
 import { generateTitles, type TitleCandidate } from "@/lib/titles";
+import { restoreRemoved } from "@/lib/feedback";
 import { PageHeading } from "./shell";
+import { ConfirmDialog } from "./dialog";
+import { useFeedback } from "./feedback";
 import { useWorkspace } from "./workspace";
 import { StatusBadge } from "./status-badge";
 import { useBlogs } from "./blog-filter";
@@ -27,6 +30,10 @@ export function Keywords() {
   const [selectedKeyword, setSelectedKeyword] = useState<Keyword | null>(null);
   const [titles, setTitles] = useState<TitleCandidate[]>([]);
   const [message, setMessage] = useState("");
+  const { toast, snackbar, current } = useFeedback();
+  const removedBatch = useRef<{ noticeId: number; items: { item: Keyword; index: number }[] } | null>(null);
+  const [undoError, setUndoError] = useState("");
+  const [deleting, setDeleting] = useState<Keyword | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const { articles, save, mode, ready: wsReady } = useWorkspace();
   const [localCount, setLocalCount] = useState(0);
@@ -95,18 +102,47 @@ export function Keywords() {
         duplicates += Number(r.duplicates ?? 0);
       }
       await loadAccount();
-      setMessage(`브라우저 키워드 ${added}개를 계정으로 가져왔어요(이미 있어서 건너뜀 ${duplicates}개).`);
+      toast(`브라우저 키워드 ${added}개를 계정으로 가져왔어요(이미 있어서 건너뜀 ${duplicates}개).`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
     }
   }
-  async function removeKeyword(id: string) {
+  /** Account mode deletes through the API (ids cannot be restored), local mode can undo. */
+  function askRemove(k: Keyword) {
+    if (account) setDeleting(k);
+    else removeKeyword(k);
+  }
+  async function removeKeyword(k: Keyword) {
     setMessage("");
+    const index = keywords.findIndex((x) => x.id === k.id);
     try {
-      if (mode === "account") {
-        await callApi(`/api/keywords/${id}`, { method: "DELETE" });
-        setKeywords((list) => list.filter((x) => x.id !== id));
-      } else persist(keywords.filter((x) => x.id !== id));
+      if (account) {
+        await callApi(`/api/keywords/${k.id}`, { method: "DELETE" });
+        setKeywords((list) => list.filter((x) => x.id !== k.id));
+        toast("키워드를 삭제했어요.");
+      } else {
+        if (!persist(keywords.filter((x) => x.id !== k.id))) return;
+        setUndoError("");
+        // Deletions while the previous undo snackbar is still showing share one snackbar.
+        const prev = removedBatch.current;
+        const items =
+          prev && current()?.id === prev.noticeId ? [...prev.items, { item: k, index }] : [{ item: k, index }];
+        snackbar(items.length > 1 ? `키워드 ${items.length}개를 삭제했어요.` : "키워드를 삭제했어요.", {
+          label: "실행 취소",
+          onAction: () => {
+            // Re-read the stored list so edits made meanwhile are not lost.
+            try {
+              const stored = readLocal();
+              const missing = items.filter((r) => !stored.some((x) => x.id === r.item.id));
+              if (!persist(restoreRemoved(stored, missing))) throw new Error("저장 공간이 부족하거나 사용할 수 없습니다.");
+              toast("되돌렸어요.");
+            } catch (e) {
+              setUndoError(`되돌리지 못했어요. ${e instanceof Error ? e.message : "저장된 키워드를 읽을 수 없습니다."}`);
+            }
+          },
+        });
+        removedBatch.current = { noticeId: current()?.id ?? -1, items };
+      }
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "삭제하지 못했습니다.");
     }
@@ -198,7 +234,7 @@ export function Keywords() {
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setMessage("제목을 복사했어요.");
+      toast("제목을 복사했어요.");
     } catch {
       setMessage("복사하지 못했어요. 제목을 직접 선택해 복사해주세요.");
     }
@@ -227,6 +263,11 @@ export function Keywords() {
       {error && (
         <p role="alert" className="error-banner">
           {error}
+        </p>
+      )}
+      {undoError && (
+        <p role="alert" className="error-banner">
+          {undoError}
         </p>
       )}
       <section className="panel keywords-panel">
@@ -379,7 +420,7 @@ export function Keywords() {
                           <button
                             className="button secondary"
                             aria-label={`${k.phrase} 삭제`}
-                            onClick={() => removeKeyword(k.id)}
+                            onClick={() => askRemove(k)}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -430,6 +471,20 @@ export function Keywords() {
             ))}
           </ul>
         </section>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="이 키워드를 삭제할까요?"
+          description={`‘${deleting.phrase}’ 키워드가 계정에서 삭제돼요. 계정 키워드는 같은 항목으로 되돌릴 수 없어요.`}
+          confirmLabel="삭제하기"
+          danger
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => {
+            const k = deleting;
+            setDeleting(null);
+            void removeKeyword(k);
+          }}
+        />
       )}
     </>
   );

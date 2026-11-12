@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowUpRight, FileText, Search, Trash2 } from "lucide-react";
 import { templateName } from "@/lib/content";
 import { formatDate } from "@/lib/date";
@@ -9,8 +10,12 @@ import { PageHeading, NewContentButton } from "./shell";
 import { useWorkspace } from "./workspace";
 import { ConfirmDialog } from "./dialog";
 import { StatusBadge } from "./status-badge";
+import { RowMenu } from "./row-menu";
+import { useFeedback } from "./feedback";
 export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
   const { articles, ready, remove, mode } = useWorkspace();
+  const router = useRouter();
+  const { toast } = useFeedback();
   const [query, setQuery] = useState(initialQuery);
   const [status, setStatus] = useState<Phase | "all">("all");
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -99,20 +104,13 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
                     <td>{formatDate(a.updatedAt)}</td>
                     <td>
                       <div className="table-actions">
-                        <Link
-                          className="icon-button"
-                          href={`/content/${a.id}`}
-                          aria-label={`${a.title} 편집`}
-                        >
-                          <ArrowUpRight size={16} />
-                        </Link>
-                        <button
-                          className="icon-button"
-                          aria-label={`${a.title} 삭제`}
-                          onClick={() => setDeleting(a.id)}
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        <RowMenu
+                          label={`${a.title || "제목 없는 콘텐츠"} 작업 더보기`}
+                          items={[
+                            { label: "편집", icon: <ArrowUpRight size={15} />, onSelect: () => router.push(`/content/${a.id}`) },
+                            { label: "삭제", icon: <Trash2 size={15} />, danger: true, onSelect: () => setDeleting(a.id) },
+                          ]}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -169,7 +167,10 @@ export function ContentList({ initialQuery = "" }: { initialQuery?: string }) {
           onCancel={() => setDeleting(null)}
           onConfirm={async () => {
             try {
-              if (await remove(deleting)) setDeleting(null);
+              if (await remove(deleting)) {
+                setDeleting(null);
+                toast("콘텐츠를 삭제했어요.");
+              }
             } catch (e) {
               setDeleting(null);
               setDeleteError(e instanceof Error ? e.message : "삭제하지 못했습니다.");

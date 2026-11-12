@@ -2,11 +2,10 @@
 
 | 항목 | 상태 |
 |---|---|
-| 최근 완료 | CF-19: P0-04 필수 블록 누락 시 검수·승인·전달 차단(앱+서버 API, DB 트리거 미변경), 렌더러 r2(목차·GFM 표). reviewer 지적 반영 |
-| 검증 | 단위 303, typecheck·build·diff check. W8 e2e 67건 통과(본문 T01 필수 블록으로 수정 후 재실행). 푸시 완료 |
-| 다음 후보 | (2) 휴대폰 APK 실기기 확인(CF-M-003) (3) 구글 로그인 — OAuth 클라이언트 필요 (4) Gemini 이미지 결제 후 예시 이미지 (5) Cloud Supabase·https 배포(승인) (6) CF-07b 광고·분석·팀 초대(광고 API 자격 필요) |
-| 리뷰 후속 | 완료: 계정 API qa/approval_pending 진입도 422, 표 래퍼 `overflow:auto`(KSES 실측) → 렌더러 r3 |
-| 빌드 환경 | JDK 21, Android SDK, 서명 키 `%USERPROFILE%\.contentflow\`. 절차 `docs/08-ops/MOBILE_APP_DISTRIBUTION.md` |
-| 운영 | 로컬 Supabase 60321~(`pwsh scripts/supabase-local.ps1`), 웹 3410, WordPress 8081 |
-| 키 | 루트 `.env`, `.env.local`(GEMINI_API_KEY) — git 제외 |
+| 최근 완료 | CF-19 필수 블록·렌더러 r3, CF-D Tauri 데스크톱 W0(Windows, Next 사이드카·토큰 보호), CF-20 토스트·스낵바·⋯ 메뉴 |
+| 검증 | 단위(웹) 324+, typecheck·build, W8 e2e 67, 데스크톱 실측 7건(`node apps/desktop/e2e/desktop-e2e.mjs`), cargo clippy |
+| 데스크톱 | 빌드 `pwsh scripts/desktop-build.ps1` → `apps/desktop/src-tauri/target/release/bundle/nsis/`. 키 `%APPDATA%\ContentFlow\desktop.env`. 포트 34110·identifier `com.contentflow.desktop` 변경 금지. 문서 `docs/08-ops/DESKTOP_APP.md` |
+| 다음 후보 | (1) 데스크톱 설치본 실제 설치·업데이트 후 데이터 유지 확인, 앱 아이콘(임시 "CF") 교체 (2) 데스크톱 계정 모드 로그인 세션 유지 실측 (3) 휴대폰 APK 실기기 확인 (4) 구글 로그인(OAuth 클라이언트 필요) (5) Cloud Supabase·https 배포(승인) (6) CF-07b 광고·분석·팀 초대 (7) 코드 서명 인증서(배포 전) |
+| 운영 | 로컬 Supabase 60321~, 웹 3410, WordPress 8081(`docker compose -f docker-compose.wp-dev.yml up -d`) |
+| 키 | 루트 `.env`, `.env.local` — git 제외 |
 | 모델 | Codex 사용 한도 → reviewer 대체 |

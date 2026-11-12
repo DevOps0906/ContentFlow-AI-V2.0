@@ -936,7 +936,7 @@ try {
     }
     await A.fill("#email", emailA);
     await A.click("button[type=submit]");
-    await A.waitFor(`!!document.querySelector("[role=status], [role=alert]")`, 45000, `reset response (화면: ${await A.eval("location.pathname + ' ' + document.querySelector('h1')?.innerText")})`);
+    await A.waitFor(`!!document.querySelector("[role=status]:not(.feedback-region [role=status]), [role=alert]")`, 45000, `reset response (화면: ${await A.eval("location.pathname + ' ' + document.querySelector('h1')?.innerText")})`);
     ok(await A.hasText("재설정 메일을 보냈어요"), "응답: " + (await alertText(A)));
     let link;
     await A.waitFor(async () => {
@@ -958,7 +958,7 @@ try {
     await A.fill("#new-password", PW_A2);
     await A.fill("#new-password-again", PW_A2);
     await A.click("button[type=submit]");
-    await A.waitFor(`!!document.querySelector('[role=status]') || !!document.querySelector('[role=alert]')`, 15000, "reset result");
+    await A.waitFor(`!!document.querySelector('[role=status]:not(.feedback-region [role=status])') || !!document.querySelector('[role=alert]')`, 15000, "reset result");
     ok(!(await A.eval(`!!document.querySelector('[role=alert]')`)), await alertText(A));
     await A.api("POST", "/api/auth/logout");
     await login(A, emailA, PW_A2);
