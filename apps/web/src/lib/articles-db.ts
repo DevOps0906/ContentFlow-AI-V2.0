@@ -105,8 +105,10 @@ export function approvalFields(requested: LifecycleState, stored: LifecycleState
 }
 
 /** First reason the server refuses a transition into `approved` (missing blocks, empty body, ...). */
+/** States the editor only enters after reviewErrors passes; the API refuses entering them otherwise. */
+const REVIEWED_STATES: LifecycleState[] = ["qa_pending", "approval_pending", "approved"];
 export function approvalRejection(article: Article, stored: LifecycleState | undefined): string | undefined {
-  return article.status === "approved" && stored !== "approved" ? reviewErrors(article)[0] : undefined;
+  return REVIEWED_STATES.includes(article.status) && stored !== article.status ? reviewErrors(article)[0] : undefined;
 }
 
 /**

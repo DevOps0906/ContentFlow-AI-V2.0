@@ -18,7 +18,7 @@ export const adLabels: Record<AdProfile, string> = { A00: "광고 없음", A01: 
  * Raise only when the delivered HTML really changes: an approval made under another version is
  * refused at delivery and the article has to be approved again.
  */
-export const RENDERER_VERSION = "r2";
+export const RENDERER_VERSION = "r3";
 
 export type DeliveryBlock =
   | { kind: "heading"; text: string; /** `cf-s{n}`: set only when a table of contents links to it. */ id?: string }
@@ -115,7 +115,7 @@ function blockHtml(block: DeliveryBlock): string {
       const [first, ...rest] = block.rows;
       const head = block.header ? `<thead>${row(first, "th")}</thead>` : "";
       const body = (block.header ? rest : block.rows).map((r) => row(r, "td")).join("");
-      return `<div class="cf-table-wrap" style="overflow-x:auto"><table class="cf-table">${head}<tbody>${body}</tbody></table></div>`;
+      return `<div class="cf-table-wrap" style="overflow:auto"><table class="cf-table">${head}<tbody>${body}</tbody></table></div>`;
     }
     case "paragraph":
       return `<p>${escapeHtml(block.text)}</p>`;

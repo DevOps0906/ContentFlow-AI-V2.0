@@ -264,6 +264,10 @@ test("a missing block stops delivery and the approval API", async () => {
   assert.equal(approvalRejection({ ...t01, status: "approved" }, "approval_pending"), undefined);
   assert.equal(approvalRejection({ ...without, status: "approved" }, "approved"), undefined, "a save of an approved article is not an approval");
   assert.equal(approvalRejection({ ...without, status: "drafting" }, "drafting"), undefined);
+  // Entering review through the API needs the same checks as the editor's buttons.
+  assert.match(approvalRejection({ ...without, status: "qa_pending" }, "drafting") ?? "", /필수 블록 누락: 출처/);
+  assert.match(approvalRejection({ ...without, status: "approval_pending" }, "qa_pending") ?? "", /필수 블록 누락: 출처/);
+  assert.equal(approvalRejection({ ...t01, status: "qa_pending" }, "drafting"), undefined);
 });
 
 test("markdown tables become escaped table blocks, a separator row marks the header", () => {
@@ -274,7 +278,8 @@ test("markdown tables become escaped table blocks, a separator row marks the hea
   assert.ok(html.includes("<th>이름</th>"));
   assert.ok(html.includes("<td>&lt;b&gt;a&lt;/b&gt;</td>"));
   assert.ok(!html.includes("<b>"));
-  assert.ok(html.includes("overflow-x:auto"));
+  // WordPress KSES drops a style with overflow-x; overflow survives (checked against the dev container).
+  assert.ok(html.includes('style="overflow:auto"'));
   assert.deepEqual(deliveryBlocks({ ...article, body: "| 한 줄만 |" }).map((b) => b.kind), ["paragraph", "source"]);
   assert.ok(!deliveryBlocks({ ...article, body: "```\n| a |\n| b |\n```" }).some((b) => b.kind === "table"));
 });
@@ -300,7 +305,7 @@ test("an A01 candidate never lands next to a table of contents or a table", () =
 });
 
 test("an approval made by r1 is refused at delivery", async () => {
-  assert.equal(RENDERER_VERSION, "r2");
+  assert.equal(RENDERER_VERSION, "r3");
   await assert.rejects(assertDeliverable({ ...article, rendererVersion: "r1" }), (e: DeliveryError) => e.message === deliveryBlockMessages.renderer_mismatch);
 });
 
