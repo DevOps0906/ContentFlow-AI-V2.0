@@ -1,6 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { safeNext } from "@/lib/auth";
+import {
+  DESKTOP_COOKIE,
+  desktopHealthHmac,
+  desktopHostOk,
+  desktopPort,
+  desktopMode,
+  safeEqual,
+} from "@/lib/desktop";
 import { bearerAllowed, bearerToken, corsHeaders, isTokenPath } from "@/lib/mobile";
 import { sessionCookieOptions, supabaseEnv } from "@/lib/supabase";
 
@@ -9,8 +17,39 @@ import { sessionCookieOptions, supabaseEnv } from "@/lib/supabase";
 // API routes re-check the caller themselves; this is not the only gate.
 const OPEN_PATHS = ["/login", "/auth/callback", "/api/health", "/api/session", "/api/auth/"];
 
+// Static assets skip the Supabase session work (they used to be excluded by the matcher).
+const STATIC = /^\/(?:_next\/static|_next\/image|favicon\.ico)|\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/;
+
+const forbidden = () => NextResponse.json({ error: "허용되지 않은 요청입니다." }, { status: 403 });
+
+// Desktop sidecar token check. Returns a response to stop, or null to continue.
+function desktopGuard(req: NextRequest, path: string, token: string): NextResponse | null {
+  if (!desktopHostOk(req.headers.get("host"))) return forbidden();
+  if (req.method === "GET" && path === "/desktop-auth") {
+    if (!safeEqual(req.nextUrl.searchParams.get("t"), token)) return forbidden();
+    const res = NextResponse.redirect(`http://127.0.0.1:${desktopPort()}/`, 302);
+    res.cookies.set(DESKTOP_COOKIE, token, { httpOnly: true, sameSite: "strict", path: "/" });
+    return res;
+  }
+  if (req.method === "GET" && path === "/api/health") {
+    const nonce = req.nextUrl.searchParams.get("nonce");
+    if (nonce) return NextResponse.json({ ok: true, hmac: desktopHealthHmac(token, nonce) });
+    return null;
+  }
+  if (!safeEqual(req.cookies.get(DESKTOP_COOKIE)?.value, token)) return forbidden();
+  return null;
+}
+
 export async function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
+  const dm = desktopMode();
+  if (dm.mode === "invalid")
+    return NextResponse.json({ error: "데스크톱 설정이 올바르지 않습니다." }, { status: 503 });
+  if (dm.mode === "on") {
+    const stop = desktopGuard(req, path, dm.token);
+    if (stop) return stop;
+  }
+  if (STATIC.test(path)) return NextResponse.next();
   const cors = path.startsWith("/api/") ? corsHeaders(req.headers.get("origin")) : null;
   const res = await handle(req, path);
   if (cors) for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
@@ -65,5 +104,5 @@ async function handle(req: NextRequest, path: string): Promise<NextResponse> {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|svg|gif|webp|ico)$).*)"],
+  matcher: ["/:path*"],
 };

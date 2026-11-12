@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "startup",
+  "description": "Bundled start/error pages only. No remote origin is listed, so the 127.0.0.1 app window gets no IPC.",
+  "windows": ["main"],
+  "permissions": ["allow-retry", "allow-quit-app"]
+}
