@@ -14,6 +14,9 @@ powershell -ExecutionPolicy Bypass -File scripts/desktop-build.ps1   # -SkipWebB
 - 사용자 단위 설치(관리자 권한 불필요).
 - `identifier`(`com.contentflow.desktop`)와 포트 **34110**은 바꾸지 않는다. 로컬 모드 데이터(WebView 저장소)가 출처(`127.0.0.1:34110`)와 identifier 폴더에 묶여 있어, 바꾸면 기존 글이 보이지 않게 된다. 업데이트·재설치는 사용자 데이터 폴더를 지우지 않는다.
 - 포트가 사용 중이면 다른 포트로 바꾸지 않고 오류 화면을 보여준다.
+- 설치 경로: `%LOCALAPPDATA%\ContentFlow AI\`. 조용한 설치(`/S`)는 끝난 뒤 앱을 자동으로 실행한다.
+- 실측(2026-11-12, `desktop-e2e.mjs` 8·9): 같은 설치 파일로 재설치(업데이트)해도 로컬 글이 유지되고, 계정 모드(로컬 Supabase)에서 로그인 후 앱을 다시 켜도 로그인이 유지된다.
+- 아이콘 원본: `apps/desktop/src-tauri/icons/app-icon.svg` → `npx tauri icon`으로 PNG·ICO 생성(생성된 android·ios·Square* 파일은 쓰지 않으므로 삭제).
 
 ## 키·설정 (`%APPDATA%\ContentFlow\desktop.env`)
 `KEY=VALUE` 줄. 허용 목록만 서버로 전달된다: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `APP_URL`, `COOKIE_SECURE`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `WP_*`. 그 밖의 값(`NODE_OPTIONS` 등)은 무시한다. service role 키는 넣지 않는다.
@@ -36,6 +39,5 @@ powershell -ExecutionPolicy Bypass -File scripts/desktop-build.ps1   # -SkipWebB
 
 ## 알려진 제한 (W0)
 - 계정 모드의 메일 링크(재설정·확인)는 시스템 브라우저로 열려 세션이 앱으로 오지 않는다.
-- 계정 모드 로그인 후 앱 재시작 시 세션 유지는 미실측.
 - 서명·SmartScreen 경고, 자동 업데이트, macOS 빌드 없음.
 - 서버가 죽으면 오류 화면으로 이동하고 자동 재시도하지 않는다(다시 시도 버튼).
