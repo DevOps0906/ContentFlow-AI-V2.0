@@ -8,7 +8,7 @@ const article: Article = {
   id: "a",
   title: "Next.js 포트 3000 오류 해결 방법",
   keyword: "포트 3000",
-  templateId: "T02",
+  templateId: "T03",
   platform: "wordpress",
   body,
   sourceUrl: "https://nextjs.org/docs",

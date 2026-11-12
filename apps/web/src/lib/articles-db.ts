@@ -1,6 +1,6 @@
 // Mapping between the app's Article and the `articles` table (migration 0002).
 import { ARCHIVED_BLOG_MESSAGE } from "./blogs-db";
-import { isArticle, isReviewStatus, type Article, type ReviewStatus } from "./content";
+import { isArticle, isReviewStatus, reviewErrors, type Article, type ReviewStatus } from "./content";
 import type { LifecycleState } from "./lifecycle";
 import { afterEdit } from "./lifecycle";
 import { DEFAULT_AD, DEFAULT_LAYOUT, RENDERER_VERSION, type AdProfile, type LayoutProfile } from "./render";
@@ -102,6 +102,11 @@ export function approvalFields(requested: LifecycleState, stored: LifecycleState
   return requested === "approved" && stored !== undefined && stored !== "approved"
     ? { renderer_version: RENDERER_VERSION }
     : {};
+}
+
+/** First reason the server refuses a transition into `approved` (missing blocks, empty body, ...). */
+export function approvalRejection(article: Article, stored: LifecycleState | undefined): string | undefined {
+  return article.status === "approved" && stored !== "approved" ? reviewErrors(article)[0] : undefined;
 }
 
 /**

@@ -129,16 +129,19 @@ async function articleTo(page, base, target) {
   }
   return a;
 }
+// The article is created from the default template (T01): every required heading must be present.
 function cleanBody(kw) {
   return [
-    "## 문제 상황",
+    "## 핵심 답변",
     `${kw} 오류가 발생하는 상황을 정리했습니다. 공식 문서의 절차를 따라 재현했습니다.`,
-    "## 원인",
+    "## 대상과 적용 조건",
     "포트가 이미 다른 프로세스에서 사용 중일 때 발생합니다.",
-    "## 해결 방법",
+    "## 단계별 안내",
     "사용 중인 프로세스를 종료하거나 다른 포트를 지정합니다.",
-    "## 확인 방법",
+    "## 주의 사항",
     "서버를 다시 실행해 정상 응답을 확인합니다.",
+    "## FAQ",
+    "자주 묻는 질문은 공식 문서에서 확인할 수 있습니다.",
     "## 출처",
     "공식 문서를 참고했습니다.",
   ].join("\n");

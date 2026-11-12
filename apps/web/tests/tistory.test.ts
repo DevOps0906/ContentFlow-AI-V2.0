@@ -10,7 +10,7 @@ const article: Article = {
   id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   title: "포트 오류 해결",
   keyword: "포트, Next.js, 포트",
-  templateId: "T02",
+  templateId: "T03",
   platform: "tistory",
   body: "## 해결\n포트 사용을 확인합니다.\n<script>x()</script>",
   sourceUrl: "https://example.com/source",

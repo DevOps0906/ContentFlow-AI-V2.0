@@ -1,6 +1,7 @@
 import {
   ARTICLE_COLUMNS,
   approvalFields,
+  approvalRejection,
   articleToFields,
   dbError,
   isUuid,
@@ -80,6 +81,8 @@ export async function PUT(req: Request, ctx: Ctx) {
       return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
     }
   }
+  const rejection = approvalRejection(article, existing.data?.state);
+  if (rejection) return json({ error: rejection }, 422);
   const fields = articleToFields(article);
   const result = existing.data
     ? await account.supabase

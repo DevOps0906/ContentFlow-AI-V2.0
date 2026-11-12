@@ -25,7 +25,7 @@ const article: Article = {
   keyword: "키워드",
   templateId: "T01",
   platform: "wordpress",
-  body: "## 답변\n내용",
+  body: ["핵심 답변", "대상과 적용 조건", "단계별 안내", "주의 사항", "FAQ", "출처"].map((b) => `## ${b}\n내용`).join("\n"),
   sourceUrl: "https://example.com/a",
   status: "drafting",
   updatedAt: "2026-11-11T00:00:00.000Z",

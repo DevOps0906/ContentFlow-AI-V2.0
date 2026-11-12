@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { approvalFields, articleToFields, parseIncomingArticle, rowToArticle, type ArticleRow } from "../src/lib/articles-db";
-import { applyRendererRule, exportHtml, isArticle, saveRevision, type Article } from "../src/lib/content";
+import { approvalFields, approvalRejection, articleToFields, parseIncomingArticle, rowToArticle, type ArticleRow } from "../src/lib/articles-db";
+import { applyRendererRule, applyReviewRule, exportHtml, isArticle, missingBlocks, reviewErrors, saveRevision, type Article } from "../src/lib/content";
 import {
   assertDeliverable,
   assertSameAsStored,
@@ -21,6 +21,7 @@ import {
   RENDERER_VERSION,
   renderFragment,
 } from "../src/lib/render";
+import { templateBody } from "../src/lib/templates";
 import { tistoryPackage } from "../src/lib/tistory";
 import { toWpContent } from "../src/lib/wordpress";
 
@@ -28,7 +29,7 @@ const article: Article = {
   id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   title: "포트 오류 해결",
   keyword: "포트",
-  templateId: "T02",
+  templateId: "T03",
   platform: "wordpress",
   body: "## 원인\n포트가 겹칩니다.\n\n## 해결\n<script>x()</script>",
   sourceUrl: "https://example.com/source",
@@ -53,7 +54,7 @@ test("the HTML export and WordPress share one escaped fragment", () => {
   const fragment = renderFragment(article);
   assert.equal(toWpContent(article), fragment);
   assert.ok(exportHtml(article).includes(fragment));
-  assert.ok(fragment.includes("<h2>원인</h2>"));
+  assert.ok(fragment.includes('<h2 id="cf-s1">원인</h2>'));
   assert.ok(fragment.includes("&lt;script&gt;"));
   assert.ok(!fragment.includes("<script>"));
   assert.ok(fragment.includes("<p>출처: https://example.com/source</p>"));
@@ -72,6 +73,7 @@ test("the layout profile reaches the delivered wrapper", () => {
 
 test("A01 candidates appear in the preview only", () => {
   assert.deepEqual(previewBlocks(a01).map((b) => b.kind), [
+    "toc",
     "heading",
     "paragraph",
     "ad-slot",
@@ -87,7 +89,7 @@ test("A01 candidates appear in the preview only", () => {
 
 test("a candidate never falls between adjacent headings, before the first, or in a code fence", () => {
   const kinds = (body: string) => previewBlocks({ ...a01, body }).map((b) => b.kind);
-  assert.deepEqual(kinds("## 첫째\n## 둘째\n본문"), ["heading", "heading", "paragraph", "source"]);
+  assert.deepEqual(kinds("## 첫째\n## 둘째\n본문"), ["toc", "heading", "heading", "paragraph", "source"]);
   assert.deepEqual(kinds("본문\n```\n## 코드\n```\n끝"), ["paragraph", "paragraph", "paragraph", "paragraph", "paragraph", "source"]);
 });
 
@@ -234,4 +236,91 @@ test("a Tistory package goes through the same gate", async () => {
   await assert.rejects(tistoryPackage({ ...article, rendererVersion: "r0" }), /다시 승인/);
   await assert.rejects(tistoryPackage(article, async () => ({ ok: false, reason: "hash_mismatch" })), /내용이 달라졌습니다/);
   assert.ok((await tistoryPackage(article, async () => ({ ok: true }))).name.endsWith("-tistory.zip"));
+});
+
+const t01Body = (extra = "") =>
+  ["핵심 답변", "대상과 적용 조건", "단계별 안내", "주의 사항", "FAQ", "출처"].map((b) => `## ${b}\n내용 ${extra}`).join("\n");
+const t01: Article = { ...article, templateId: "T01", body: t01Body() };
+
+test("a missing required block blocks review in T01, T02 and T04 only", () => {
+  assert.deepEqual(reviewErrors(t01), []);
+  const without = { ...t01, body: t01.body.replace("## FAQ\n내용 ", "내용 ") };
+  assert.deepEqual(missingBlocks(without), ["FAQ"]);
+  assert.ok(reviewErrors(without).includes("필수 블록 누락: FAQ"));
+  assert.deepEqual(reviewErrors({ ...without, templateId: "T03" }), []);
+  assert.ok(reviewErrors({ ...article, templateId: "T02" }).some((e) => e.startsWith("필수 블록 누락: ")));
+  assert.ok(reviewErrors({ ...article, templateId: "T04", body: "## 비교 대상과 기준\n내용" }).length > 1);
+});
+
+test("a heading inside a code fence does not count as a required block", () => {
+  const fenced = { ...t01, body: t01.body.replace("## FAQ\n내용 ", "```\n## FAQ\n```\n내용 ") };
+  assert.ok(reviewErrors(fenced).includes("필수 블록 누락: FAQ"));
+});
+
+test("a missing block stops delivery and the approval API", async () => {
+  const without = { ...t01, body: t01.body.replace("## 출처\n내용 ", "") };
+  await assert.rejects(assertDeliverable(without), /필수 블록 누락: 출처/);
+  assert.match(approvalRejection({ ...without, status: "approved" }, "approval_pending") ?? "", /필수 블록 누락: 출처/);
+  assert.equal(approvalRejection({ ...t01, status: "approved" }, "approval_pending"), undefined);
+  assert.equal(approvalRejection({ ...without, status: "approved" }, "approved"), undefined, "a save of an approved article is not an approval");
+  assert.equal(approvalRejection({ ...without, status: "drafting" }, "drafting"), undefined);
+});
+
+test("markdown tables become escaped table blocks, a separator row marks the header", () => {
+  const body = "## 비교\n| 이름 | 값 |\n|---|:--:|\n| <b>a</b> | 1 |\n| b | 2 |\n끝";
+  const table = deliveryBlocks({ ...article, body }).find((b) => b.kind === "table");
+  assert.deepEqual(table, { kind: "table", header: true, rows: [["이름", "값"], ["<b>a</b>", "1"], ["b", "2"]] });
+  const html = renderFragment({ ...article, body });
+  assert.ok(html.includes("<th>이름</th>"));
+  assert.ok(html.includes("<td>&lt;b&gt;a&lt;/b&gt;</td>"));
+  assert.ok(!html.includes("<b>"));
+  assert.ok(html.includes("overflow-x:auto"));
+  assert.deepEqual(deliveryBlocks({ ...article, body: "| 한 줄만 |" }).map((b) => b.kind), ["paragraph", "source"]);
+  assert.ok(!deliveryBlocks({ ...article, body: "```\n| a |\n| b |\n```" }).some((b) => b.kind === "table"));
+});
+
+test("a table of contents needs two headings, uses numbered anchors and escapes titles", () => {
+  assert.ok(!deliveryBlocks({ ...article, body: "## 하나\n본문" }).some((b) => b.kind === "toc"));
+  const body = '서문\n## <i>첫째</i>\n본문\n## 둘째 "x"\n본문';
+  const kinds = deliveryBlocks({ ...article, body }).map((b) => b.kind);
+  assert.deepEqual(kinds, ["paragraph", "toc", "heading", "paragraph", "heading", "paragraph", "source"]);
+  const html = renderFragment({ ...article, body });
+  assert.ok(html.includes('<nav class="cf-toc" aria-label="목차"><ol><li><a href="#cf-s1">&lt;i&gt;첫째&lt;/i&gt;</a></li><li><a href="#cf-s2">둘째 &quot;x&quot;</a></li></ol></nav>'));
+  assert.ok(html.includes('<h2 id="cf-s2">'));
+  assert.ok(html.indexOf("cf-toc") < html.indexOf("<h2"));
+});
+
+test("an A01 candidate never lands next to a table of contents or a table", () => {
+  const body = "서문\n## 가\n| a | b |\n|---|---|\n| 1 | 2 |\n## 나\n본문\n## 다\n끝";
+  const kinds = previewBlocks({ ...a01, body }).map((b) => b.kind);
+  assert.ok(kinds.includes("ad-slot"));
+  kinds.forEach((k, i) => {
+    if (k === "ad-slot") assert.ok(!["toc", "table"].includes(kinds[i - 1]) && !["toc", "table"].includes(kinds[i + 1]));
+  });
+});
+
+test("an approval made by r1 is refused at delivery", async () => {
+  assert.equal(RENDERER_VERSION, "r2");
+  await assert.rejects(assertDeliverable({ ...article, rendererVersion: "r1" }), (e: DeliveryError) => e.message === deliveryBlockMessages.renderer_mismatch);
+});
+
+test("a table needs a separator row in second place, and an escaped pipe stays in its cell", () => {
+  const noSeparator = deliveryBlocks({ ...article, body: "| a | b |\n| 1 | 2 |" }).map((b) => b.kind);
+  assert.deepEqual(noSeparator, ["paragraph", "paragraph", "source"]);
+  const table = deliveryBlocks({ ...article, body: "| a \\| b | c |\n|---|---|\n| 1 | 2 \\| 3 |" }).find((b) => b.kind === "table");
+  assert.deepEqual(table, { kind: "table", header: true, rows: [["a | b", "c"], ["1", "2 | 3"]] });
+});
+
+test("T02 and T04 skeletons filled with real text pass review", () => {
+  for (const id of ["T02", "T04"]) {
+    const filled = templateBody(id).replace(/\n\n/g, "\n실제 내용을 작성했습니다.\n");
+    assert.deepEqual(reviewErrors({ ...article, templateId: id, body: filled }), [], id);
+  }
+});
+
+test("local mode refuses the approval itself when a required block is missing", () => {
+  const draft = { ...t01, status: "approval_pending" as const, evidenceStatus: "ok" as const, rightsStatus: "ok" as const };
+  const broken = { ...draft, body: t01.body.replace("## FAQ\n내용 ", "내용 ") };
+  assert.throws(() => applyReviewRule({ ...broken, status: "approved" }, broken), /필수 블록 누락: FAQ/);
+  assert.equal(applyReviewRule({ ...draft, status: "approved" }, draft).status, "approved");
 });

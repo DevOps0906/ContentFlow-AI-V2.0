@@ -17,7 +17,7 @@ const article: Article = {
   id: "11111111-1111-4111-8111-111111111111",
   title: "포트 오류 해결",
   keyword: "포트",
-  templateId: "T02",
+  templateId: "T03",
   platform: "wordpress",
   body: "## 해결\n포트 사용을 확인합니다.",
   sourceUrl: "https://example.com/source",

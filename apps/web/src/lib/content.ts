@@ -11,6 +11,7 @@ import {
 } from "./lifecycle";
 import {
   AD_PROFILES,
+  deliveryBlocks,
   DEFAULT_AD,
   DEFAULT_LAYOUT,
   escapeHtml,
@@ -195,7 +196,7 @@ export function applyReviewRule(next: Article, previous?: Article): Article {
     throw new Error("승인 후에는 근거·권리 상태를 바꿀 수 없습니다.");
   const result = contentChanged(next, previous) ? withoutReview(next) : next;
   if (next.status === "approved" && previous.status !== "approved") {
-    const errors = approvalBlockers(result);
+    const errors = [...approvalBlockers(result), ...reviewErrors(result)];
     if (errors.length) throw new Error(errors[0]);
   }
   return result;
@@ -260,9 +261,17 @@ export function loadArticles(
 export function isApprovedContent(article: Article) {
   return requiresApproval.includes(article.status);
 }
+/** Templates whose blocks are required headings (CONTENT_TEMPLATES.md §9). */
+export const REQUIRED_BLOCK_TEMPLATES = ["T01", "T02", "T04"];
+export function missingBlocks(article: Pick<Article, "templateId" | "body" | "sourceUrl">): string[] {
+  if (!REQUIRED_BLOCK_TEMPLATES.includes(article.templateId)) return [];
+  const headings = new Set(deliveryBlocks(article).flatMap((b) => (b.kind === "heading" ? [b.text.trim()] : [])));
+  return findTemplate(article.templateId).blocks.filter((block) => !headings.has(block));
+}
 export function reviewErrors(article: Article): string[] {
   const errors: string[] = [];
   if (!article.title.trim()) errors.push("제목을 입력해주세요.");
+  for (const block of missingBlocks(article)) errors.push(`필수 블록 누락: ${block}`);
   const content = article.body
     .split("\n")
     .filter((line) => line.trim() && !line.startsWith("#"))

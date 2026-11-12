@@ -711,9 +711,44 @@ function EditorForm({
             <div className="content-preview">
               {previewBlocks(form).map((block, i) =>
                 block.kind === "heading" ? (
-                  <h2 key={i}>{block.text}</h2>
+                  <h2 key={i} id={block.id}>
+                    {block.text}
+                  </h2>
                 ) : block.kind === "paragraph" ? (
                   <p key={i}>{block.text}</p>
+                ) : block.kind === "toc" ? (
+                  <nav key={i} className="cf-toc-preview" aria-label="목차">
+                    <ol>
+                      {block.items.map((item) => (
+                        <li key={item.id}>
+                          <a href={`#${item.id}`}>{item.text}</a>
+                        </li>
+                      ))}
+                    </ol>
+                  </nav>
+                ) : block.kind === "table" ? (
+                  <div key={i} className="cf-table-scroll" tabIndex={0} role="region" aria-label="표">
+                    <table>
+                      {block.header ? (
+                        <thead>
+                          <tr>
+                            {block.rows[0].map((c, j) => (
+                              <th key={j}>{c}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                      ) : null}
+                      <tbody>
+                        {(block.header ? block.rows.slice(1) : block.rows).map((r, j) => (
+                          <tr key={j}>
+                            {r.map((c, k) => (
+                              <td key={k}>{c}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : block.kind === "source" ? (
                   <p key={i}>출처: {block.url}</p>
                 ) : (
