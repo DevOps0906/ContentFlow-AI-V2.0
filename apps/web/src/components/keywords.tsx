@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Copy, FilePlus2, FileUp, Info, Trash2 } from "lucide-react";
+import { Copy, FilePlus2, FileUp, Info, ListChecks, Trash2 } from "lucide-react";
 import {
   ideaFromKeyword,
   importKeywords,
@@ -16,6 +16,7 @@ import { restoreRemoved } from "@/lib/feedback";
 import { PageHeading } from "./shell";
 import { ConfirmDialog } from "./dialog";
 import { useFeedback } from "./feedback";
+import { RowMenu } from "./row-menu";
 import { useWorkspace } from "./workspace";
 import { StatusBadge } from "./status-badge";
 import { useBlogs } from "./blog-filter";
@@ -362,8 +363,11 @@ export function Keywords() {
                     .map((k) => {
                       const linked = linkedArticles(k, articles);
                       return (
-                      <tr key={k.id}>
-                        <td>{k.phrase}</td>
+                      <tr key={k.id} aria-current={selected === k.phrase ? "true" : undefined}>
+                        <td>
+                          {k.phrase}
+                          {selected === k.phrase && <small> · 제목 후보 보는 중</small>}
+                        </td>
                         <td>{k.intent || "—"}</td>
                         <td>{k.priority}</td>
                         <td>{k.note || "—"}</td>
@@ -410,20 +414,13 @@ export function Keywords() {
                           >
                             <FilePlus2 size={14} /> {linked.length ? "글 추가" : "글 만들기"}
                           </button>
-                          <button
-                            className="button secondary"
-                            aria-pressed={selected === k.phrase}
-                            onClick={() => makeTitles(k)}
-                          >
-                            제목 후보
-                          </button>
-                          <button
-                            className="button secondary"
-                            aria-label={`${k.phrase} 삭제`}
-                            onClick={() => askRemove(k)}
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          <RowMenu
+                            label={`${k.phrase} 작업 더보기`}
+                            items={[
+                              { label: "제목 후보", icon: <ListChecks size={15} />, onSelect: () => makeTitles(k) },
+                              { label: "삭제", icon: <Trash2 size={15} />, danger: true, onSelect: () => askRemove(k) },
+                            ]}
+                          />
                           </div>
                         </td>
                       </tr>

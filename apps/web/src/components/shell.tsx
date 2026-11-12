@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -22,7 +22,10 @@ import {
   X,
 } from "lucide-react";
 import { canEdit } from "@/lib/team";
+import { lockScroll, wrapFocusIndex } from "@/lib/overlay";
 import { useWorkspace } from "./workspace";
+import { Tooltip } from "./tooltip";
+import { useNarrow } from "./use-narrow";
 
 const nav = [
   { href: "/", label: "대시보드", icon: LayoutDashboard },
@@ -38,6 +41,44 @@ export function Shell({ children }: { children: ReactNode }) {
   const { articles, error, mode, email, logout } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const narrow = useNarrow();
+  const drawerRef = useRef<HTMLElement>(null);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  // Closing by Esc, the scrim or the close button returns focus to the menu button; following a link does not.
+  const restoreFocus = useRef(true);
+  const close = useCallback((restore = true) => {
+    restoreFocus.current = restore;
+    setOpen(false);
+  }, []);
+  // Up to 767px the sidebar is a modal drawer; above that it is a fixed sidebar and "open" means nothing.
+  const drawerOpen = narrow && open;
+  useEffect(() => {
+    if (open && !narrow) setOpen(false);
+  }, [open, narrow]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const panel = drawerRef.current;
+    panel?.querySelector<HTMLElement>(".drawer-close")?.focus({ preventScroll: true });
+    const unlock = lockScroll(document.body);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      unlock();
+      if (restoreFocus.current) menuButton.current?.focus();
+      else document.getElementById("main-content")?.focus({ preventScroll: true });
+    };
+  }, [drawerOpen, close]);
+  function trapTab(e: KeyboardEvent) {
+    if (e.key !== "Tab") return;
+    const els = Array.from(drawerRef.current?.querySelectorAll<HTMLElement>("a[href], button:not(:disabled)") ?? []);
+    const next = wrapFocusIndex(els.indexOf(document.activeElement as HTMLElement), els.length, e.shiftKey);
+    if (next === null) return;
+    e.preventDefault();
+    els[next].focus();
+  }
   // The login page has its own bare layout: no sidebar for visitors who are not signed in.
   if (path === "/login") return <>{children}</>;
   const initial = (email ?? "N").charAt(0).toUpperCase();
@@ -46,15 +87,24 @@ export function Shell({ children }: { children: ReactNode }) {
       ?.label ?? "설정";
   return (
     <div className="app-shell">
-      {open && (
+      {drawerOpen && (
         <button
           className="sidebar-scrim"
           aria-label="메뉴 닫기"
-          onClick={() => setOpen(false)}
+          tabIndex={-1}
+          onClick={() => close()}
         />
       )}
-      <aside className={`sidebar ${open ? "is-open" : ""}`}>
-        <Link className="brand" href="/" onClick={() => setOpen(false)}>
+      <aside
+        ref={drawerRef}
+        id="app-drawer"
+        className={`sidebar ${drawerOpen ? "is-open" : ""}`}
+        {...(drawerOpen ? { role: "dialog", "aria-modal": true, "aria-label": "메뉴" } : {})}
+        // Closed drawer is off-screen: keep it out of the Tab order and the accessibility tree.
+        inert={narrow && !open}
+        onKeyDown={drawerOpen ? trapTab : undefined}
+      >
+        <Link className="brand" href="/" onClick={() => close(false)}>
           <span className="brand-symbol">
             <Sparkles size={20} />
           </span>
@@ -62,12 +112,15 @@ export function Shell({ children }: { children: ReactNode }) {
             contentflow<span className="brand-dot">.</span>
           </span>
         </Link>
+        <button type="button" className="icon-button drawer-close" aria-label="메뉴 닫기" onClick={() => close()}>
+          <X size={18} />
+        </button>
         <nav aria-label="주 메뉴">
           {nav.map((n) => (
             <Link
               key={n.href}
               href={n.href}
-              onClick={() => setOpen(false)}
+              onClick={() => close(false)}
               className={`nav-item ${(n.href === "/" ? path === "/" : path.startsWith(n.href)) ? "active" : ""}`}
             >
               <n.icon size={19} />
@@ -97,6 +150,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <Link
             className={`nav-item ${path === "/settings" ? "active" : ""}`}
             href="/settings"
+            onClick={() => close(false)}
           >
             <Settings size={18} />
             환경설정
@@ -118,27 +172,27 @@ export function Shell({ children }: { children: ReactNode }) {
               <small>{mode === null ? "확인 중…" : mode === "account" ? (email ?? "계정") : "로컬 워크스페이스"}</small>
             </span>
             {mode === "account" ? (
-              <button
-                className="icon-button"
-                onClick={logout}
-                aria-label="로그아웃"
-                title="로그아웃"
-              >
-                <LogOut size={16} />
-              </button>
+              <Tooltip text="로그아웃">
+                <button className="icon-button" onClick={logout} aria-label="로그아웃">
+                  <LogOut size={16} />
+                </button>
+              </Tooltip>
             ) : (
               <span className="online-dot" />
             )}
           </div>
         </div>
       </aside>
-      <div className="main-wrap">
+      <div className="main-wrap" inert={drawerOpen}>
         <header className="topbar">
           <div className="breadcrumbs">
             <button
+              ref={menuButton}
               className="icon-button mobile-menu"
-              onClick={() => setOpen(!open)}
+              onClick={() => (open ? close() : setOpen(true))}
               aria-label={open ? "메뉴 닫기" : "메뉴 열기"}
+              aria-expanded={open}
+              aria-controls="app-drawer"
             >
               {open ? <X size={20} /> : <Menu size={20} />}
             </button>
@@ -170,7 +224,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <span className="top-avatar">{initial}</span>
           </div>
         </header>
-        <main id="main-content">
+        <main id="main-content" tabIndex={-1}>
           {error && (
             <div role="alert" className="error-banner">
               {error}

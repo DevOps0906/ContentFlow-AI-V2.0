@@ -41,6 +41,7 @@ import { download, useWorkspace } from "./workspace";
 import { PageHeading } from "./shell";
 import { useFeedback } from "./feedback";
 import { ConfirmDialog } from "./dialog";
+import { Tooltip } from "./tooltip";
 import { TemplateExampleButton } from "./template-example";
 import { PhaseSteps, StatusBadge } from "./status-badge";
 import { loadChoice } from "@/lib/ai-settings";
@@ -693,19 +694,23 @@ function EditorForm({
             >
               미리보기
             </button>
-            <button
-              className="ai-button"
-              onClick={() => (skeleton ? generateDraft() : setAiOverwrite(true))}
-              disabled={!aiReady || busy !== null || !editable}
-              title={
+            <Tooltip
+              label="AI 초안 생성"
+              text={
                 aiReady
                   ? "핵심 키워드와 템플릿으로 초안을 만듭니다."
                   : "AI가 연결되지 않았습니다. GEMINI_API_KEY 또는 OPENAI_API_KEY를 설정해주세요."
               }
             >
-              <Sparkles size={13} />
-              {busy === "ai" ? "초안 작성 중…" : aiReady ? "AI 초안 생성" : "AI 미연결"}
-            </button>
+              <button
+                className="ai-button"
+                onClick={() => (skeleton ? generateDraft() : setAiOverwrite(true))}
+                disabled={!aiReady || busy !== null || !editable}
+              >
+                <Sparkles size={13} />
+                {busy === "ai" ? "초안 작성 중…" : aiReady ? "AI 초안 생성" : "AI 미연결"}
+              </button>
+            </Tooltip>
             <span>{form.body.length.toLocaleString()}자</span>
           </div>
           {preview ? (
@@ -1000,22 +1005,22 @@ function EditorForm({
                       {actionLabel(currentStatus, to)}
                     </button>
                   ) : (
-                    <button
+                    <Tooltip
+                      label={lifecycleLabels[to]}
                       key={to}
-                      className="button secondary"
-                      aria-disabled="true"
-                      disabled
-                      title={
+                      text={
                         cmsConnected
                           ? "전송 결과에 따라 자동으로 바뀝니다."
                           : "CMS 연동 전에는 사용할 수 없습니다."
                       }
                     >
-                      {lifecycleLabels[to]}
-                      <small className="unavailable-note">
-                        {cmsConnected ? "자동 결정" : "CMS 연동 전"}
-                      </small>
-                    </button>
+                      <button className="button secondary" aria-disabled="true" disabled>
+                        {lifecycleLabels[to]}
+                        <small className="unavailable-note">
+                          {cmsConnected ? "자동 결정" : "CMS 연동 전"}
+                        </small>
+                      </button>
+                    </Tooltip>
                   ),
                 )}
               {phaseOf(currentStatus) === "plan" && (
@@ -1084,11 +1089,9 @@ function EditorForm({
               <p className="metric-note">
                 규칙 기반 점검이며 사실 여부나 저작권은 확인하지 않습니다. 근거와 권리는 직접 확인해주세요.
               </p>
-              <button
-                className="button secondary"
-                onClick={crossReview}
-                disabled={!aiReady || reviewing || dirty || !form.body.trim()}
-                title={
+              <Tooltip
+                label="AI 교차 검수"
+                text={
                   !aiReady
                     ? "AI가 연결되지 않았습니다."
                     : dirty
@@ -1096,8 +1099,14 @@ function EditorForm({
                       : "다른 모델로 두 번째 의견을 받습니다."
                 }
               >
-                <Sparkles size={14} /> {reviewing ? "AI 검수 중…" : aiReady ? "AI 교차 검수" : "AI 미연결"}
-              </button>
+                <button
+                  className="button secondary"
+                  onClick={crossReview}
+                  disabled={!aiReady || reviewing || dirty || !form.body.trim()}
+                >
+                  <Sparkles size={14} /> {reviewing ? "AI 검수 중…" : aiReady ? "AI 교차 검수" : "AI 미연결"}
+                </button>
+              </Tooltip>
               {reviewError && (
                 <p role="alert" className="qa-list blocker">
                   {reviewError}

@@ -8,6 +8,7 @@ import {
   type Role,
 } from "@/lib/team";
 import { ConfirmDialog } from "./dialog";
+import { useFeedback } from "./feedback";
 
 type Member = { userId: string; email: string; role: Role; joinedAt: string };
 type Invitation = { id: string; email: string; role: Role; created_at: string };
@@ -31,6 +32,7 @@ export function TeamPanel() {
   const [mine, setMine] = useState<Mine[]>([]);
   const [spaces, setSpaces] = useState<{ active: string; workspaces: Workspace[] } | null>(null);
   const [message, setMessage] = useState("");
+  const { toast } = useFeedback();
   const [error, setError] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("editor");
@@ -56,14 +58,16 @@ export function TeamPanel() {
     load();
   }, [load]);
 
-  async function run(fn: () => Promise<string | void>, reload = true) {
+  /** A returned string is a plain success (toast). `{ inline }` is a note the operator must be able to re-read. */
+  async function run(fn: () => Promise<string | { inline: string } | void>, reload = true) {
     if (busy) return;
     setBusy(true);
     setMessage("");
     setError("");
     try {
       const done = await fn();
-      if (done) setMessage(done);
+      if (typeof done === "string") toast(done);
+      else if (done) setMessage(done.inline);
       if (reload) await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "처리하지 못했습니다.");
@@ -228,7 +232,7 @@ export function TeamPanel() {
                   run(async () => {
                     await call("/api/team/invite", { method: "POST", body: JSON.stringify({ email, role }) });
                     setEmail("");
-                    return `${email.trim()} 님을 초대했어요. 이 이메일로 가입하거나 로그인하면 초대가 보여요(이메일은 발송되지 않아요).`;
+                    return { inline: `${email.trim()} 님을 초대했어요. 이 이메일로 가입하거나 로그인하면 초대가 보여요(이메일은 발송되지 않아요).` };
                   });
                 }}
               >

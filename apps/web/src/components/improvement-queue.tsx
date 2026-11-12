@@ -14,6 +14,7 @@ import {
 } from "@/lib/improvements";
 import { localDay } from "@/lib/costs";
 import { postJson } from "./integrations";
+import { useFeedback } from "./feedback";
 
 type Member = { id: string; email: string };
 type Loaded = { tasks: Improvement[]; members: Member[]; canManage: boolean };
@@ -26,7 +27,7 @@ function TaskRow({
   const [assigneeId, setAssigneeId] = useState(task.assigneeId ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState("");
+  const { toast } = useFeedback();
   const id = `improve-${task.id}`;
   const assignee = members.find((m) => m.id === task.assigneeId)?.email ?? "담당자 없음";
 
@@ -34,7 +35,6 @@ function TaskRow({
     e.preventDefault();
     if (busy) return;
     setError("");
-    setDone("");
     setBusy(true);
     try {
       const body = parseImprovementUpdate({ id: task.id, state, resultVersion, assigneeId });
@@ -46,7 +46,7 @@ function TaskRow({
       const data = (await res.json().catch(() => null)) as { task?: Improvement; error?: string } | null;
       if (!res.ok || !data?.task) throw new Error(data?.error ?? "저장하지 못했습니다.");
       onSaved(data.task);
-      setDone("기록했어요.");
+      toast("기록했어요.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "저장하지 못했습니다.");
     } finally {
@@ -116,11 +116,6 @@ function TaskRow({
           {error}
         </p>
       )}
-      {done && (
-        <p role="status" className="success-message">
-          {done}
-        </p>
-      )}
     </li>
   );
 }
@@ -138,6 +133,7 @@ export function ImprovementQueue({ account, articles }: { account: boolean; arti
   const [reviewAt, setReviewAt] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const { toast } = useFeedback();
 
   const load = useCallback(async () => {
     try {
@@ -172,7 +168,7 @@ export function ImprovementQueue({ account, articles }: { account: boolean; arti
       setArticleId("");
       setTargetUrl("");
       setEvidence("");
-      setMessage("개선 큐에 추가했어요.");
+      toast("개선 큐에 추가했어요.");
     } catch (err) {
       // What the operator typed stays in the form so the save can be retried.
       setMessage(err instanceof Error ? err.message : "저장하지 못했습니다.");
@@ -276,7 +272,7 @@ export function ImprovementQueue({ account, articles }: { account: boolean; arti
             <p className="metric-note">개선 큐는 소유자·관리자·편집자·검수자만 기록할 수 있어요. 지금은 볼 수만 있어요.</p>
           )}
           {message && (
-            <p role="status" className="metric-note">
+            <p role="alert" className="metric-note">
               {message}
             </p>
           )}

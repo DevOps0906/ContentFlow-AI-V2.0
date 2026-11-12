@@ -1,21 +1,9 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
+import { useNarrow } from "./use-narrow";
 
 export type RowMenuItem = { label: string; icon?: ReactNode; danger?: boolean; onSelect: () => void };
-
-const QUERY = "(max-width: 767px)";
-function useNarrow() {
-  return useSyncExternalStore(
-    (cb) => {
-      const m = window.matchMedia(QUERY);
-      m.addEventListener("change", cb);
-      return () => m.removeEventListener("change", cb);
-    },
-    () => window.matchMedia(QUERY).matches,
-    () => false,
-  );
-}
 
 /** `⋯` row actions: action sheet up to 767px, anchored dropdown menu above. Same items in both. */
 export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] }) {

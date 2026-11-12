@@ -54,6 +54,8 @@ export const RUN_ESTIMATE_DIGITS = 8;
  * Stores an entry and refreshes the list, and returns what to tell the operator. The form is cleared
  * as soon as the row exists, so a failed refresh can not invite a second save of the same cost.
  */
+/** Shown as a toast; every other result of saveCostEntry is an error or a warning and stays inline. */
+export const COST_SAVED = "기록했어요.";
 export async function saveCostEntry(steps: {
   save: () => Promise<unknown>;
   clearForm: () => void;
@@ -68,7 +70,7 @@ export async function saveCostEntry(steps: {
   steps.clearForm();
   try {
     await steps.reload();
-    return "기록했어요.";
+    return COST_SAVED;
   } catch {
     return "기록했지만 목록을 새로 불러오지 못했어요. 다시 입력하지 말고 페이지를 새로고침해 주세요.";
   }

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { loadChoice, saveChoice, type AiChoice } from "@/lib/ai-settings";
 import { postJson } from "./integrations";
+import { useFeedback } from "./feedback";
 
 type ProviderInfo = { id: "gemini" | "openai"; label: string; configured: boolean; model: string; qaModel: string | null };
 type Providers = { default: "gemini" | "openai" | null; providers: ProviderInfo[] };
@@ -15,6 +16,7 @@ export function AiApiPanel() {
   const [modelsError, setModelsError] = useState("");
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState("");
+  const { toast } = useFeedback();
 
   useEffect(() => {
     setChoice(loadChoice());
@@ -55,14 +57,17 @@ export function AiApiPanel() {
 
   function change(next: AiChoice) {
     setChoice(next);
-    setMessage(saveChoice(next) ? "이 브라우저에 저장했어요. 다음 AI 요청부터 적용됩니다." : "브라우저 저장소에 저장하지 못했습니다.");
+    if (saveChoice(next)) {
+      setMessage("");
+      toast("이 브라우저에 저장했어요. 다음 AI 요청부터 적용됩니다.");
+    } else setMessage("브라우저 저장소에 저장하지 못했습니다.");
   }
   async function test() {
     setTesting(true);
     setMessage("");
     try {
       const r = await postJson<{ count: number }>("/api/ai/test", { provider });
-      setMessage(`연결됨 · 사용 가능한 모델 ${r.count}개`);
+      toast(`연결됨 · 사용 가능한 모델 ${r.count}개`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "연결하지 못했습니다.");
     } finally {
@@ -131,7 +136,7 @@ export function AiApiPanel() {
           {testing ? "확인 중…" : "연결 테스트"}
         </button>
       </div>
-      {message && <p role="status" className="metric-note">{message}</p>}
+      {message && <p role="alert" className="metric-note">{message}</p>}
       <p>API 키는 서버 환경변수(GEMINI_API_KEY, OPENAI_API_KEY)에서만 설정합니다. 화면에서 입력하거나 저장하지 않으며, 이 화면에도 표시되지 않습니다.</p>
     </div>
   );

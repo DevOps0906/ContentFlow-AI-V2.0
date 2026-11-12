@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Trash2 } from "lucide-react";
 import {
   COST_ENTRY_DIGITS,
+  COST_SAVED,
   costCategories,
   costCategoryLabels,
   localDay,
@@ -17,6 +18,7 @@ import {
 import { formatMoney } from "@/lib/revenue";
 import { postJson } from "./integrations";
 import { ConfirmDialog } from "./dialog";
+import { useFeedback } from "./feedback";
 
 type Loaded = { entries: CostEntry[]; totals: CurrencyTotal[]; runEstimates: RunEstimates; canRecord: boolean };
 const SHOWN = 50;
@@ -32,6 +34,7 @@ export function CostLedger({ account }: { account: boolean }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const { toast } = useFeedback();
   const [removing, setRemoving] = useState<CostEntry | null>(null);
 
   const load = useCallback(async () => {
@@ -55,16 +58,16 @@ export function CostLedger({ account }: { account: boolean }) {
     setBusy(true);
     try {
       const body = parseCostEntry({ category, amount, currency, occurredOn, note });
-      setMessage(
-        await saveCostEntry({
+      const result = await saveCostEntry({
           save: () => postJson("/api/costs", body),
           clearForm: () => {
             setAmount("");
             setNote("");
           },
           reload: load,
-        }),
-      );
+        });
+      if (result === COST_SAVED) toast(result);
+      else setMessage(result);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "저장하지 못했습니다.");
     } finally {
@@ -199,7 +202,7 @@ export function CostLedger({ account }: { account: boolean }) {
             <p className="metric-note">원가는 소유자·관리자만 기록할 수 있어요. 지금은 볼 수만 있어요.</p>
           )}
           {message && (
-            <p role="status" className="metric-note">
+            <p role="alert" className="metric-note">
               {message}
             </p>
           )}

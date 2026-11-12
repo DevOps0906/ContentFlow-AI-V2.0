@@ -9,6 +9,7 @@ import { TeamPanel } from "./team-panel";
 import { SiteChecks } from "./site-checks";
 import { BlogAccounts } from "./blog-accounts";
 import { ConfirmDialog } from "./dialog";
+import { useFeedback } from "./feedback";
 import { AiApiPanel } from "./ai-api-panel";
 export function Settings() {
   const { articles, clear, mode, email, importLocal } = useWorkspace();
@@ -29,6 +30,8 @@ export function Settings() {
   const [tab, setTab] = useState<"general" | "ai">("general");
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageIsError, setMessageIsError] = useState(false);
+  const { toast } = useFeedback();
   const integrations = useIntegrations();
   return (
     <>
@@ -161,8 +164,10 @@ export function Settings() {
                       localStorage.getItem(LEGACY_STORAGE_KEY) ??
                       "[]");
                 download("contentflow-backup.json", raw, "application/json");
-                setMessage("브라우저 원본 데이터를 백업했어요.");
+                setMessage("");
+                toast("브라우저 원본 데이터를 백업했어요.");
               } catch {
+                setMessageIsError(true);
                 setMessage("저장소 접근에 실패했습니다.");
               }
             }}
@@ -182,10 +187,12 @@ export function Settings() {
               onClick={async () => {
                 try {
                   const r = await importLocal();
+                  setMessageIsError(false);
                   setMessage(
                     `이 브라우저의 콘텐츠 ${r.imported}개를 계정으로 가져왔어요(건너뜀 ${r.skipped}, 형식 오류 ${r.invalid}, 실패 ${r.failed}). 검수·승인 상태는 승인 기록이 없어 초안 작성으로 가져왔으니 다시 승인해주세요.`,
                   );
                 } catch (e) {
+                  setMessageIsError(true);
                   setMessage(e instanceof Error ? e.message : "가져오지 못했습니다.");
                 }
               }}
@@ -195,7 +202,7 @@ export function Settings() {
           )}
         </div>
         {message && (
-          <p role="status" className="metric-note">
+          <p role={messageIsError ? "alert" : "status"} className="metric-note">
             {message}
           </p>
         )}
@@ -231,7 +238,8 @@ export function Settings() {
           onConfirm={() => {
             if (clear()) {
               setConfirm(false);
-              setMessage("로컬 데이터를 초기화했어요.");
+              setMessage("");
+              toast("로컬 데이터를 초기화했어요.");
             }
           }}
         />

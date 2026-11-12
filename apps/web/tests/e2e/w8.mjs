@@ -705,9 +705,8 @@ try {
     await A.fill("#improve-to", "2026-10-31");
     await A.fill("#improve-review", today);
     await A.clickText("개선 작업 추가");
-    const sel = `[...document.querySelectorAll('section')].find(s => s.querySelector('h2')?.innerText === '개선 큐')?.querySelector('[role=status]')?.innerText || ''`;
-    const msg = await A.waitFor(sel, 15000, "improvement message");
-    ok(msg.includes("개선 큐에 추가했어요."), `메시지: ${msg}`);
+    // Success is now a toast (live region outside the section), not an inline note.
+    await A.waitText("개선 큐에 추가했어요.", 15000);
     return url;
   }, { needs: ["published1"] });
 
@@ -751,8 +750,7 @@ try {
       await A.fill("#trend-growth", g);
       await A.fill("#trend-documents", d);
       await A.eval(`document.querySelector('#trend-keyword').closest('form').requestSubmit()`);
-      await A.waitText("저장했어요.");
-      await A.eval(`(() => { const p = [...document.querySelectorAll('[role=alert]')].find(e => e.innerText.includes('저장했어요')); if (p) p.textContent = ''; })()`);
+      await A.waitText(k); // toast text lingers, so wait for the saved row instead
     };
     await add(`트렌드A ${stamp}`, "12000", "35", "4000");
     await add(`트렌드B ${stamp}`, "3000", "5", "");

@@ -14,6 +14,7 @@ import {
   type SiteCheckStatus,
 } from "@/lib/site-checks";
 import { postJson } from "./integrations";
+import { useFeedback } from "./feedback";
 
 type Loaded = { checks: SiteCheck[]; canRecord: boolean };
 type Item = (typeof siteCheckItems)[number];
@@ -37,20 +38,19 @@ function CheckRow({
   const [note, setNote] = useState(check.note ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState("");
+  const { toast } = useFeedback();
   const id = `site-${item.key}`;
 
   async function save(e: FormEvent) {
     e.preventDefault();
     if (busy) return;
     setError("");
-    setDone("");
     setBusy(true);
     try {
       const body = parseSiteCheck({ key: item.key, status, evidenceUrl, note });
       const saved = await postJson<{ check: SiteCheck }>("/api/site-checks", body);
       onSaved(saved.check);
-      setDone("기록했어요.");
+      toast(`${item.label} 기록했어요.`);
     } catch (err) {
       // What the operator typed stays in the form so the save can be retried.
       setError(err instanceof Error ? err.message : "저장하지 못했습니다.");
@@ -147,11 +147,6 @@ function CheckRow({
       {error && (
         <p role="alert" className="error-banner">
           {error}
-        </p>
-      )}
-      {done && (
-        <p role="status" className="success-message">
-          {done}
         </p>
       )}
     </li>

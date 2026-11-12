@@ -30,6 +30,8 @@ import {
   type TrendPeriod,
 } from "@/lib/trends";
 import { ConfirmDialog } from "./dialog";
+import { Tooltip, InfoTip } from "./tooltip";
+import { useFeedback } from "./feedback";
 import { BlogFilter, useBlogs } from "./blog-filter";
 import { PageHeading } from "./shell";
 import { useWorkspace } from "./workspace";
@@ -88,6 +90,7 @@ function TrendBoard({ save }: { save: (article: Article) => Promise<Article> }) 
   const [form, setForm] = useState(emptyMetrics);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const { toast } = useFeedback();
   const [report, setReport] = useState<TrendImport | null>(null);
   const [removing, setRemoving] = useState<ScoredTrend | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
@@ -160,9 +163,11 @@ function TrendBoard({ save }: { save: (article: Article) => Promise<Article> }) 
         return;
       }
       if (sent.added > 0) setForm(emptyMetrics);
-      setMessage(
-        [sent.added > 0 ? "저장했어요." : "같은 블로그·키워드·카테고리·출처·측정일의 행이 이미 있어 기존 값을 유지했어요.", notice].filter(Boolean).join(" "),
-      );
+      if (sent.added > 0 && !notice) toast("저장했어요.");
+      else
+        setMessage(
+          [sent.added > 0 ? "저장했어요." : "같은 블로그·키워드·카테고리·출처·측정일의 행이 이미 있어 기존 값을 유지했어요.", notice].filter(Boolean).join(" "),
+        );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "저장하지 못했습니다.");
     } finally {
@@ -471,8 +476,9 @@ export function TrendTable({
               <td data-label="월간 검색량">{formatCount(t.monthlySearches)}</td>
               <td data-label="검색 증가율">{formatGrowth(t.growthPct)}</td>
               <td data-label="문서 수">{formatCount(t.documentCount)}</td>
-              <td data-label="기회 점수" title={t.missing.length ? `없는 값: ${t.missing.join(", ")}` : undefined}>
+              <td data-label="기회 점수">
                 <b>{formatScore(t.score)}</b>
+                {t.missing.length > 0 && <InfoTip label={`${t.keyword} 기회 점수 설명`} text={`없는 값: ${t.missing.join(", ")}`} />}
               </td>
               <td data-label="출처 · 측정일">
                 {t.source} · {t.measuredOn}
@@ -483,9 +489,11 @@ export function TrendTable({
                     <button className="button secondary" disabled={creating !== null} onClick={() => onCreate(t)}>
                       <FilePlus2 size={15} /> 글 만들기
                     </button>
-                    <button className="icon-button" aria-label={`${t.keyword} 측정값 삭제`} title="삭제" onClick={() => onRemove(t)}>
-                      <Trash2 size={15} />
-                    </button>
+                    <Tooltip text="삭제">
+                      <button className="icon-button" aria-label={`${t.keyword} 측정값 삭제`} onClick={() => onRemove(t)}>
+                        <Trash2 size={15} />
+                      </button>
+                    </Tooltip>
                   </div>
                 </td>
               )}
