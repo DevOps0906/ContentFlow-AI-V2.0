@@ -204,6 +204,41 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 검증 결과 | 현재 타입·테스트 83개·production build·DB 규칙 테스트(0001~0006) 통과; 이전 검증: Docker 이미지; DB 규칙 테스트(키워드 포함); 키워드→글 브라우저 e2e 28건(계정)·25건(로컬), 키워드 API e2e 17건, 수익 CSV 브라우저 e2e 17건; DB 규칙 테스트 통과; 로그인 e2e 37건·WordPress e2e 16건; 의존성 high 이상 취약점 0(`@supabase/ssr`·`supabase-js` 추가 후 `npm audit`, 모두 MIT) |
 | 미검증 | 키보드 조작, 저장 실패 화면, 새 팀·비밀번호 복구·AI 검수 화면의 브라우저 흐름, 이메일 확인 메일 흐름, 실제 OpenAI 호출, https 운영 환경 |
 
+## 데스크톱(Tauri)·모바일(Capacitor) 실행
+
+명령은 모두 저장소 루트에서 실행한다. 먼저 `npm ci`로 의존성을 설치한다.
+
+### PC 데스크톱 앱 — Tauri 2 (Windows)
+
+| 단계 | 명령/설명 |
+|---|---|
+| 1. 준비(1회) | Rust stable(MSVC 툴체인, `rustup default stable-msvc`), Visual Studio Build Tools(C++), Node.js 24, WebView2 런타임(Windows 11 기본 포함) |
+| 2. 빌드 | `pwsh scripts/desktop-build.ps1` — 웹 빌드 → Next 서버·Node 런타임을 `apps/desktop/src-tauri/resources/`에 복사 → NSIS 설치 파일 생성. 웹을 이미 빌드했으면 `-SkipWebBuild` |
+| 개발 모드 | `npm run tauri dev -w apps/desktop` (2단계 빌드로 resources가 채워진 뒤, 디버그 빌드로 창이 뜸. 이 저장소는 npm 워크스페이스라 `pnpm` 대신 npm 사용) |
+| 3-a. 설치 없이 실행 | `apps/desktop/src-tauri/target/release/contentflow-desktop.exe` |
+| 3-b. 설치 | `apps/desktop/src-tauri/target/release/bundle/nsis/ContentFlow AI_0.1.0_x64-setup.exe` 실행(관리자 권한 불필요, 무서명이라 SmartScreen 경고가 나오면 "추가 정보 → 실행") |
+| 4. 키 설정(선택) | `%APPDATA%\ContentFlow\desktop.env`에 `KEY=VALUE` 줄로 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `GEMINI_API_KEY`, `WP_*` 등. 없으면 로컬 모드(이 PC에만 저장). service role 키는 넣지 않는다 |
+| 실행 점검 | `node apps/desktop/e2e/desktop-e2e.mjs` — 빌드된 exe로 7개 항목 확인(앱이 꺼져 있고 34110 포트가 비어 있어야 함) |
+
+- 앱은 `127.0.0.1:34110`에서 내장 서버를 띄운다. 포트가 사용 중이면 오류 화면이 나오므로, 같은 포트를 쓰는 프로그램을 끄고 "다시 시도"를 누른다.
+- 앱은 한 번에 하나만 실행된다. 두 번째로 실행하면 기존 창이 앞으로 나온다.
+- 상세(보안 구조·제한): [데스크톱 앱](docs/08-ops/DESKTOP_APP.md)
+
+### 모바일 앱 — Capacitor 8 (Android, 읽기 전용)
+
+| 단계 | 명령/설명 |
+|---|---|
+| 1. 브라우저에서 화면 개발 | 웹 서버(`docker compose up -d` 또는 3410 포트의 웹)를 켠 뒤 `npm run dev -w apps/mobile` → 출력된 주소를 브라우저로 연다(`/api`는 3410으로 프록시, 다른 주소는 `DEV_API_TARGET`) |
+| 2. 준비(APK, 1회) | JDK 21(`winget install Microsoft.OpenJDK.21`) → `JAVA_HOME`, Android SDK(`platform-tools`, `platforms/android-36`, `build-tools`) → `ANDROID_HOME` |
+| 3. 서명 키(1회) | `keytool -genkeypair -v -keystore contentflow-release.jks -alias contentflow -keyalg RSA -keysize 2048 -validity 10000` 로 만들어 **저장소 밖**에 보관하고, `ANDROID_KEYSTORE_PATH`·`ANDROID_KEYSTORE_PASSWORD`·`ANDROID_KEY_ALIAS`·`ANDROID_KEY_PASSWORD` 환경 변수로 지정. 키를 잃으면 설치된 앱을 업데이트할 수 없다 |
+| 4-a. 개발용 APK(내부망) | PowerShell: `$env:CAP_ENV="dev"; $env:VITE_API_BASE="http://<PC 내부망 IP>:3410"; node apps/mobile/scripts/build-apk.mjs` — 앱 이름 "ContentFlow (개발)", 정식 앱과 따로 설치됨. 에뮬레이터는 `http://10.0.2.2:3410` |
+| 4-b. 정식 APK | `$env:CAP_ENV="release"; $env:VITE_API_BASE="https://<운영 주소>"; node apps/mobile/scripts/build-apk.mjs` — https가 아니면 빌드 중단 |
+| 5. 설치 | 결과물 `mobile-dist/app.apk`를 대시보드 "모바일 앱" 카드에서 내려받아 휴대폰에 설치(출처를 알 수 없는 앱 설치 허용 필요). 또는 USB 연결 후 `adb install -r mobile-dist/app.apk` |
+| 점검 | `npm test -w apps/mobile`, 정식 배포 전 `npm run check:release -w apps/mobile` |
+
+- 휴대폰이 개발 PC의 웹 서버에 접속하려면 `.env`의 `WEB_LAN_BIND`(PC 내부망 IP)·`WEB_LAN_PORT=3410`과 방화벽 허용이 필요하다: [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md)
+- 앱은 글 목록·상세·승인 대기 보기만 한다. 편집·승인·발행은 웹(또는 데스크톱 앱)에서 한다. 상세: [apps/mobile/README](apps/mobile/README.md)
+
 ## Codex 멀티에이전트 구성
 
 | 구분 | 설정/상태 |
