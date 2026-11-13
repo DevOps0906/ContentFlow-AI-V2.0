@@ -115,5 +115,23 @@
 ## 12. 작업
 | ID | 내용 | 상태 |
 |---|---|---|
-| CF-22 | 계량·고지·한도 트리거·엔타이틀먼트 | 대기 |
-| CF-23 | 실결제 연동 | 대기(승인 필요) |
+| CF-22 | 계량·고지·한도 트리거·엔타이틀먼트 | 완료 |
+| CF-23 | 실결제 연동 + 다운그레이드 보관 요구(§5·`BLOG_OVER_ENTITLEMENT`) | 대기(승인 필요) |
+
+## 13. 구현 결정 (CF-22, 2026-11-13 확정)
+사용자 결정: 월 단위(KST 달력 월) peak·일할 없음 / 플랜 가설 §3 그대로 / 초과 추가는 **소유자만** / 유예 90일·적용 시점 활성 수 동결 / 다운그레이드 보관 요구(§5 마지막 행, `BLOG_OVER_ENTITLEMENT`)는 CF-23으로 이관.
+
+DB 계약(`supabase/migrations/0019_blog_entitlements.sql`):
+| 항목 | 규칙 |
+|---|---|
+| 정본 | `workspace_entitlements`(§7 컬럼 + `grace_until timestamptz`, `grace_active_cap int`). 모든 워크스페이스에 행(기존은 마이그레이션, 신규는 workspaces insert 트리거). RLS: 멤버 select만, authenticated·anon 쓰기 권한 없음 |
+| 플랜 잠금 | `workspaces.plan` 변경은 `current_user`가 `authenticated`·`anon`이면 `PLAN_CHANGE_FORBIDDEN`. 그 외 역할이 바꾸면 entitlements를 플랜 기본값으로 동기화 |
+| 시스템 면제 | 면제 판단은 `auth.uid() is null`이 아니라 `current_user not in ('authenticated','anon')`. 면제 경로도 peak 계량은 한다 |
+| 이동 금지 | authenticated·anon의 `blogs.workspace_id` 변경은 `BLOG_WORKSPACE_IMMUTABLE` |
+| 확인 신호 | `blogs.overage_ack boolean default false`. 같은 insert/update 문장의 값만 인정, 트리거가 `audit_logs(action='blog.overage_ack', payload: active_before·active_after·included·notice_version='v1')`를 직접 쓰고 `overage_ack := false`로 되돌린다(저장되지 않음) |
+| 한도 검사 | 활성화되는 행(insert active, 또는 비활성→active)만. 워크스페이스 행 `FOR UPDATE` 잠금 후 자신 제외 활성 수+1 = next. 유예 중(`grace_until > now()`): next > max(max_blogs, grace_active_cap)이면 `BLOG_LIMIT_REACHED`, 아니면 통과. 그 외: `overage_allowed=false`이고 next > included → `PLAN_NOT_ALLOWED`; next > max → `BLOG_LIMIT_REACHED`; next > included → 소유자 아니면 `FORBIDDEN_ROLE`, ack 없으면 `BLOG_LIMIT_CONFIRM_REQUIRED`, 있으면 audit 기록 후 통과 |
+| 오류 형식 | `raise exception '<코드>'`(메시지 = 코드 그대로). API는 메시지로 매핑: CONFIRM_REQUIRED·LIMIT_REACHED·PLAN_NOT_ALLOWED → 409, FORBIDDEN_ROLE → 403 |
+| peak 계량 | blogs AFTER insert/update/delete 트리거가 해당(이동 시 양쪽) 워크스페이스의 KST 이번 달 `blog_usage_snapshots`(PK workspace_id+period_start) upsert: peak=greatest(기존, 현재 활성), active_at_close=현재 활성, overage_slots=max(0, peak−included). 행이 없는 달은 조회 시 현재 활성 수를 peak로 본다 |
+| 유예 | 마이그레이션 시점 활성 수 > included인 워크스페이스: `grace_until = now()+90일`, `grace_active_cap = 그때 활성 수`. 연장은 운영자 SQL |
+
+앱 계약: `GET /api/blogs/usage` → `{active, included, max, peak, overageSlots, overageAllowed, graceUntil, graceActiveCap, role}`. POST·PATCH(복원)는 `acknowledgeOverage: true`를 `overage_ack: true`로 같은 문장에 넣는다. 되돌리기 스낵바가 409 `BLOG_LIMIT_CONFIRM_REQUIRED`를 받으면 조용히 재시도하지 않고 고지 대화상자를 연다. 로컬 모드는 배지·고지 없음. 고지 문구 버전 `v1`은 앱 상수와 SQL이 같아야 한다.

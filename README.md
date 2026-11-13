@@ -21,7 +21,7 @@
 |---|---|---|
 | ![로그인](docs/07-design/screens/14-login.png) | ![목록](docs/07-design/screens/11-content-list-data.png) | ![편집기](docs/07-design/screens/12-editor-approved.png) |
 
-## 진행 현황 (2026-11-12 기준)
+## 진행 현황 (2026-11-13 기준)
 
 **2026-11-12 추가:** 아래 2026-11-11 목록 이후 작업이다. 마이그레이션 0018까지 로컬 적용.
 
@@ -36,6 +36,7 @@
 | 필수 블록 차단 · 렌더러 r2 (CF-19) | T01/T02/T04 필수 소제목 누락 시 검수·승인(로컬·계정 API 422)·전달 차단, 미리보기·HTML에 목차와 GFM 표(모바일 가로 스크롤) | r3(표 래퍼 WordPress 호환), 이전 승인 글은 재승인 필요. W8 e2e 67건 재통과 |
 | PC 데스크톱 앱 (Tauri 2) | Windows 설치 파일(NSIS 25MB), 웹 전체 기능을 내장 Next 서버(127.0.0.1:34110)로 실행, 실행마다 난수 토큰·Host 검사로 다른 프로그램 접근 차단, 오류 화면·외부 링크 시스템 브라우저, 정식 아이콘, 실측 9건(설치·재설치 후 데이터 유지, 계정 모드 재시작 후 로그인 유지 포함) | 무서명 개발용, macOS 후속, 계정 모드 메일 링크 흐름 제외 |
 | 토스트·스낵바·⋯ 메뉴·툴팁 (CF-20·21) | 성공 알림 토스트(12개 화면), 키워드 삭제·블로그 보관 실행 취소 스낵바(Ctrl+Z), 콘텐츠·키워드 ⋯ 메뉴(모바일 액션시트·데스크톱 드롭다운), 호버·키보드·터치 툴팁, 모바일 메뉴 드로어 포커스 가둠·Esc·스크롤 잠금 | 상세가 있는 성공 메시지는 인라인 유지 |
+| 다수 블로그 한도·초과 고지 (CF-22, 0019) | 플랜별 포함 수·상한(가설) DB 트리거 강제, 소유자 확인 시에만 초과 추가·audit 기록, KST 월 peak 계량, 사용량 배지·고지 대화상자, 기존 초과 워크스페이스 90일 유예 | 실결제·다운그레이드 보관 요구는 CF-23 |
 | 모바일 앱 (Capacitor 8) | Android 앱(글 목록·상세·승인 대기, 읽기 전용), 서버 토큰(Bearer) 세션, 대시보드 APK 다운로드 카드, 개발용 APK 첫 빌드·서명 | iOS 미지원, 실기기 설치 확인 전, 개발용은 내부망 http |
 
 **2026-11-11 추가 (MVP 잔여 작업, [계획](tasks/PLAN_MVP_REMAINING.md)):** 아래 표보다 이 목록이 최신이다. 마이그레이션 0007~0017 추가(로컬만 적용, 운영 DB 미적용).
@@ -181,7 +182,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 모바일 앱 다운로드 | `/` 대시보드 카드 | [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) | [mobile-app-card](apps/web/src/components/mobile-app-card.tsx) |
 | 모바일 앱 (Android) | 앱: 로그인·글 목록·상세·승인 대기 | [Capacitor 계획](tasks/PLAN_CAPACITOR_W0.md) | [apps/mobile](apps/mobile/README.md) · [shell-bridge](packages/shell-bridge/src/index.ts) |
 
-[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [발행 큐 명세](docs/06-workflows/PUBLISH_QUEUE.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

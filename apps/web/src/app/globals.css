@@ -3226,3 +3226,69 @@ footer {
 #main-content:focus {
   outline: none;
 }
+.usage-badge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: var(--font-sm);
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+.usage-badge strong {
+  background: var(--mint-bg);
+  color: var(--green-dark);
+  border-radius: 999px;
+  padding: 3px 11px;
+}
+.usage-badge .usage-badge-over {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border-radius: 999px;
+  padding: 3px 11px;
+}
+.usage-limit-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+.overage-dialog .overage-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+  margin: 0 0 14px;
+}
+.overage-dialog .overage-facts dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+.overage-dialog .overage-facts dd {
+  margin: 2px 0 0;
+  font-size: var(--font-base);
+  color: var(--ink);
+  font-weight: 600;
+}
+.overage-dialog .approval-label {
+  margin: 0 0 16px;
+  font-size: var(--font-sm);
+  color: var(--ink);
+}
+.overage-dialog .error-banner {
+  margin: 0 0 16px;
+}
+@media (max-width: 767px) {
+  .overage-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+  .overage-dialog {
+    max-width: none;
+    border-radius: 15px 15px 0 0;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  .overage-dialog .overage-facts {
+    grid-template-columns: 1fr;
+  }
+  .overage-dialog .editor-actions .button {
+    flex: 1;
+  }
+}

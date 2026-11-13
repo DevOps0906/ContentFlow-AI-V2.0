@@ -30,6 +30,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0016_keyword_trends.sql
 \ir ../migrations/0017_blog_metric_snapshots.sql
 \ir ../migrations/0018_review_fixes.sql
+\ir ../migrations/0019_blog_entitlements.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -37,6 +38,9 @@ alter table articles alter column brief_purpose set default '목적', alter colu
 
 grant select, insert, update, delete on all tables in schema public to authenticated;
 grant usage on all sequences in schema public to authenticated;
+-- The blanket grant above re-grants what 0019 revoked (Supabase's default privileges do the same): repeat 0019's revoke.
+revoke all on workspace_entitlements, blog_usage_snapshots from anon, authenticated;
+grant select on workspace_entitlements, blog_usage_snapshots to authenticated;
 
 insert into auth.users values
   ('00000000-0000-0000-0000-0000000000a1', 'owner-a@example.com', now()), -- ownerA
@@ -97,6 +101,11 @@ insert into workspaces (id, name, owner_id) values
   ('10000000-0000-0000-0000-00000000000b', 'B', '00000000-0000-0000-0000-0000000000b1');
 insert into blogs (id, workspace_id, platform, domain) values
   ('20000000-0000-0000-0000-00000000000b', '10000000-0000-0000-0000-00000000000b', 'blogger', 'b.example');
+
+-- Workspace A starts on Free (1 blog), but the older tests below put several active blogs into it.
+-- A system role (not a client) moves it to Pro; this also checks that the plan sync trigger works.
+reset role;
+update workspaces set plan = 'pro' where id = '10000000-0000-0000-0000-00000000000a';
 
 -- ---- editor of A creates content ----
 select as_user('00000000-0000-0000-0000-0000000000a2');
@@ -1425,4 +1434,158 @@ delete from blog_metric_snapshots where metric like 'fill-%';
 -- the lifecycle function itself agrees with the table
 reset role;
 select expect_count($$select count(*) from unnest(enum_range(null::article_state)) s where article_transition_allowed(s, s)$$, 0, 'no state transitions to itself');
+-- ---- CF-22: blog entitlements and limits (0019), direct SQL as authenticated ----
+reset role;
+select expect_count($$select count(*) from (values ('workspace_entitlements'), ('blog_usage_snapshots')) t(n), (values ('insert'), ('update'), ('delete')) p(k)
+  where has_table_privilege('authenticated', t.n, p.k) or has_table_privilege('anon', t.n, p.k)$$, 0, 'authenticated and anon have no write privilege on entitlements and usage');
+select expect_count($$select count(*) from workspace_entitlements$$, (select count(*)::int from workspaces), 'every workspace has an entitlements row');
+select expect_count($$select count(*) from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-00000000000a' and plan = 'pro' and included_blogs = 10 and max_blogs = 30 and overage_allowed$$, 1, 'a system plan change syncs the entitlements');
+
+-- Free: one blog, no extra slots, no plan change by the client
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into workspaces (id, name, owner_id) values ('10000000-0000-0000-0000-0000000019b0', 'Basic WS', '00000000-0000-0000-0000-0000000000a1');
+insert into workspaces (id, name, owner_id) values ('10000000-0000-0000-0000-0000000019e0', 'Empty WS', '00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-0000000019b0' and plan = 'free' and included_blogs = 1 and max_blogs = 1 and not overage_allowed$$, 1, 'a new workspace gets the Free entitlements');
+select expect_error($$insert into workspaces (id, name, owner_id, plan) values ('10000000-0000-0000-0000-0000000019a0', 'x', '00000000-0000-0000-0000-0000000000a1', 'pro')$$, 'PLAN_CHANGE_FORBIDDEN', 'a client can not create a workspace on a paid plan');
+select expect_error($$update workspaces set plan = 'pro' where id = '10000000-0000-0000-0000-0000000019b0'$$, 'PLAN_CHANGE_FORBIDDEN', 'the owner can not change the plan');
+insert into blogs (id, workspace_id, platform, domain) values ('20000000-0000-0000-0000-0000000019b1', '10000000-0000-0000-0000-0000000019b0', 'naver', 'b1.example');
+select expect_error($$insert into blogs (workspace_id, platform, domain) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b2.example')$$, '^PLAN_NOT_ALLOWED$', 'Free: a second blog is refused');
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b2.example', true)$$, '^PLAN_NOT_ALLOWED$', 'Free: a confirmation does not help');
+
+-- entitlements and usage are read-only, the workspace of a blog is fixed
+select expect_count($$select count(*) from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-0000000019b0'$$, 1, 'a member reads the entitlements');
+select expect_fail($$insert into workspace_entitlements (workspace_id, plan, included_blogs, max_blogs, overage_allowed) values ('10000000-0000-0000-0000-0000000019e0', 'pro', 10, 30, true)$$, 'a client can not insert entitlements');
+select expect_fail($$update workspace_entitlements set max_blogs = 99, plan = 'pro' where workspace_id = '10000000-0000-0000-0000-0000000019b0'$$, 'a client can not update entitlements');
+select expect_fail($$delete from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-0000000019b0'$$, 'a client can not delete entitlements');
+select expect_count($$select count(*) from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-0000000019b0' and max_blogs = 1 and plan = 'free'$$, 1, 'a client can not update or delete entitlements');
+select expect_fail($$insert into blog_usage_snapshots (workspace_id, period_start, period_end, peak_active, active_at_close, overage_slots) values ('10000000-0000-0000-0000-0000000019e0', '2026-01-01', '2026-02-01', 0, 0, 0)$$, 'a client can not insert usage snapshots');
+select expect_fail($$update blog_usage_snapshots set peak_active = 0 where workspace_id = '10000000-0000-0000-0000-0000000019b0'$$, 'a client can not update usage snapshots');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019b0' and peak_active = 1$$, 1, 'a client can not change usage snapshots');
+select expect_error($$update blogs set workspace_id = '10000000-0000-0000-0000-0000000019e0' where id = '20000000-0000-0000-0000-0000000019b1'$$, 'BLOG_WORKSPACE_IMMUTABLE', 'a client can not move a blog to another workspace');
+
+-- a system role may move a blog (exempt, metered on both sides) and change the plan
+reset role;
+update blogs set workspace_id = '10000000-0000-0000-0000-0000000019e0' where id = '20000000-0000-0000-0000-0000000019b1';
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019e0' and peak_active = 1 and active_at_close = 1$$, 1, 'a moved blog is metered in the new workspace');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019b0' and peak_active = 1 and active_at_close = 0$$, 1, 'a moved blog keeps the old workspace peak and lowers its count');
+update blogs set workspace_id = '10000000-0000-0000-0000-0000000019b0' where id = '20000000-0000-0000-0000-0000000019b1';
+update workspaces set plan = 'basic' where id = '10000000-0000-0000-0000-0000000019b0';
+insert into memberships values ('10000000-0000-0000-0000-0000000019b0', '00000000-0000-0000-0000-0000000000c3', 'admin');
+select expect_count($$select count(*) from workspace_entitlements where workspace_id = '10000000-0000-0000-0000-0000000019b0' and plan = 'basic' and included_blogs = 3 and max_blogs = 10 and overage_allowed$$, 1, 'Basic entitlements: 3 included, 10 at most');
+select expect_error($$update workspaces set plan = 'gold' where id = '10000000-0000-0000-0000-0000000019b0'$$, 'PLAN_UNKNOWN', 'a system plan change to an unknown plan is refused');
+
+-- Basic: up to the included number needs no confirmation
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into blogs (id, workspace_id, platform, domain) values
+  ('20000000-0000-0000-0000-0000000019b2', '10000000-0000-0000-0000-0000000019b0', 'naver', 'b2.example'),
+  ('20000000-0000-0000-0000-0000000019b3', '10000000-0000-0000-0000-0000000019b0', 'naver', 'b3.example');
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and action = 'blog.overage_ack'$$, 0, 'within the included number nothing is recorded');
+
+-- over the included number: the owner confirms, an admin can not
+select as_user('00000000-0000-0000-0000-0000000000c3'); -- admin
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b4.example', true)$$, '^FORBIDDEN_ROLE$', 'an admin can not add a blog over the included number, even with a confirmation');
+select expect_error($$insert into blogs (workspace_id, platform, domain) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b4.example')$$, '^FORBIDDEN_ROLE$', 'an admin without a confirmation gets the role error');
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+select expect_error($$insert into blogs (workspace_id, platform, domain) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b4.example')$$, '^BLOG_LIMIT_CONFIRM_REQUIRED$', 'over the included number needs a confirmation');
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'b4.example', false)$$, '^BLOG_LIMIT_CONFIRM_REQUIRED$', 'an explicit false is no confirmation');
+insert into blogs (id, workspace_id, platform, domain, overage_ack) values ('20000000-0000-0000-0000-0000000019b4', '10000000-0000-0000-0000-0000000019b0', 'naver', 'b4.example', true);
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and action = 'blog.overage_ack' and actor_id = '00000000-0000-0000-0000-0000000000a1' and payload = '{"active_before":3,"active_after":4,"included":3,"notice_version":"v1"}'::jsonb$$, 1, 'a confirmed extra blog writes one audit row');
+select expect_count($$select count(*) from blogs where id = '20000000-0000-0000-0000-0000000019b4' and overage_ack = false$$, 1, 'the confirmation is never stored');
+update blogs set display_name = 'rename' where id = '20000000-0000-0000-0000-0000000019b4';
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and action = 'blog.overage_ack'$$, 1, 'a later update does not repeat the confirmation');
+
+-- example 2: 5 active, 2 archived, 3 at the close: peak stays 5
+insert into blogs (id, workspace_id, platform, domain, overage_ack) values ('20000000-0000-0000-0000-0000000019b5', '10000000-0000-0000-0000-0000000019b0', 'naver', 'b5.example', true);
+update blogs set status = 'archived' where id in ('20000000-0000-0000-0000-0000000019b4', '20000000-0000-0000-0000-0000000019b5');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019b0' and period_start = date_trunc('month', now() at time zone 'Asia/Seoul')::date and peak_active = 5 and active_at_close = 3 and overage_slots = 2$$, 1, 'example 2: the peak stays 5 after archiving, 2 extra slots');
+
+-- restoring is a new activation: same limit check
+select expect_error($$update blogs set status = 'active' where id = '20000000-0000-0000-0000-0000000019b4'$$, '^BLOG_LIMIT_CONFIRM_REQUIRED$', 'restoring over the included number needs a confirmation');
+update blogs set status = 'active', overage_ack = true where id = '20000000-0000-0000-0000-0000000019b4';
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and action = 'blog.overage_ack'$$, 3, 'a confirmed restore writes an audit row');
+select as_user('00000000-0000-0000-0000-0000000000c3'); -- admin
+select expect_error($$update blogs set status = 'active', overage_ack = true where id = '20000000-0000-0000-0000-0000000019b5'$$, '^FORBIDDEN_ROLE$', 'an admin can not restore over the included number');
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+
+-- upper limit: 10 on Basic, also for a restore
+insert into blogs (workspace_id, platform, domain, overage_ack) values
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm5.example', true),
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm6.example', true),
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm7.example', true),
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm8.example', true),
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm9.example', true),
+  ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm10.example', true);
+select expect_count($$select count(*) from blogs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and status = 'active'$$, 10, 'a multi-row insert counts its own rows');
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019b0' and action = 'blog.overage_ack'$$, 9, 'each extra blog of a multi-row insert is recorded');
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019b0', 'naver', 'm11.example', true)$$, '^BLOG_LIMIT_REACHED$', 'the upper limit is refused even with a confirmation');
+select expect_error($$update blogs set status = 'active', overage_ack = true where id = '20000000-0000-0000-0000-0000000019b5'$$, '^BLOG_LIMIT_REACHED$', 'a restore over the upper limit is refused');
+reset role;
+insert into blogs (id, workspace_id, platform, domain) values ('20000000-0000-0000-0000-0000000019b6', '10000000-0000-0000-0000-0000000019b0', 'naver', 'sys.example');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019b0' and peak_active = 11$$, 1, 'a system role is exempt from the limits but is metered');
+delete from blogs where id = '20000000-0000-0000-0000-0000000019b6';
+
+-- examples 1 and 3
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into workspaces (id, name, owner_id) values ('10000000-0000-0000-0000-0000000019c0', 'Replace WS', '00000000-0000-0000-0000-0000000000a1');
+reset role;
+update workspaces set plan = 'basic' where id = '10000000-0000-0000-0000-0000000019c0';
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into blogs (id, workspace_id, platform, domain) values
+  ('20000000-0000-0000-0000-0000000019c1', '10000000-0000-0000-0000-0000000019c0', 'naver', 'c1.example'),
+  ('20000000-0000-0000-0000-0000000019c2', '10000000-0000-0000-0000-0000000019c0', 'naver', 'c2.example');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019c0' and peak_active = 2 and overage_slots = 0$$, 1, 'example 1: 2 active, peak 2, no extra slots');
+insert into blogs (id, workspace_id, platform, domain) values ('20000000-0000-0000-0000-0000000019c3', '10000000-0000-0000-0000-0000000019c0', 'naver', 'c3.example');
+update blogs set status = 'archived' where id = '20000000-0000-0000-0000-0000000019c1';
+insert into blogs (id, workspace_id, platform, domain) values ('20000000-0000-0000-0000-0000000019c4', '10000000-0000-0000-0000-0000000019c0', 'naver', 'c4.example');
+select expect_count($$select count(*) from blog_usage_snapshots where workspace_id = '10000000-0000-0000-0000-0000000019c0' and peak_active = 3 and active_at_close = 3 and overage_slots = 0$$, 1, 'example 3: archive then add keeps the peak at 3, no extra slots');
+
+-- grace: a workspace that already had more active blogs than included (simulated, as the migration does)
+insert into workspaces (id, name, owner_id) values ('10000000-0000-0000-0000-0000000019f0', 'Grace WS', '00000000-0000-0000-0000-0000000000a1');
+reset role;
+insert into blogs (id, workspace_id, platform, domain) values
+  ('20000000-0000-0000-0000-0000000019f1', '10000000-0000-0000-0000-0000000019f0', 'naver', 'f1.example'),
+  ('20000000-0000-0000-0000-0000000019f2', '10000000-0000-0000-0000-0000000019f0', 'naver', 'f2.example'),
+  ('20000000-0000-0000-0000-0000000019f3', '10000000-0000-0000-0000-0000000019f0', 'naver', 'f3.example');
+update workspace_entitlements set grace_until = now() + interval '90 days', grace_active_cap = 3 where workspace_id = '10000000-0000-0000-0000-0000000019f0';
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+update blogs set status = 'archived' where id = '20000000-0000-0000-0000-0000000019f3';
+update blogs set status = 'active' where id = '20000000-0000-0000-0000-0000000019f3';
+select expect_count($$select count(*) from blogs where id = '20000000-0000-0000-0000-0000000019f3' and status = 'active'$$, 1, 'grace: restoring up to the frozen count needs no confirmation');
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019f0', 'naver', 'f4.example', true)$$, '^PLAN_NOT_ALLOWED$', 'grace: nothing above the frozen count');
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019f0'$$, 0, 'grace: no confirmation is recorded');
+update blogs set status = 'archived' where id = '20000000-0000-0000-0000-0000000019f3';
+reset role;
+update workspace_entitlements set grace_until = now() - interval '1 day' where workspace_id = '10000000-0000-0000-0000-0000000019f0';
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+select expect_error($$update blogs set status = 'active' where id = '20000000-0000-0000-0000-0000000019f3'$$, '^PLAN_NOT_ALLOWED$', 'after the grace the Free rule applies again');
+reset role;
+
+-- grace on Basic: the frozen count (4) is exempt, the 5th is a normal extra blog
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into workspaces (id, name, owner_id) values ('10000000-0000-0000-0000-0000000019d0', 'Basic grace WS', '00000000-0000-0000-0000-0000000000a1');
+reset role;
+update workspaces set plan = 'basic' where id = '10000000-0000-0000-0000-0000000019d0';
+insert into memberships values ('10000000-0000-0000-0000-0000000019d0', '00000000-0000-0000-0000-0000000000c3', 'admin');
+insert into blogs (id, workspace_id, platform, domain) values
+  ('20000000-0000-0000-0000-0000000019d1', '10000000-0000-0000-0000-0000000019d0', 'naver', 'h1.example'),
+  ('20000000-0000-0000-0000-0000000019d2', '10000000-0000-0000-0000-0000000019d0', 'naver', 'h2.example'),
+  ('20000000-0000-0000-0000-0000000019d3', '10000000-0000-0000-0000-0000000019d0', 'naver', 'h3.example'),
+  ('20000000-0000-0000-0000-0000000019d4', '10000000-0000-0000-0000-0000000019d0', 'naver', 'h4.example');
+update workspace_entitlements set grace_until = now() + interval '90 days', grace_active_cap = 4 where workspace_id = '10000000-0000-0000-0000-0000000019d0';
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+update blogs set status = 'archived' where id = '20000000-0000-0000-0000-0000000019d4';
+update blogs set status = 'active' where id = '20000000-0000-0000-0000-0000000019d4';
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019d0'$$, 0, 'Basic grace: restoring up to the frozen count is not recorded');
+select expect_error($$insert into blogs (workspace_id, platform, domain) values ('10000000-0000-0000-0000-0000000019d0', 'naver', 'h5.example')$$, '^BLOG_LIMIT_CONFIRM_REQUIRED$', 'Basic grace: the 5th blog needs a confirmation');
+select as_user('00000000-0000-0000-0000-0000000000c3'); -- admin
+select expect_error($$insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019d0', 'naver', 'h5.example', true)$$, '^FORBIDDEN_ROLE$', 'Basic grace: an admin can not add the 5th blog');
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA
+insert into blogs (workspace_id, platform, domain, overage_ack) values ('10000000-0000-0000-0000-0000000019d0', 'naver', 'h5.example', true);
+select expect_count($$select count(*) from audit_logs where workspace_id = '10000000-0000-0000-0000-0000000019d0' and action = 'blog.overage_ack'$$, 1, 'Basic grace: the 5th blog is recorded');
+
+-- a client can not forge a blog.* audit row, other actions still work
+select expect_fail($$insert into audit_logs (workspace_id, actor_id, action) values ('10000000-0000-0000-0000-0000000019e0', '00000000-0000-0000-0000-0000000000a1', 'blog.overage_ack')$$, 'a client can not write a blog.* audit row');
+insert into audit_logs (workspace_id, actor_id, action) values ('10000000-0000-0000-0000-0000000019e0', '00000000-0000-0000-0000-0000000000a1', 'note.test');
+reset role;
+
 select 'ALL RLS CHECKS PASSED' as result;
