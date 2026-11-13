@@ -1,0 +1,24 @@
+sequenceDiagram
+    participant ui as 화면
+    participant api as API 서버
+    participant wk as 웹 drain 워커
+    participant db as DB 선점 RPC
+    participant wp as WordPress
+
+    ui->>api: 발행 요청 (승인된 글)
+    api->>db: publish_jobs 작업 접수 (queued)
+    api-->>ui: 202 Accepted (즉시 반환)
+
+    wk->>db: 선점 RPC 호출 (FOR UPDATE SKIP LOCKED)
+    db-->>wk: 작업 1건 (running)
+    wk->>wp: sendDraft (idempotency key 포함)
+
+    alt 성공
+        wp-->>wk: 초안 생성 응답
+        wk->>db: 상태 draft_created 기록
+    else 429 또는 5xx
+        wp-->>wk: 429 또는 5xx (Retry-After 포함 가능)
+        wk->>db: 상태 queued + next_attempt_at (Retry-After 또는 백오프)
+    end
+
+    wk->>db: delivery_attempts 기록 (시도 결과)

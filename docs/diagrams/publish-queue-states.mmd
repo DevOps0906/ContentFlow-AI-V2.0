@@ -1,0 +1,14 @@
+stateDiagram-v2
+    [*] --> queued: 접수
+    queued --> running: 워커 선점
+    queued --> cancelled: 사용자 취소
+    running --> draft_created: 원격 초안 생성
+    running --> queued: 429 또는 5xx 재시도 예정
+    running --> failed: 시도 소진 또는 재시도 불가
+    running --> needs_attention: 인증 만료 또는 긴 대기
+    needs_attention --> queued: 조치 후 재개
+    needs_attention --> cancelled: 사용자 취소
+    draft_created --> succeeded: 운영자 공개 확인
+    succeeded --> [*]
+    failed --> [*]
+    cancelled --> [*]
