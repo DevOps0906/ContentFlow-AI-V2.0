@@ -349,9 +349,12 @@ function EditorForm({
       await assertDeliverable(form, deliveryCheck);
       const r = await sendWordpress(form);
       adopt(r.article);
-      setMessage(
-        `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시 전에 WordPress에서 slug를 읽기 좋은 값으로 변경해주세요(cf-로 시작하는 현재 값은 자동 식별용입니다). 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
-      );
+      if (r.queued)
+        setMessage("발행 큐에 추가했어요. 사이트 상황에 따라 자동으로 다시 시도하며, 진행 상황은 사이드바 '발행 큐'에서 확인할 수 있어요.");
+      else
+        setMessage(
+          `WordPress에 초안으로 ${r.created ? "만들었어요" : "갱신했어요"}. 게시 전에 WordPress에서 slug를 읽기 좋은 값으로 변경해주세요(cf-로 시작하는 현재 값은 자동 식별용입니다). 게시는 WordPress에서 직접 한 뒤 '게시 완료 확인'을 눌러주세요.`,
+        );
     } catch (e) {
       fail(e, "WordPress 전송에 실패했습니다.");
       // The failed state was stored by the server/provider; show it.

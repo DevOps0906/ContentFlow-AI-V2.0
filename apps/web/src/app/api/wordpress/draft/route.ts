@@ -1,6 +1,8 @@
-import { ARTICLE_COLUMNS, isUuid, rowToArticle, type ArticleRow } from "@/lib/articles-db";
+import { isUuid } from "@/lib/articles-db";
 import { isArticle } from "@/lib/content";
-import { assertDeliverable, DeliveryError, rpcDeliveryCheck, trackDelivery } from "@/lib/delivery";
+import { assertDeliverable } from "@/lib/delivery";
+import { reasonOf } from "@/lib/publish-queue";
+import { drainOne, enqueue, QueueError } from "@/lib/publish-queue-server";
 import { sendDraft, type WpConfig } from "@/lib/wordpress";
 import { json, readJson, sameOrigin, sharedLimited, wpConfig } from "@/lib/server";
 import { canEdit } from "@/lib/team";
@@ -49,82 +51,29 @@ async function localFlow(config: WpConfig, body: unknown) {
 }
 
 /**
- * Account mode: only the article id is accepted. State and content come from the database,
- * so a client can not send an unapproved or edited copy. `publishing` is claimed with a
- * conditional update, which also stops two simultaneous sends from creating two drafts.
+ * Account mode (compatibility path): the article is queued, then this request tries that one job
+ * right away. It answers like the old synchronous send when the job finishes here (200 / 502) and
+ * with 202 + the job when it has to wait (site busy, retry scheduled).
  */
 async function accountFlow(account: Authed, config: WpConfig, body: unknown) {
   const id = (body as { id?: unknown } | null)?.id;
   if (typeof id !== "string" || !isUuid(id)) return json({ error: "잘못된 콘텐츠 ID입니다." }, 400);
-  const { supabase, workspaceId } = account;
-
-  const found = await supabase
-    .from("articles")
-    .select(ARTICLE_COLUMNS)
-    .eq("id", id)
-    .eq("workspace_id", workspaceId)
-    .maybeSingle();
-  if (found.error) return json({ error: "콘텐츠를 불러오지 못했습니다." }, 500);
-  if (!found.data) return json({ error: "콘텐츠를 찾을 수 없습니다." }, 404);
-  const current = rowToArticle(found.data as ArticleRow);
-  if (current.status !== "export_ready" && current.status !== "publish_failed")
-    return json({ error: "내보내기 준비 또는 발행 실패 상태의 글만 전송할 수 있습니다." }, 409);
-
-  // Before the claim: a refused article keeps its state and leaves no send attempt.
+  let job;
   try {
-    await assertDeliverable(current, rpcDeliveryCheck(supabase));
+    job = await enqueue(account, config, id);
   } catch (e) {
-    return json(
-      { error: e instanceof Error ? e.message : "전달 가능 여부를 확인하지 못했습니다." },
-      e instanceof DeliveryError && e.failureType === "not_sendable" ? 409 : 500,
-    );
+    return e instanceof QueueError ? json({ error: e.message }, e.status) : json({ error: "WordPress 전송에 실패했습니다." }, 500);
   }
-
-  const claim = await supabase
-    .from("articles")
-    .update({ state: "publishing" })
-    .eq("id", id)
-    .eq("workspace_id", workspaceId)
-    .eq("state", current.status)
-    .select(ARTICLE_COLUMNS)
-    .maybeSingle();
-  if (claim.error) return json({ error: "상태를 바꾸지 못했습니다." }, 409);
-  if (!claim.data) return json({ error: "이미 전송 중이거나 상태가 바뀌었습니다." }, 409);
-
   try {
-    const sent = await trackDelivery({ client: supabase, workspaceId, userId: account.user.id }, id, () =>
-      sendDraft(config, { ...current, status: "publishing" }, current.remote?.postId),
-    );
-    const done = await supabase
-      .from("articles")
-      .update({
-        state: "draft_created",
-        remote: { postId: sent.postId, url: sent.url, syncedAt: new Date().toISOString() },
-      })
-      .eq("id", id)
-      .eq("workspace_id", workspaceId)
-      .select(ARTICLE_COLUMNS)
-      .maybeSingle();
-    if (done.error || !done.data)
-      return json(
-        { error: `WordPress에는 초안이 생성됐지만(글 ${sent.postId}) 상태 저장에 실패했습니다. 직접 확인해주세요.` },
-        500,
-      );
-    return json({ article: rowToArticle(done.data as ArticleRow), created: sent.created });
+    const r = await drainOne(account, config);
+    if (r.job?.id !== job.id || !r.article) return json({ job: r.job?.id === job.id ? r.job : job }, 202);
+    if (r.job.status === "succeeded") return json({ article: r.article, created: r.created ?? false });
+    if (r.job.status === "queued") return json({ job: r.job }, 202);
+    return json({ error: reasonOf(r.job) || "WordPress 전송에 실패했습니다.", article: r.article }, 502);
   } catch (e) {
-    const failed = await supabase
-      .from("articles")
-      .update({ state: "publish_failed" })
-      .eq("id", id)
-      .eq("workspace_id", workspaceId)
-      .select(ARTICLE_COLUMNS)
-      .maybeSingle();
-    return json(
-      {
-        error: e instanceof Error ? e.message : "WordPress 전송에 실패했습니다.",
-        article: failed.data ? rowToArticle(failed.data as ArticleRow) : undefined,
-      },
-      502,
-    );
+    // A server error after the claim leaves the job running until the stale reclaim (up to 5 minutes).
+    return e instanceof QueueError && e.status < 500
+      ? json({ error: e.message }, e.status)
+      : json({ error: "발행 처리 중 오류가 발생했어요. 최대 5분 뒤 발행 큐에서 다시 시도합니다." }, 502);
   }
 }

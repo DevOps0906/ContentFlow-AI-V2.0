@@ -31,6 +31,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0017_blog_metric_snapshots.sql
 \ir ../migrations/0018_review_fixes.sql
 \ir ../migrations/0019_blog_entitlements.sql
+\ir ../migrations/0020_publish_queue.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -41,6 +42,8 @@ grant usage on all sequences in schema public to authenticated;
 -- The blanket grant above re-grants what 0019 revoked (Supabase's default privileges do the same): repeat 0019's revoke.
 revoke all on workspace_entitlements, blog_usage_snapshots from anon, authenticated;
 grant select on workspace_entitlements, blog_usage_snapshots to authenticated;
+revoke all on publish_jobs from anon, authenticated; -- repeat 0020's revoke
+grant select on publish_jobs to authenticated;
 
 insert into auth.users values
   ('00000000-0000-0000-0000-0000000000a1', 'owner-a@example.com', now()), -- ownerA
@@ -1586,6 +1589,260 @@ select expect_count($$select count(*) from audit_logs where workspace_id = '1000
 -- a client can not forge a blog.* audit row, other actions still work
 select expect_fail($$insert into audit_logs (workspace_id, actor_id, action) values ('10000000-0000-0000-0000-0000000019e0', '00000000-0000-0000-0000-0000000000a1', 'blog.overage_ack')$$, 'a client can not write a blog.* audit row');
 insert into audit_logs (workspace_id, actor_id, action) values ('10000000-0000-0000-0000-0000000019e0', '00000000-0000-0000-0000-0000000000a1', 'note.test');
+reset role;
+
+
+-- ================= CF-24: publish queue (0020), RPCs and direct SQL as authenticated =================
+-- Articles 1..14 live in workspace A (ownerA a1, editorA a2, viewerA a3, reviewerA a4), 17..19 in B (b1).
+create function qa(n int) returns uuid language sql immutable as
+  $$ select ('30000000-0000-0000-0000-0000000020' || lpad(n::text, 2, '0'))::uuid $$;
+create function qj(n int) returns uuid language sql stable as
+  $$ select id from publish_jobs where article_id = qa(n) order by created_at desc limit 1 $$;
+create function mk_ready(n int, ws uuid, u uuid) returns void language plpgsql as $$
+begin
+  insert into articles (id, workspace_id, owner_id, state, title, body, source_url)
+    values (qa(n), ws, u, 'drafting', 'T', E'## 해결\n본문 내용', 'https://example.com/x');
+  update articles set state = 'approval_pending' where id = qa(n);
+  update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = qa(n);
+  update articles set state = 'export_ready' where id = qa(n);
+end $$;
+-- Edit an approved article (back to drafting), optionally approve it again as a new version.
+create function mk_edit(n int, again boolean) returns void language plpgsql as $$
+begin
+  update articles set body = body || ' v2', state = 'drafting' where id = qa(n);
+  if again then
+    update articles set state = 'approval_pending' where id = qa(n);
+    update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = qa(n);
+    update articles set state = 'export_ready' where id = qa(n);
+  end if;
+end $$;
+grant execute on function qa(int), qj(int), mk_ready(int, uuid, uuid), mk_edit(int, boolean) to authenticated;
+
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select mk_ready(n, '10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1') from generate_series(1, 14) n;
+insert into articles (id, workspace_id, owner_id, state, title, body, source_url) values
+  (qa(15), '10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T', E'## 해결\n본문 내용', 'https://example.com/x');
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select mk_ready(n, '10000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-0000000000b1') from generate_series(17, 19) n;
+
+-- privileges
+reset role;
+select expect_count($$select count(*) from (values ('insert'), ('update'), ('delete'), ('truncate'), ('references'), ('trigger')) p(k)
+  where has_table_privilege('authenticated', 'publish_jobs', p.k) or has_table_privilege('anon', 'publish_jobs', p.k)$$, 0, 'queue: authenticated and anon have no write privilege on publish_jobs');
+select expect_count($$select has_table_privilege('authenticated', 'publish_jobs', 'select')::int + (not has_table_privilege('anon', 'publish_jobs', 'select'))::int$$, 2, 'queue: authenticated reads publish_jobs, anon does not');
+select expect_count($$select count(*) from (values ('enqueue_publish_job(uuid,text)'), ('claim_publish_job(text)'), ('finish_publish_job(uuid,text,timestamptz,text)'), ('cancel_publish_job(uuid)')) f(n)
+  where has_function_privilege('authenticated', f.n, 'execute') and not has_function_privilege('anon', f.n, 'execute')$$, 4, 'queue: RPCs are executable by authenticated only');
+
+-- viewer, reviewer and outsiders can neither enqueue nor drain
+select as_user('00000000-0000-0000-0000-0000000000a3'); -- viewerA
+select expect_error($$select enqueue_publish_job(qa(1), 'r-q1')$$, '^FORBIDDEN_ROLE$', 'queue: a viewer can not enqueue');
+select expect_error($$select claim_publish_job('r-q1')$$, '^FORBIDDEN_ROLE$', 'queue: a viewer can not drain');
+select as_user('00000000-0000-0000-0000-0000000000a4'); -- reviewerA
+select expect_error($$select enqueue_publish_job(qa(1), 'r-q1')$$, '^FORBIDDEN_ROLE$', 'queue: a reviewer can not enqueue');
+select expect_error($$select claim_publish_job('r-q1')$$, '^FORBIDDEN_ROLE$', 'queue: a reviewer can not drain');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_error($$select enqueue_publish_job(qa(1), 'r-q1')$$, '^FORBIDDEN_ROLE$', 'queue: another workspace can not enqueue my article');
+
+-- enqueue
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
+select expect_error($$select enqueue_publish_job(qa(15), 'r-q1')$$, '^QUEUE_NOT_APPROVED$', 'queue: an article that is not approved is refused');
+select expect_error($$select enqueue_publish_job(qa(1), '  ')$$, '^REMOTE_KEY_INVALID$', 'queue: an empty remote key is refused');
+select expect_count($$select count(*) from enqueue_publish_job(qa(1), 'r-q1') where not duplicate and status = 'queued'$$, 1, 'queue: an editor enqueues an approved article');
+select expect_count($$select count(*) from enqueue_publish_job(qa(1), 'r-q1') where duplicate and job_id = qj(1)$$, 1, 'queue: the same article returns the open job');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(1) and idempotency_key = workspace_id::text || ':' || article_id::text || ':' || approved_version_id::text$$, 1, 'queue: one job, idempotency key = workspace:article:version');
+select expect_count($$select count(*) from enqueue_publish_job(qa(2), 'r-q1')$$, 1, 'queue: second article on the same site');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_count($$select count(*) from enqueue_publish_job(qa(17), 'r-q2')$$, 1, 'queue: B enqueues on another site');
+select expect_count($$select count(*) from enqueue_publish_job(qa(19), 'r-q1')$$, 1, 'queue: B enqueues on the same site as A');
+
+-- partial unique indexes (system role: the clients can not write at all)
+reset role;
+select expect_fail($$insert into publish_jobs (workspace_id, article_id, approved_version_id, remote_key, idempotency_key)
+  select workspace_id, article_id, approved_version_id, 'r-x', 'k' from publish_jobs where article_id = qa(1)$$, 'queue: a second open job for one article is blocked by the partial unique index');
+select expect_count($$select count(*) from pg_indexes where indexname in ('publish_jobs_article_open_uq')$$, 1, 'queue: the open-job partial unique index exists');
+
+-- read access and direct writes
+select as_user('00000000-0000-0000-0000-0000000000a3'); -- viewerA
+select expect_count($$select count(*) from publish_jobs where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 2, 'queue: a member (viewer) reads the jobs of the workspace');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_count($$select count(*) from publish_jobs where workspace_id = '10000000-0000-0000-0000-00000000000a'$$, 0, 'queue: another workspace sees none of my jobs');
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
+select expect_fail($$insert into publish_jobs (workspace_id, article_id, approved_version_id, remote_key, idempotency_key)
+  select workspace_id, article_id, approved_version_id, 'r-x', 'k' from publish_jobs where article_id = qa(2)$$, 'queue: direct insert is refused');
+select expect_fail($$update publish_jobs set status = 'cancelled'$$, 'queue: direct update is refused');
+select expect_fail($$delete from publish_jobs$$, 'queue: direct delete is refused');
+
+-- claim: another workspace's job is never claimed, one running job per site across workspaces
+select expect_count($$select count(*) from claim_publish_job('r-q2')$$, 0, 'queue: A can not claim the job of B');
+select expect_count($$select count(*) from claim_publish_job('r-q1') where article_id = qa(1) and job_id = qj(1) and approved_version_id is not null$$, 1, 'queue: an editor claims the oldest due job');
+select expect_count($$select count(*) from articles where id = qa(1) and state = 'publishing'$$, 1, 'queue: a claim moves the article to publishing');
+select expect_count($$select count(*) from publish_jobs where id = qj(1) and status = 'running' and attempts = 1 and locked_by = auth.uid() and locked_at is not null$$, 1, 'queue: the job is running, locked by the caller');
+select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: one running job per site');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: the site is busy for B too (global), B learns nothing about A');
+reset role;
+select expect_count($$select count(*) from publish_jobs where article_id in (qa(2), qa(19)) and status = 'queued'$$, 2, 'queue: the other jobs of the site stay queued');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(17) and status = 'queued'$$, 1, 'queue: the job of B was not claimed by A');
+
+-- finish: only the claimer, only running
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA (not the claimer)
+select expect_error($$select finish_publish_job(qj(1), 'success')$$, '^JOB_NOT_RUNNING$', 'queue: another user can not finish my job');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_error($$select finish_publish_job(qj(1), 'success')$$, '^JOB_NOT_RUNNING$', 'queue: another workspace can not finish my job');
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- editorA
+select expect_error($$select finish_publish_job(qj(1), 'bogus')$$, '^OUTCOME_INVALID$', 'queue: an unknown outcome is refused');
+select expect_error($$select cancel_publish_job(qj(1))$$, '^JOB_RUNNING$', 'queue: a running job can not be cancelled');
+select expect_error($$select enqueue_publish_job(qa(1), 'r-q1')$$, '^QUEUE_NOT_APPROVED$', 'queue: an article that is publishing is not enqueued again');
+
+-- retry -> publish_failed -> claimed again; the site is free meanwhile
+select expect_count($$select count(*) from finish_publish_job(qj(1), 'retry', now() + interval '10 minutes', 'timeout') s where s = 'queued'$$, 1, 'queue: retry puts the job back to queued');
+select expect_count($$select count(*) from publish_jobs where id = qj(1) and status = 'queued' and attempts = 1 and last_error = 'timeout' and locked_by is null and next_attempt_at > now() + interval '9 minutes'$$, 1, 'queue: retry keeps attempts and schedules the next try');
+select expect_count($$select count(*) from articles where id = qa(1) and state = 'publish_failed'$$, 1, 'queue: a retry leaves the article publish_failed');
+select expect_count($$select count(*) from claim_publish_job('r-q1') where article_id = qa(2)$$, 1, 'queue: a job that waits does not block the next one of the site');
+select expect_count($$select count(*) from finish_publish_job(qj(2), 'success') s where s = 'draft_created'$$, 1, 'queue: success ends the job');
+select expect_count($$select count(*) from articles where id = qa(2) and state = 'draft_created'$$, 1, 'queue: success moves the article to draft_created');
+reset role;
+update publish_jobs set next_attempt_at = now() - interval '1 second' where article_id = qa(1);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from claim_publish_job('r-q1') where article_id = qa(1)$$, 1, 'queue: a due retry is claimed again (publish_failed -> publishing)');
+select expect_count($$select count(*) from publish_jobs where id = qj(1) and status = 'running' and attempts = 2$$, 1, 'queue: the second attempt is counted');
+reset role;
+update publish_jobs set max_attempts = 2 where article_id = qa(1);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from finish_publish_job(qj(1), 'retry', null, 'server') s where s = 'failed'$$, 1, 'queue: a retry at the last attempt fails the job');
+select expect_count($$select count(*) from publish_jobs where id = qj(1) and status = 'failed' and last_error like 'QUEUE_EXHAUSTED%'$$, 1, 'queue: exhausted jobs say so');
+select expect_count($$select count(*) from articles where id = qa(1) and state = 'publish_failed'$$, 1, 'queue: a failed job leaves the article publish_failed');
+select expect_count($$select count(*) from enqueue_publish_job(qa(1), 'r-q1') where not duplicate$$, 1, 'queue: the user can try again with a new job');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(1)$$, 2, 'queue: the old failed job is kept');
+
+-- needs_attention blocks the article until cancelled; a delay over 1 hour needs a person
+select expect_count($$select count(*) from enqueue_publish_job(qa(3), 'r-a1')$$, 1, 'queue: enqueue article 3');
+select expect_count($$select count(*) from claim_publish_job('r-a1') where article_id = qa(3)$$, 1, 'queue: claim article 3');
+select expect_count($$select count(*) from finish_publish_job(qj(3), 'retry', now() + interval '2 hours', 'Retry-After') s where s = 'needs_attention'$$, 1, 'queue: a delay over 1 hour needs attention');
+select expect_count($$select count(*) from articles where id = qa(3) and state = 'publish_failed'$$, 1, 'queue: needs_attention leaves the article publish_failed');
+select expect_count($$select count(*) from enqueue_publish_job(qa(3), 'r-a1') where duplicate and status = 'queued'$$, 1, 'queue: sending a needs_attention job again puts it back in the queue');
+select expect_count($$select count(*) from publish_jobs where id = qj(3) and status = 'queued' and attempts = 0 and last_error is null$$, 1, 'queue: the reopened job starts over');
+select expect_count($$select count(*) from claim_publish_job('r-a1') where article_id = qa(3)$$, 1, 'queue: the reopened job can be claimed');
+select expect_count($$select count(*) from finish_publish_job(qj(3), 'retry', now() + interval '2 hours', 'Retry-After') s where s = 'needs_attention'$$, 1, 'queue: needs attention again');
+select expect_count($$select count(*) from cancel_publish_job(qj(3)) c where c = 'cancelled'$$, 1, 'queue: a needs_attention job can be cancelled');
+select expect_count($$select count(*) from enqueue_publish_job(qa(3), 'r-a1') where not duplicate$$, 1, 'queue: after the cancel the article can be enqueued again');
+
+-- at most 3 running jobs per workspace
+select expect_count($$select count(*) from enqueue_publish_job(qa(4), 'r-c1')$$, 1, 'queue: enqueue on site c1');
+select expect_count($$select count(*) from enqueue_publish_job(qa(5), 'r-c2')$$, 1, 'queue: enqueue on site c2');
+select expect_count($$select count(*) from enqueue_publish_job(qa(6), 'r-c3')$$, 1, 'queue: enqueue on site c3');
+select expect_count($$select count(*) from enqueue_publish_job(qa(7), 'r-c4')$$, 1, 'queue: enqueue on site c4');
+select expect_count($$select count(*) from claim_publish_job('r-c1')$$, 1, 'queue: running 1');
+select expect_count($$select count(*) from claim_publish_job('r-c2')$$, 1, 'queue: running 2');
+select expect_count($$select count(*) from claim_publish_job('r-c3')$$, 1, 'queue: running 3');
+select expect_count($$select count(*) from claim_publish_job('r-c4')$$, 0, 'queue: a 4th running job of the workspace is not claimed');
+select expect_count($$select count(*) from publish_jobs where workspace_id = '10000000-0000-0000-0000-00000000000a' and status = 'running'$$, 3, 'queue: exactly 3 running in the workspace');
+select expect_count($$select count(*) from finish_publish_job(qj(4), 'fail', null, 'rejected')$$, 1, 'queue: a failed job frees a slot');
+select expect_count($$select count(*) from claim_publish_job('r-c4')$$, 1, 'queue: the 4th job runs once a slot is free');
+
+select expect_count($$select count(*) from finish_publish_job(qj(5), 'success') x$$, 1, 'queue: free the slots again 1');
+select expect_count($$select count(*) from finish_publish_job(qj(6), 'success') x$$, 1, 'queue: free the slots again 2');
+select expect_count($$select count(*) from finish_publish_job(qj(7), 'success') x$$, 1, 'queue: free the slots again 3');
+
+-- stuck running jobs are reclaimed by the next claim
+select expect_count($$select count(*) from enqueue_publish_job(qa(8), 'r-s1')$$, 1, 'queue: enqueue article 8');
+select expect_count($$select count(*) from claim_publish_job('r-s1')$$, 1, 'queue: claim article 8');
+select expect_count($$select count(*) from claim_publish_job('r-s1')$$, 0, 'queue: a fresh lock is not reclaimed');
+reset role;
+update publish_jobs set locked_at = now() - interval '6 minutes' where article_id = qa(8);
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA reclaims, then claims again
+select expect_count($$select count(*) from claim_publish_job('r-s1') where article_id = qa(8)$$, 1, 'queue: a stuck job is reclaimed and claimed again');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(8) and status = 'running' and attempts = 2 and locked_by = auth.uid()$$, 1, 'queue: the reclaim keeps attempts, the new claim counts one');
+select expect_count($$select count(*) from audit_logs where action = 'publish.stale_reclaim' and payload ->> 'article_id' = qa(8)::text$$, 1, 'queue: the reclaim is recorded');
+select expect_count($$select count(*) from article_state_events where article_id = qa(8) and from_state = 'publishing' and to_state = 'publish_failed' and actor_id = auth.uid()$$, 1, 'queue: the reclaim moved the article publishing -> publish_failed by the caller');
+select as_user('00000000-0000-0000-0000-0000000000a2'); -- the old holder
+select expect_error($$select finish_publish_job(qj(8), 'success')$$, '^JOB_NOT_RUNNING$', 'queue: the old holder can not finish a reclaimed job');
+select expect_count($$select count(*) from enqueue_publish_job(qa(9), 'r-s2')$$, 1, 'queue: enqueue article 9');
+select expect_count($$select count(*) from claim_publish_job('r-s2')$$, 1, 'queue: claim article 9');
+reset role;
+update publish_jobs set locked_at = now() - interval '6 minutes', attempts = max_attempts where article_id = qa(9);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from claim_publish_job('r-s2')$$, 0, 'queue: a stuck job with no attempts left is not run again');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(9) and status = 'failed' and last_error = 'stale_reclaim'$$, 1, 'queue: it fails instead');
+select expect_count($$select count(*) from articles where id = qa(9) and state = 'publish_failed'$$, 1, 'queue: and the article is publish_failed');
+
+-- a new approved version or an edit cancels the queued job
+select expect_count($$select count(*) from enqueue_publish_job(qa(10), 'r-v1')$$, 1, 'queue: enqueue article 10');
+select expect_count($$select count(*) from enqueue_publish_job(qa(11), 'r-v2')$$, 1, 'queue: enqueue article 11');
+select expect_count($$select count(*) from enqueue_publish_job(qa(12), 'r-v3')$$, 1, 'queue: enqueue article 12');
+select as_user('00000000-0000-0000-0000-0000000000a1'); -- ownerA edits and approves again
+select mk_edit(10, true);
+select mk_edit(11, false);
+select mk_edit(12, true);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from claim_publish_job('r-v1')$$, 0, 'queue: a job of an old approved version is not claimed');
+select expect_count($$select count(*) from publish_jobs where id = qj(10) and status = 'cancelled' and cancel_reason = 'stale_version'$$, 1, 'queue: it is cancelled as stale_version');
+select expect_count($$select count(*) from claim_publish_job('r-v2')$$, 0, 'queue: a job of an edited article is not claimed');
+select expect_count($$select count(*) from publish_jobs where id = qj(11) and status = 'cancelled' and cancel_reason = 'article_changed'$$, 1, 'queue: it is cancelled as article_changed');
+select expect_count($$select count(*) from articles where id in (qa(10), qa(11)) and state in ('export_ready', 'drafting')$$, 2, 'queue: the cancel does not touch the article state');
+select expect_count($$select count(*) from enqueue_publish_job(qa(12), 'r-v3') where not duplicate$$, 1, 'queue: a new approved version gets a new job');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(12) and status = 'cancelled' and cancel_reason = 'superseded'$$, 1, 'queue: the old job is superseded');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(12) and status = 'queued'$$, 1, 'queue: only the new job is open');
+
+-- cancel
+select expect_count($$select count(*) from enqueue_publish_job(qa(14), 'r-k1')$$, 1, 'queue: enqueue article 14');
+select as_user('00000000-0000-0000-0000-0000000000a3'); -- viewerA
+select expect_error($$select cancel_publish_job(qj(14))$$, '^FORBIDDEN_ROLE$', 'queue: a viewer can not cancel');
+select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
+select expect_error($$select cancel_publish_job('00000000-0000-0000-0000-000000000000')$$, '^FORBIDDEN_ROLE$', 'queue: an unknown job gives the same error');
+reset role;
+select expect_count($$select count(*) from publish_jobs where article_id = qa(14) and status = 'queued'$$, 1, 'queue: still queued after the refused cancels');
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from cancel_publish_job(qj(14)) c where c = 'cancelled'$$, 1, 'queue: an editor cancels a queued job');
+select expect_count($$select count(*) from articles where id = qa(14) and state = 'export_ready'$$, 1, 'queue: cancel leaves the article export_ready');
+select expect_error($$select cancel_publish_job(qj(14))$$, '^JOB_NOT_CANCELLABLE$', 'queue: a cancelled job can not be cancelled again');
+select expect_count($$select count(*) from enqueue_publish_job(qa(14), 'r-k1') where not duplicate$$, 1, 'queue: after a cancel the article can be enqueued again');
+reset role;
+
+-- ---- follow-up: stale running jobs of other workspaces, QUEUE_DUPLICATE, QUEUE_FULL ----
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select mk_ready(n, '10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1') from generate_series(16, 16) n;
+select mk_ready(n, '10000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-0000000000a1') from generate_series(20, 70) n;
+-- B has a job stuck in running for 6 minutes on site r-t1
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select expect_count($$select count(*) from enqueue_publish_job(qa(18), 'r-t1')$$, 1, 'queue: B enqueues on site t1');
+select expect_count($$select count(*) from claim_publish_job('r-t1')$$, 1, 'queue: B claims it');
+reset role;
+update publish_jobs set locked_at = now() - interval '6 minutes' where article_id = qa(18);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from enqueue_publish_job(qa(16), 'r-t1')$$, 1, 'queue: A enqueues on site t1');
+select expect_count($$select count(*) from claim_publish_job('r-t1') where article_id = qa(16)$$, 1, 'queue: a stale running job of B does not block A');
+reset role;
+select expect_count($$select count(*) from publish_jobs where article_id = qa(18) and status = 'running' and attempts = 1$$, 1, 'queue: the stale job of B is left unchanged');
+select expect_count($$select count(*) from articles where id = qa(18) and state = 'publishing'$$, 1, 'queue: and so is its article');
+
+-- QUEUE_DUPLICATE: a new approved version while the old one runs
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from enqueue_publish_job(qa(13), 'r-d1')$$, 1, 'queue: enqueue article 13');
+select expect_count($$select count(*) from claim_publish_job('r-d1')$$, 1, 'queue: claim article 13');
+reset role;
+update articles set state = 'publish_failed' where id = qa(13);
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select mk_edit(13, true);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_error($$select enqueue_publish_job(qa(13), 'r-d1')$$, '^QUEUE_DUPLICATE$', 'queue: a new version is refused while the old one is running');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(13) and status = 'running'$$, 1, 'queue: the running job is untouched');
+
+-- a stale running job does not count against the workspace limit of 3 (articles 8, 13, 16 are running)
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from claim_publish_job('r-k1')$$, 0, 'queue: 3 fresh running jobs fill the workspace');
+reset role;
+update publish_jobs set locked_at = now() - interval '6 minutes' where article_id = qa(8);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_count($$select count(*) from claim_publish_job('r-k1') where article_id = qa(14)$$, 1, 'queue: a stale running job is not counted against the workspace limit');
+reset role;
+-- QUEUE_FULL: 50 queued jobs in the workspace
+reset role;
+insert into publish_jobs (workspace_id, article_id, approved_version_id, remote_key, idempotency_key)
+  select a.workspace_id, a.id, v.id, 'r-full', 'k' from articles a join article_versions v on v.article_id = a.id
+  where a.id in (select qa(n) from generate_series(20, 69) n);
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_error($$select enqueue_publish_job(qa(70), 'r-full')$$, '^QUEUE_FULL$', 'queue: a workspace with 50 queued jobs is full');
 reset role;
 
 select 'ALL RLS CHECKS PASSED' as result;

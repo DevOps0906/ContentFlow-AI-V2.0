@@ -38,10 +38,17 @@ export const failureLabels: Record<FailureType, string> = {
 
 export class DeliveryError extends Error {
   failureType: FailureType;
-  constructor(failureType: FailureType, message: string) {
+  /** Remote HTTP status and Retry-After header, when the failure was an HTTP response (publish queue backoff). */
+  status?: number;
+  retryAfter?: string | null;
+  /** Our side failed for a moment (e.g. the delivery check RPC); worth retrying whatever the type. */
+  transient?: boolean;
+  constructor(failureType: FailureType, message: string, remote?: { status?: number; retryAfter?: string | null }) {
     super(message);
     this.name = "DeliveryError";
     this.failureType = failureType;
+    this.status = remote?.status;
+    this.retryAfter = remote?.retryAfter;
   }
 }
 
@@ -81,7 +88,8 @@ export function rpcDeliveryCheck(client: RpcClient): DeliveryCheck {
       p_article_id: articleId,
       p_renderer_version: RENDERER_VERSION,
     });
-    if (error) throw new DeliveryError("unknown", "전달 가능 여부를 확인하지 못했습니다.");
+    // Our own database failed, not the content: transient, so the queue retries it.
+    if (error) throw Object.assign(new DeliveryError("unknown", "전달 가능 여부를 확인하지 못했습니다."), { transient: true });
     return parseVerdict(data);
   };
 }

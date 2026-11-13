@@ -15,6 +15,7 @@ import {
   LayoutTemplate,
   Menu,
   Plus,
+  Send,
   Search,
   Settings,
   Sparkles,
@@ -34,11 +35,12 @@ const nav = [
   { href: "/trends", label: "트렌드 분석", icon: ChartLine },
   { href: "/templates", label: "템플릿 라이브러리", icon: LayoutTemplate },
   { href: "/analytics", label: "수익 분석", icon: TrendingUp },
+  { href: "/publish", label: "발행 큐", icon: Send },
 ];
 export function Shell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { articles, error, mode, email, logout } = useWorkspace();
+  const { articles, error, mode, email, role, logout } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const narrow = useNarrow();
@@ -116,7 +118,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <X size={18} />
         </button>
         <nav aria-label="주 메뉴">
-          {nav.map((n) => (
+          {nav.filter((n) => n.href !== "/publish" || (mode === "account" && canEdit(role))).map((n) => (
             <Link
               key={n.href}
               href={n.href}

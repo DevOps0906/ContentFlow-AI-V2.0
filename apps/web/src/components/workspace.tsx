@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { Role } from "@/lib/team";
 import type { ReviewDecision } from "@/lib/articles-db";
+import type { PublishJob } from "@/lib/publish-queue";
 import {
   applyBriefRule,
   applyPublishedUrlRule,
@@ -45,7 +46,7 @@ type Workspace = {
   remove: (id: string) => Promise<boolean>;
   clear: () => boolean;
   /** WordPress draft. Local mode drives the state in the browser; account mode asks the server. */
-  sendWordpress: (a: Article) => Promise<{ article: Article; created: boolean }>;
+  sendWordpress: (a: Article) => Promise<{ article: Article; created: boolean; queued?: PublishJob }>;
   importLocal: () => Promise<{ imported: number; skipped: number; invalid: number; failed: number }>;
   logout: () => Promise<void>;
 };
@@ -234,12 +235,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   async function sendWordpress(a: Article) {
     if (mode === "account") {
       try {
-        const r = await api<{ article: Article; created: boolean }>("/api/wordpress/draft", {
+        const r = await api<{ article?: Article; created?: boolean; job?: PublishJob }>("/api/wordpress/draft", {
           method: "POST",
           body: JSON.stringify({ id: a.id }),
         });
-        setArticles((list) => upsert(list, r.article));
-        return r;
+        if (r.article) {
+          const sent = r.article;
+          setArticles((list) => upsert(list, sent));
+          return { article: sent, created: r.created ?? false };
+        }
+        // 202: the job waits in the publish queue (site busy or a retry is scheduled). Pick up the stored state.
+        const { articles: list } = await api<{ articles: Article[] }>("/api/articles");
+        setArticles(list);
+        return { article: list.find((x) => x.id === a.id) ?? a, created: false, queued: r.job };
       } catch (e) {
         // The server records `publish_failed`; pick that up before reporting the error.
         const failed = e instanceof ApiError ? (e.data as { article?: Article } | null)?.article : undefined;

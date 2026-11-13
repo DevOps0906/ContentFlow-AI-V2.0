@@ -209,3 +209,31 @@ for update skip locked limit 1;
 | 글 상태 전이표 | 변경 없음. 큐 상태는 job 쪽에만 둔다(`lifecycle.ts`·0002 전이표 불변) |
 | 재시도 예정 | 새 상태 없이 `queued` + `next_attempt_at` |
 | 작업 번호 | CF-24 |
+
+## 16. 착수 전 검토 반영 (challenger, 2026-11-13) — §3·§4·§6·§9·§10과 다르면 이 장이 우선
+| 항목 | 확정 규칙 |
+|---|---|
+| 원격 키 | `remote_key` = 접수한 서버 env WordPress base URL 정규화값(소문자 호스트·끝 `/` 제거). 블로그 ID 아님. 자격증명은 현행 env 하나 유지(블로그별 자격증명은 범위 밖) |
+| drain 범위 | `claim_publish_job()` RPC(security definer, search_path 고정, set_config 금지)는 **호출자 워크스페이스 중 호출자가 발행 권한(owner·admin·editor)을 가진 곳**의 job만, 그리고 인자 `p_remote_key`와 같은 job만 선점한다. 같은 remote_key의 running은 전역 1건(워크스페이스 무관, 개수만 보고 다른 테넌트 정보는 반환 안 함), 워크스페이스 동시 상한(가설 3). 반환은 job id·article id·approved_version_id뿐, 본문은 앱이 사용자 세션으로 읽는다 |
+| drain 트리거 | GET은 부작용 없음. drain은 `POST /api/publish/drain`(sameOrigin, 사용자 세션)만. 요청당 job 최대 1건 동기 처리(sendDraft 최악 45초, maxDuration 60). 큐 화면은 자기 워크스페이스에 queued가 있을 때 5초마다 drain POST. 새 내부 토큰 없음(§10의 내부 토큰 폐기) |
+| 접수 | `POST /api/publish/jobs` → 202 `{job}`. 호환 경로 `POST /api/wordpress/draft`(계정 모드)는 접수 후 같은 요청에서 그 job 1건 drain을 시도해 끝나면 기존과 같은 200 `{article, created}`, 원격 사용 중·재시도 예정이면 202 `{job}`. `workspace.tsx`는 202를 처리한다. localFlow는 동기 그대로 |
+| 글 상태 | 전이표 불변. 선점: export_ready·publish_failed → publishing(기존 조건부 갱신, RPC 안에서 같은 트랜잭션). 성공 → draft_created. 재시도 예정·실패·needs_attention → publish_failed(합법). 다음 선점은 publish_failed → publishing. 취소는 queued만 가능하고 글 상태는 건드리지 않는다(이미 export_ready/publish_failed). §4 "export_ready로 복귀" 폐기 |
+| 고착 회수 | running이 `locked_at`+5분(가설, 최악 45초의 6배 이상) 지나면 다음 claim RPC가 job→queued(attempts 유지), 글 publishing→publish_failed(actor = 회수를 일으킨 호출자, note `stale_reclaim`). 마이그레이션 시점의 job 없는 publishing 글은 건드리지 않는다(현행과 동일, 운영 메모) |
+| 유일성 | 전체 unique 없음. 부분 unique `(article_id) where status in ('queued','running','needs_attention')`. `idempotency_key`는 기록·조회용 비유일 컬럼. 원격 멱등성은 기존 slug 조회(wordpress.ts) — 헤더·메타 방식은 범위 밖 |
+| 버전 변경 | claim 시 글의 approved_version_id ≠ job의 값이거나 글이 export_ready·publish_failed가 아니면 job → cancelled(reason `stale_version`/`article_changed`), 다음 job 시도. 새 승인본 접수 시 같은 글의 queued·needs_attention job은 cancelled(`superseded`), running이면 `QUEUE_DUPLICATE` |
+| 시도 수 | 진실은 `publish_jobs.attempts`. delivery_attempts는 기록용(유실 가능) |
+| 권한 | viewer·reviewer는 큐 조회만, drain·접수·취소 불가(RPC가 거부). 모바일 bearer 프록시에 `/api/publish/*` 미허용 |
+| 로컬 모드 | 큐 없음 — 현행 동기 전송 유지(§6 인메모리 큐 폐기). 데스크톱 계정 모드 사이드카는 자기 env의 remote_key job만 drain |
+
+## 17. 구현 메모 (0020)
+- 취소: queued와 needs_attention 모두 가능(needs_attention을 막으면 부분 unique 때문에 새 접수가 불가). running은 불가(`JOB_RUNNING`).
+- 고착 회수는 호출자가 발행 권한을 가진 워크스페이스 안에서만 상태를 바꾼다. 전역 remote 직렬화 판정은 stale(5분 초과) running을 세지 않아 타 테넌트 고착이 다른 테넌트를 막지 않는다. 회수 기록은 audit_logs `publish.stale_reclaim`.
+- retry 시 attempts ≥ max면 failed(`QUEUE_EXHAUSTED`), retry_at이 1시간 넘게 뒤면 needs_attention. success는 job `draft_created` + 글 publishing→draft_created(원격 postId·URL 저장은 앱이 finish 전에 한다).
+- 가설 상수(마이그레이션 하드코딩): 대기 상한 50, 워크스페이스 running 3, stale 5분, max_attempts 6. RPC 시그니처는 0020 참조.
+- `delivery_attempts.job_id` 연결은 후속.
+- drain은 선점한 job의 `workspace_id` 기준으로 본문 조회·전송 기록·remote 저장을 한다(활성 워크스페이스와 무관).
+- 같은 승인본을 다시 접수하면 needs_attention job은 queued로 되살아난다(attempts 0, last_error 비움). 자격증명 수정 후 '전송'이 실제로 다시 보내게 하기 위함(contract 리뷰 🔴 반영).
+- 호환 경로에서 선점 뒤 서버 오류(5xx)는 202가 아니라 502 + "최대 5분 뒤 큐에서 재시도"로 응답한다(job은 stale 회수 대기).
+- 전달 가능 확인 RPC 자체의 실패는 `DeliveryError.transient`로 표시해 재시도한다(유형은 unknown 유지).
+- 알려진 위험(후속): claim·finish RPC는 `authenticated` 실행 가능이라, publishable key·URL을 가진 사용자(데스크톱 사이드카 env)는 PostgREST로 claim만 반복해 공유 remote_key를 5분 단위로 점유할 수 있다. 웹·모바일에는 키가 노출되지 않는다. 대응 후보: 서버 전용 실행 경로 또는 테넌트별 공정성 한도.
+- env WordPress 주소를 바꾸면 기존 queued job의 remote_key가 달라져 선점되지 않는다. 화면에서 취소 후 다시 접수한다(운영 메모).

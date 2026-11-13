@@ -60,7 +60,10 @@ async function wpError(res: Response): Promise<DeliveryError> {
       : res.status === 404
         ? "REST API 주소 또는 글 ID를 확인해주세요."
         : "";
-  return new DeliveryError(failureOf(res.status), `WordPress 응답 오류(${res.status}). ${hint} ${detail}`.trim());
+  return new DeliveryError(failureOf(res.status), `WordPress 응답 오류(${res.status}). ${hint} ${detail}`.trim(), {
+    status: res.status,
+    retryAfter: res.headers?.get("retry-after") ?? null,
+  });
 }
 
 async function parseBody<T>(res: Response): Promise<T> {
