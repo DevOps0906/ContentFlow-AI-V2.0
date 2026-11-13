@@ -32,6 +32,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0018_review_fixes.sql
 \ir ../migrations/0019_blog_entitlements.sql
 \ir ../migrations/0020_publish_queue.sql
+\ir ../migrations/0021_publish_queue_per_workspace.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -1672,16 +1673,18 @@ select expect_fail($$insert into publish_jobs (workspace_id, article_id, approve
 select expect_fail($$update publish_jobs set status = 'cancelled'$$, 'queue: direct update is refused');
 select expect_fail($$delete from publish_jobs$$, 'queue: direct delete is refused');
 
--- claim: another workspace's job is never claimed, one running job per site across workspaces
+-- claim: another workspace's job is never claimed, one running job per site inside a workspace (0021)
 select expect_count($$select count(*) from claim_publish_job('r-q2')$$, 0, 'queue: A can not claim the job of B');
 select expect_count($$select count(*) from claim_publish_job('r-q1') where article_id = qa(1) and job_id = qj(1) and approved_version_id is not null$$, 1, 'queue: an editor claims the oldest due job');
 select expect_count($$select count(*) from articles where id = qa(1) and state = 'publishing'$$, 1, 'queue: a claim moves the article to publishing');
 select expect_count($$select count(*) from publish_jobs where id = qj(1) and status = 'running' and attempts = 1 and locked_by = auth.uid() and locked_at is not null$$, 1, 'queue: the job is running, locked by the caller');
-select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: one running job per site');
+select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: one running job per site in the workspace');
 select as_user('00000000-0000-0000-0000-0000000000b1'); -- ownerB
-select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: the site is busy for B too (global), B learns nothing about A');
+select expect_count($$select count(*) from claim_publish_job('r-q1') where article_id = qa(19)$$, 1, 'queue: A running on the site does not block B (per workspace, 0021)');
+select expect_count($$select count(*) from claim_publish_job('r-q1')$$, 0, 'queue: B now has its own running job on the site');
 reset role;
-select expect_count($$select count(*) from publish_jobs where article_id in (qa(2), qa(19)) and status = 'queued'$$, 2, 'queue: the other jobs of the site stay queued');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(2) and status = 'queued'$$, 1, 'queue: the other job of A on the site stays queued');
+select expect_count($$select count(*) from publish_jobs where article_id = qa(19) and status = 'running'$$, 1, 'queue: B and A run on the same site at once');
 select expect_count($$select count(*) from publish_jobs where article_id = qa(17) and status = 'queued'$$, 1, 'queue: the job of B was not claimed by A');
 
 -- finish: only the claimer, only running

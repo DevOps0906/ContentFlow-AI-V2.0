@@ -214,7 +214,7 @@ for update skip locked limit 1;
 | 항목 | 확정 규칙 |
 |---|---|
 | 원격 키 | `remote_key` = 접수한 서버 env WordPress base URL 정규화값(소문자 호스트·끝 `/` 제거). 블로그 ID 아님. 자격증명은 현행 env 하나 유지(블로그별 자격증명은 범위 밖) |
-| drain 범위 | `claim_publish_job()` RPC(security definer, search_path 고정, set_config 금지)는 **호출자 워크스페이스 중 호출자가 발행 권한(owner·admin·editor)을 가진 곳**의 job만, 그리고 인자 `p_remote_key`와 같은 job만 선점한다. 같은 remote_key의 running은 전역 1건(워크스페이스 무관, 개수만 보고 다른 테넌트 정보는 반환 안 함), 워크스페이스 동시 상한(가설 3). 반환은 job id·article id·approved_version_id뿐, 본문은 앱이 사용자 세션으로 읽는다 |
+| drain 범위 | `claim_publish_job()` RPC(security definer, search_path 고정, set_config 금지)는 **호출자 워크스페이스 중 호출자가 발행 권한(owner·admin·editor)을 가진 곳**의 job만, 그리고 인자 `p_remote_key`와 같은 job만 선점한다. 같은 remote_key의 running은 워크스페이스당 1건(§18, 0021에서 전역 → 워크스페이스 단위), 워크스페이스 동시 상한(가설 3). 반환은 job id·article id·approved_version_id뿐, 본문은 앱이 사용자 세션으로 읽는다 |
 | drain 트리거 | GET은 부작용 없음. drain은 `POST /api/publish/drain`(sameOrigin, 사용자 세션)만. 요청당 job 최대 1건 동기 처리(sendDraft 최악 45초, maxDuration 60). 큐 화면은 자기 워크스페이스에 queued가 있을 때 5초마다 drain POST. 새 내부 토큰 없음(§10의 내부 토큰 폐기) |
 | 접수 | `POST /api/publish/jobs` → 202 `{job}`. 호환 경로 `POST /api/wordpress/draft`(계정 모드)는 접수 후 같은 요청에서 그 job 1건 drain을 시도해 끝나면 기존과 같은 200 `{article, created}`, 원격 사용 중·재시도 예정이면 202 `{job}`. `workspace.tsx`는 202를 처리한다. localFlow는 동기 그대로 |
 | 글 상태 | 전이표 불변. 선점: export_ready·publish_failed → publishing(기존 조건부 갱신, RPC 안에서 같은 트랜잭션). 성공 → draft_created. 재시도 예정·실패·needs_attention → publish_failed(합법). 다음 선점은 publish_failed → publishing. 취소는 queued만 가능하고 글 상태는 건드리지 않는다(이미 export_ready/publish_failed). §4 "export_ready로 복귀" 폐기 |
@@ -227,7 +227,7 @@ for update skip locked limit 1;
 
 ## 17. 구현 메모 (0020)
 - 취소: queued와 needs_attention 모두 가능(needs_attention을 막으면 부분 unique 때문에 새 접수가 불가). running은 불가(`JOB_RUNNING`).
-- 고착 회수는 호출자가 발행 권한을 가진 워크스페이스 안에서만 상태를 바꾼다. 전역 remote 직렬화 판정은 stale(5분 초과) running을 세지 않아 타 테넌트 고착이 다른 테넌트를 막지 않는다. 회수 기록은 audit_logs `publish.stale_reclaim`.
+- 고착 회수는 호출자가 발행 권한을 가진 워크스페이스 안에서만 상태를 바꾼다. remote 직렬화 판정은 stale(5분 초과) running을 세지 않는다(0021부터 판정 자체가 워크스페이스 안에서만 이뤄진다). 회수 기록은 audit_logs `publish.stale_reclaim`.
 - retry 시 attempts ≥ max면 failed(`QUEUE_EXHAUSTED`), retry_at이 1시간 넘게 뒤면 needs_attention. success는 job `draft_created` + 글 publishing→draft_created(원격 postId·URL 저장은 앱이 finish 전에 한다).
 - 가설 상수(마이그레이션 하드코딩): 대기 상한 50, 워크스페이스 running 3, stale 5분, max_attempts 6. RPC 시그니처는 0020 참조.
 - `delivery_attempts.job_id` 연결은 후속.
@@ -235,5 +235,15 @@ for update skip locked limit 1;
 - 같은 승인본을 다시 접수하면 needs_attention job은 queued로 되살아난다(attempts 0, last_error 비움). 자격증명 수정 후 '전송'이 실제로 다시 보내게 하기 위함(contract 리뷰 🔴 반영).
 - 호환 경로에서 선점 뒤 서버 오류(5xx)는 202가 아니라 502 + "최대 5분 뒤 큐에서 재시도"로 응답한다(job은 stale 회수 대기).
 - 전달 가능 확인 RPC 자체의 실패는 `DeliveryError.transient`로 표시해 재시도한다(유형은 unknown 유지).
-- 알려진 위험(후속): claim·finish RPC는 `authenticated` 실행 가능이라, publishable key·URL을 가진 사용자(데스크톱 사이드카 env)는 PostgREST로 claim만 반복해 공유 remote_key를 5분 단위로 점유할 수 있다. 웹·모바일에는 키가 노출되지 않는다. 대응 후보: 서버 전용 실행 경로 또는 테넌트별 공정성 한도.
+- 알려진 위험(테넌트 간 점유): §18(0021)에서 해결 — 직렬화를 워크스페이스 단위로 변경.
 - env WordPress 주소를 바꾸면 기존 queued job의 remote_key가 달라져 선점되지 않는다. 화면에서 취소 후 다시 접수한다(운영 메모).
+
+## 18. 공유 사이트 점유 방지 (0021, 2026-11-13 확정) — §15·§16의 "사이트당 동시 1건"보다 우선
+| 항목 | 확정 규칙 |
+|---|---|
+| 위협 | 발행 권한이 있는 사용자가 PostgREST로 `claim_publish_job`만 반복하고 finish를 부르지 않으면, 같은 remote_key를 쓰는 모든 테넌트가 고착 판정(5분)마다 막혔다. remote_key는 접수 때 호출자가 정하므로 남의 사이트 주소로도 가능했다. service role 금지 때문에 RPC 실행을 서버 전용으로 회수할 수 없다 |
+| 결정 | 사이트 직렬화 단위를 **(워크스페이스, remote_key)** 로 바꾼다. 다른 워크스페이스의 running·queued는 claim 판정에 전혀 쓰지 않는다 → 테넌트 간 점유·정보 측면 채널 모두 제거. 사용자 결정(2026-11-13) |
+| 기각한 안 | 차례 지키기(방치된 queued가 직전 선점자를 무기한 정지, 다중 워크스페이스로 우회), 고착 회수 → needs_attention(재접수 revive로 공격자 비용 0, 정상 크래시만 사람 개입), 고착 2분(데스크톱 사이드카의 Supabase 호출에 타임아웃 없음). challenger 검토 |
+| 대가 | 여러 워크스페이스가 같은 WordPress로 보내면 동시 요청이 생길 수 있다. 429·5xx·Retry-After는 기존 백오프가 처리 |
+| 남는 위험 | 한 사용자가 자기 워크스페이스 안에서 자기 발행을 막는 것은 막지 않는다(자기 손해). 워크스페이스 동시 3건·대기 상한 50·고착 5분·자동 재대기는 그대로 |
+| 형식 | `0021_publish_queue_per_workspace.sql`: `create or replace function claim_publish_job`만(시그니처·반환형·권한 불변). 사이트 advisory lock 제거, 워크스페이스 lock 유지. rls.sql: A 실행 중 B가 같은 사이트 선점 가능 시험 |
