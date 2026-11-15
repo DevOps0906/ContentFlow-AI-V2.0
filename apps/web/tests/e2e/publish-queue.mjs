@@ -1,4 +1,4 @@
-// CF-24 publish queue e2e against the local Supabase stack (60321) and the WordPress dev container (8081).
+// CF-24 publish queue e2e against the local Supabase stack (60321) and a local WordPress (E2E_WP_URL, default 8081).
 // Self-contained: starts a WordPress proxy (to simulate a down / slow site without stopping the shared
 // container) and `next dev` wired to it, then drives the API and the /publish screen with headless Chrome.
 // Prerequisites: local Supabase with migrations through 0020, `docker compose -f docker-compose.wp-dev.yml up -d`,
@@ -17,7 +17,8 @@ const root = resolve(web, "../..");
 const APP_PORT = Number(process.env.E2E_APP_PORT ?? 3394);
 const PROXY_PORT = Number(process.env.E2E_WP_PROXY_PORT ?? 8091);
 const APP = `http://127.0.0.1:${APP_PORT}`;
-const WP = "http://127.0.0.1:8081";
+const WP = (process.env.E2E_WP_URL ?? "http://127.0.0.1:8081").replace(/\/+$/, "");
+const wpUrl = new URL(WP);
 const FINAL = resolve(process.argv[3] ?? resolve(root, ".nomad/logs/publish-queue"));
 const OUT = resolve(process.env.E2E_WORK ?? resolve(process.env.TEMP ?? "/tmp", "pq-run-" + Date.now().toString(36)));
 const SHOTS = resolve(OUT, "shots");
@@ -39,7 +40,7 @@ const proxyServer = createServer((req, res) => {
   }
   const forward = () => {
     const up = httpRequest(
-      { host: "127.0.0.1", port: 8081, method: req.method, path: req.url, headers: { ...req.headers, host: "127.0.0.1:8081" } },
+      { host: wpUrl.hostname, port: Number(wpUrl.port || 80), method: req.method, path: req.url, headers: { ...req.headers, host: wpUrl.host } },
       (r) => {
         res.writeHead(r.statusCode ?? 502, r.headers);
         r.pipe(res);
@@ -417,7 +418,7 @@ const count = (s) => results.filter((r) => r.status === s).length;
 const lines = [
   `# 발행 큐 e2e 결과 (${new Date().toISOString()})`,
   "",
-  `환경: next dev 127.0.0.1:${APP_PORT} · 로컬 Supabase(60321) · WordPress 컨테이너(8081, 프록시 ${PROXY_PORT}) · 헤드리스 Chrome(CDP)`,
+  `환경: next dev 127.0.0.1:${APP_PORT} · 로컬 Supabase(60321) · WordPress(${WP}, 프록시 ${PROXY_PORT}) · 헤드리스 Chrome(CDP)`,
   `사용자: A=${emailA}, B=${emailB} (테스트 전용)`,
   `합계: PASS ${count("PASS")} · FAIL ${count("FAIL")} · SKIP ${count("SKIP")}`,
   "",
