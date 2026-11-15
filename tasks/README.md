@@ -26,7 +26,8 @@
 | CF-22 | 다수 블로그 계량·초과 고지(명세 → 한도 트리거·엔타이틀먼트·alert dialog) | 완료 | 0019·rls 시험·단위 342·build. reviewer security·contract 반영 |
 | CF-23 | 초과 슬롯 실결제 연동(결제사 미정) | 대기(승인 필요) | 위험 높음: challenger·보안 리뷰 필수, 사용자 승인 후 착수 |
 | CF-24 | 발행 큐(블로그별 동시 1건·워크스페이스 상한·백오프·Retry-After·idempotency) | 완료(e2e 대기) | 0020·rls 시험·단위 355·build. reviewer security·contract 반영. e2e는 WordPress 자격증명 준비 후, 테넌트 간 점유는 0021로 해결(§18) |
-| CF-07b | 광고·분석 연동, 팀 초대·역할 화면, 이메일 확인/비밀번호 재설정 | 대기 | 광고 API 자격·설계 필요 |
+| CF-07c | 팀 초대·역할 변경·제거(설정 화면 팀 패널), 비밀번호 재설정·이메일 확인 콜백 | 완료 | 0004 RPC·RLS, `/api/team/*`·`/api/auth/{reset,password}`·`/auth/callback`. W8 e2e(초대·수락, 재설정 메일→새 비밀번호 로그인) 통과. 초대 메일은 보내지 않음(가입·로그인 시 표시) |
+| CF-07b | 광고·분석 연동 | 대기 | 광고 API 자격·설계 필요 |
 | CF-08 | 브라우저/3구간 시각 검증 | 완료 | W8 e2e 67건(2026-11-12): 500/768/1000/1440px 넘침 0, 키보드·저장 실패·인증 복구·WordPress slug. 스크립트 `apps/web/tests/e2e/` |
 
 현재 작업: [NOW](NOW.md).
