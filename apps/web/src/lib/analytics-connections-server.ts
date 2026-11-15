@@ -1,0 +1,208 @@
+// Server side of the Google (GSC) connection: grant storage, property selection, disconnect + revoke.
+// Everything goes through the session's own Supabase client and the 0023/0026 RPCs (no service role).
+// The token is decrypted only inside these functions and never returned or logged.
+import { randomUUID } from "node:crypto";
+import type { Authed } from "./api";
+import { GSC_SCOPE, listGscSites, refreshAccessToken, revokeToken, GoogleError, type GoogleConfig, type GscSite } from "./google-oauth";
+import { decryptToken, encryptToken, reencryptToken, TokenCryptoError, type KeyRing } from "./token-crypto";
+
+export class AnalyticsError extends Error {
+  constructor(message: string, public status: number, public code: string) {
+    super(message);
+  }
+}
+
+type Rpc = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string; code?: string } | null }> };
+
+const RPC_ERRORS: [string, number, string, string][] = [
+  ["ANALYTICS_FORBIDDEN", 403, "forbidden", "연결 관리는 소유자·관리자만 할 수 있습니다."],
+  ["GRANT_OWNER_INACTIVE", 409, "grant_owner_inactive", "이 Google 연결을 만든 사람이 더 이상 관리자가 아닙니다. 다시 연결해주세요."],
+  ["GRANT_IN_USE", 409, "grant_in_use", "아직 이 Google 연결을 쓰는 연결이 있습니다."],
+  ["CONNECTION_NOT_ACTIVE", 409, "not_active", "다시 연결이 필요한 상태입니다."],
+];
+function rpcFail(error: { message?: string } | null): AnalyticsError {
+  const msg = error?.message ?? "";
+  const hit = RPC_ERRORS.find(([k]) => msg.includes(k));
+  return hit ? new AnalyticsError(hit[3], hit[1], hit[2]) : new AnalyticsError("연결 요청을 처리하지 못했습니다.", 500, "rpc_failed");
+}
+async function call<T>(db: Rpc, fn: string, args: Record<string, unknown>): Promise<T> {
+  const { data, error } = await db.rpc(fn, args);
+  if (error) throw rpcFail(error);
+  return data as T;
+}
+
+type CredRow = { grant_id: string; ciphertext: string; key_version: number; workspace_id: string; google_sub: string };
+const aadOfRow = (r: CredRow) => ({ grantId: r.grant_id, workspaceId: r.workspace_id, googleSub: r.google_sub });
+
+/**
+ * The ciphertext is bound to grant_id, so the app picks the id first. New grant: stored with that id.
+ * Existing grant (same workspace, Google account, client): the database returns the existing id and keeps
+ * its ciphertext; the token is then re-encrypted for that id and swapped with rotate_credential (compare-and-set).
+ */
+export async function storeGrant(account: Authed, ring: KeyRing, clientId: string, googleSub: string, refreshToken: string): Promise<string> {
+  const ids = { workspaceId: account.workspaceId, googleSub };
+  const mine = randomUUID();
+  const first = encryptToken(ring, refreshToken, { ...ids, grantId: mine });
+  const grantId = await call<string>(account.supabase, "store_credential", {
+    p_workspace: account.workspaceId,
+    p_grant_id: mine,
+    p_google_sub: googleSub,
+    p_client_id: clientId,
+    p_ciphertext: first.ciphertext,
+    p_key_version: first.keyVersion,
+  });
+  if (grantId === mine) return grantId;
+  const rows = await call<CredRow[]>(account.supabase, "read_grant_credential", { p_grant: grantId });
+  const row = rows?.[0];
+  if (!row) throw new AnalyticsError("토큰을 저장하지 못했습니다. 다시 연결해주세요.", 500, "store_failed");
+  const next = encryptToken(ring, refreshToken, { ...ids, grantId });
+  const swapped = await call<boolean>(account.supabase, "rotate_credential", {
+    p_grant: grantId,
+    p_expected_version: row.key_version,
+    p_ciphertext: next.ciphertext,
+    p_new_version: next.keyVersion,
+  });
+  if (!swapped) throw new AnalyticsError("토큰을 저장하지 못했습니다. 다시 연결해주세요.", 409, "store_failed");
+  return grantId;
+}
+
+/** The refresh token of a grant (owner/admin of its workspace only). */
+export async function readRefreshToken(db: Rpc, ring: KeyRing, grantId: string, forRevoke = false): Promise<string> {
+  // The revoke path works for any owner/admin and for a grant whose consenting admin is gone (no creator check).
+  const rows = await call<CredRow[]>(db, forRevoke ? "read_grant_for_revoke" : "read_grant_credential", { p_grant: grantId });
+  const row = rows?.[0];
+  if (!row) throw new AnalyticsError("Google 연결을 찾을 수 없습니다.", 404, "grant_missing");
+  try {
+    return decryptToken(ring, row.ciphertext, row.key_version, aadOfRow(row)).token;
+  } catch (e) {
+    if (e instanceof TokenCryptoError) throw new AnalyticsError("저장된 Google 토큰을 읽지 못했습니다. 다시 연결해주세요.", 409, "token_unreadable");
+    throw e;
+  }
+}
+
+/** Key rotation: re-encrypts every grant of the workspace that is not on the newest key. Returns the count. */
+export async function rotateGrants(db: Rpc, ring: KeyRing, workspaceId: string): Promise<{ rotated: number; skipped: number }> {
+  const list = (await call<{ grant_id: string; key_version: number }[]>(db, "list_credential_versions", { p_workspace: workspaceId })) ?? [];
+  let rotated = 0;
+  let skipped = 0;
+  for (const g of list) {
+    if (g.key_version === ring.latest) continue;
+    const rows = await call<CredRow[]>(db, "read_grant_credential", { p_grant: g.grant_id });
+    const row = rows?.[0];
+    const next = row && reencryptToken(ring, row.ciphertext, row.key_version, aadOfRow(row));
+    if (!row || !next) {
+      skipped++;
+      continue;
+    }
+    const ok = await call<boolean>(db, "rotate_credential", { p_grant: g.grant_id, p_expected_version: row.key_version, p_ciphertext: next.ciphertext, p_new_version: next.keyVersion });
+    if (ok) rotated++;
+    else skipped++;
+  }
+  return { rotated, skipped };
+}
+
+async function accessFor(account: Authed, cfg: GoogleConfig, grantId: string): Promise<string> {
+  const refresh = await readRefreshToken(account.supabase, cfg.ring, grantId);
+  try {
+    return await refreshAccessToken(cfg, refresh);
+  } catch (e) {
+    if (e instanceof GoogleError) {
+      const status = e.code === "invalid_grant" ? 409 : 502;
+      throw new AnalyticsError(e.message, status, e.code);
+    }
+    throw e;
+  }
+}
+
+export async function sitesOfGrant(account: Authed, cfg: GoogleConfig, grantId: string): Promise<GscSite[]> {
+  const access = await accessFor(account, cfg, grantId);
+  try {
+    return await listGscSites(cfg, access);
+  } catch (e) {
+    if (e instanceof GoogleError) throw new AnalyticsError(e.message, 502, e.code);
+    throw e;
+  }
+}
+
+const COLUMNS = "id, blog_id, grant_id, provider, external_ref, status, last_attempt_at, last_success_at, last_error_code, created_at";
+export type ConnectionRow = {
+  id: string;
+  blog_id: string | null;
+  grant_id: string | null;
+  provider: string;
+  external_ref: string;
+  status: string;
+  last_attempt_at: string | null;
+  last_success_at: string | null;
+  last_error_code: string | null;
+  created_at: string;
+};
+
+/** Connections (no token field) and the grants no connection uses: after a failed revoke those need a retry. */
+export async function listConnections(account: Authed): Promise<{ connections: ConnectionRow[]; unusedGrants: string[] }> {
+  const { data, error } = await account.supabase.from("analytics_connections").select(COLUMNS).eq("workspace_id", account.workspaceId).order("created_at");
+  if (error) throw new AnalyticsError("연결 목록을 불러오지 못했습니다.", 500, "list_failed");
+  const connections = (data ?? []) as ConnectionRow[];
+  let unusedGrants: string[] = [];
+  if (account.role === "owner" || account.role === "admin") {
+    const grants = (await call<{ grant_id: string }[]>(account.supabase, "list_credential_versions", { p_workspace: account.workspaceId })) ?? [];
+    const used = new Set(connections.map((c) => c.grant_id));
+    unusedGrants = grants.map((g) => g.grant_id).filter((g) => !used.has(g));
+  }
+  return { connections, unusedGrants };
+}
+
+export async function createGscConnection(account: Authed, cfg: GoogleConfig, input: { grantId: string; siteUrl: string; blogId: string | null }): Promise<ConnectionRow> {
+  // The allow list is the sites the Google account can see with this grant (an app-side limit only).
+  const sites = await sitesOfGrant(account, cfg, input.grantId);
+  if (!sites.some((s) => s.siteUrl === input.siteUrl)) throw new AnalyticsError("이 Google 계정에서 볼 수 없는 속성입니다.", 400, "site_not_allowed");
+  const { data, error } = await account.supabase
+    .from("analytics_connections")
+    .insert({
+      workspace_id: account.workspaceId,
+      blog_id: input.blogId,
+      grant_id: input.grantId,
+      provider: "gsc",
+      external_ref: input.siteUrl,
+      scopes: [GSC_SCOPE],
+      connected_by: account.user.id,
+    })
+    .select(COLUMNS)
+    .single();
+  if (error) {
+    if (error.code === "23505") throw new AnalyticsError("이미 연결된 속성이거나, 이 블로그에 이미 Search Console 연결이 있습니다.", 409, "duplicate");
+    if (error.code === "23503") throw new AnalyticsError("이 워크스페이스의 블로그가 아닙니다.", 400, "blog_invalid");
+    if ((error.message ?? "").includes("GRANT_OWNER_INACTIVE")) throw rpcFail(error);
+    if (error.code === "42501" || error.code === "PGRST116") throw new AnalyticsError("연결 관리는 소유자·관리자만 할 수 있습니다.", 403, "forbidden");
+    throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  }
+  return data as ConnectionRow;
+}
+
+export type RevokeOutcome = "done" | "failed" | "kept";
+
+/** Revokes at Google, then deletes the stored grant. A failure keeps the grant: nothing is deleted locally. */
+export async function revokeGrant(account: Authed, cfg: GoogleConfig | null, grantId: string): Promise<RevokeOutcome> {
+  if (!cfg) return "failed";
+  let refresh: string;
+  try {
+    refresh = await readRefreshToken(account.supabase, cfg.ring, grantId, true);
+  } catch (e) {
+    if (e instanceof AnalyticsError && (e.code === "forbidden" || e.code === "grant_missing" || e.code === "grant_in_use")) throw e;
+    return "failed";
+  }
+  if ((await revokeToken(cfg, refresh)) !== "ok") return "failed";
+  await call<void>(account.supabase, "delete_credential", { p_grant: grantId });
+  return "done";
+}
+
+export async function disconnect(account: Authed, cfg: GoogleConfig | null, connectionId: string, purge: boolean): Promise<{ revoke: RevokeOutcome; grantId: string | null }> {
+  // disconnect_connection releases grant_id on a kept connection, so read it first.
+  const { data, error } = await account.supabase.from("analytics_connections").select("grant_id").eq("id", connectionId).eq("workspace_id", account.workspaceId).maybeSingle();
+  if (error) throw new AnalyticsError("연결을 찾지 못했습니다.", 500, "read_failed");
+  if (!data) throw new AnalyticsError("연결을 찾을 수 없습니다.", 404, "not_found");
+  const grantId = (data as { grant_id: string | null }).grant_id;
+  const left = await call<number>(account.supabase, "disconnect_connection", { p_connection: connectionId, p_purge: purge });
+  if (!grantId || left > 0) return { revoke: "kept", grantId };
+  return { revoke: await revokeGrant(account, cfg, grantId), grantId };
+}

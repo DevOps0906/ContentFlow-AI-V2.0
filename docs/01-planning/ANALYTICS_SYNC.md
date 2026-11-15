@@ -108,6 +108,7 @@
 | 인증·인가 | 연결·해제·동기화 owner·admin, 조회 멤버. 콜백은 state(쿠키 바인딩)·시작 사용자=세션 사용자·owner/admin 재확인. 같은 워크스페이스 블로그만 매핑. RPC는 security definer + 세션 `is_member` 확인, authenticated만 |
 | 데이터 | refresh token(고민감), 외부 지표, 계정/속성 식별자, 수익 수치 |
 | 키·권한 | Google client secret·토큰 암호화 키(서버 환경 변수, 버전 관리, AAD = grant_id·workspace_id·google_sub·key_version(grant를 여러 연결이 공유하므로 grant 단위)). **service role 키는 앱에 넣지 않는다(고정 규칙).** 세션 기반이라 `cf_caller_is_client()`=client, 상한 검사 적용. scope는 읽기 전용만 — 단 `webmasters.readonly`는 계정 전체 사이트 읽기(§3) |
+| 신뢰 경계 | 같은 워크스페이스의 owner/admin은 서로 신뢰한다. admin은 재동의 RPC로 grant의 `created_by`를 자신으로 바꾸거나 `rotate_credential`로 암호문을 바꿀 수 있다(토큰 탈취는 불가, 최악은 연결 중단). 다른 Google 계정의 토큰은 grant 키(workspace·google_sub·client) 때문에 얻을 수 없다. 운영에서는 `APP_URL` 필수(콜백 origin 고정). 같은 Google 사용자가 여러 워크스페이스에 연결한 경우 한쪽 revoke가 다른 쪽 grant를 무효로 만들 수 있다(가용성, `needs_reauth`로 드러남) |
 | 입력 | 콜백 `code`·`state`(1회용·만료), Google 응답(스키마 검증·크기 상한), 속성·계정 ID(앱 내부 허용 목록, Google 범위 제한 아님) |
 | 체인 | ① state 검증 약함 → 다른 Google 계정이 내 블로그에 연결(CSRF). ② **공격자가 자기 계정 콜백을 피해자 세션에 주입 → 공격자 속성 수치가 내 장부에 섞임(수치 오염)** → 쿠키 바인딩·시작 사용자=세션 사용자·source `-api` 분리·화면 출처 배지로 방어. ③ 토큰 로그 노출 → 계정 전체 읽기. ④ 교체 RPC 권한 느슨 → 타 워크스페이스·CSV 행 삭제 ⑤ revoke 실패 방치 → 해제했다고 믿는 유효 토큰 잔존(보관·재시도·안내) |
 | 피해 범위 | 토큰 유출 시 해당 Google 계정의 읽기 범위(검색·수익·분석). 쓰기 불가이나 수익 정보는 민감 |

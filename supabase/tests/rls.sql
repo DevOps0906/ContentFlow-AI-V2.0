@@ -38,6 +38,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0024_analytics_sync_runs.sql
 \ir ../migrations/0025_synced_storage_contract.sql
 \ir ../migrations/0026_replace_synced_range.sql
+\ir ../migrations/0027_credential_store_by_id.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -1876,7 +1877,7 @@ do $$
 declare f text; bad int := 0;
 begin
   foreach f in array array[
-    'store_credential(uuid,text,text,text,integer)','read_credential(uuid)','read_grant_credential(uuid)',
+    'store_credential(uuid,uuid,text,text,text,integer)','read_credential(uuid)','read_grant_credential(uuid)','read_grant_for_revoke(uuid)',
     'list_credential_versions(uuid)','rotate_credential(uuid,integer,text,integer)','delete_credential(uuid)',
     'begin_sync_run(uuid,date,date)','finish_sync_run(uuid,text,text,text)',
     'replace_synced_range(uuid,uuid,date,date,jsonb,text)','purge_synced_rows(uuid)',
@@ -1890,7 +1891,7 @@ end $$;
 set role anon;
 do $$ begin
   begin
-    perform store_credential('10000000-0000-0000-0000-00000000000a', 's', 'c', 'x', 1);
+    perform store_credential('10000000-0000-0000-0000-00000000000a', gen_random_uuid(), 's', 'c', 'x', 1);
     raise exception 'FAIL: anon called store_credential';
   exception when insufficient_privilege then raise notice 'PASS: anon can not call store_credential';
   end;
@@ -1904,14 +1905,19 @@ reset role;
 
 -- ---- grants: roles and workspaces ----
 select as_user('00000000-0000-0000-0000-0000000000a2');
-select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not store a credential');
+select expect_error($$select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not store a credential');
 select as_user('00000000-0000-0000-0000-0000000000a3');
-select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not store a credential');
+select expect_error($$select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not store a credential');
 select as_user('00000000-0000-0000-0000-0000000000b1');
-select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: an owner of another workspace can not store into A');
-select store_credential(ws_b(), 'sub-b', 'client-1', 'ctb', 1) as g_b \gset
+select expect_error($$select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: an owner of another workspace can not store into A');
+select store_credential(ws_b(), gen_random_uuid(), 'sub-b', 'client-1', 'ctb', 1) as g_b \gset
 select as_user('00000000-0000-0000-0000-0000000000a1');
-select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1) as g_a \gset
+select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'ct1', 1) as g_a \gset
+select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'other', 2) as g_a_again \gset
+select expect_count(format($$select count(*) from (select 1) x where %L::uuid = %L::uuid$$, :'g_a_again', :'g_a'), 1, 'credential: storing an existing (workspace, sub, client) returns the existing grant id');
+select expect_count(format($$select count(*) from read_grant_credential(%L) where ciphertext = 'ct1' and key_version = 1 and google_sub = 'sub-1'$$, :'g_a'), 1, 'credential: the existing ciphertext is not replaced and read_grant_credential returns google_sub');
+select expect_error($$select store_credential(ws_a(), null, 'sub-n', 'client-1', 'x', 1)$$, 'ANALYTICS_GRANT_ID_REQUIRED', 'credential: a grant id is required');
+select expect_error(format($$select * from read_grant_credential(%L)$$, :'g_b'), 'ANALYTICS_FORBIDDEN', 'credential: ownerA still can not read workspace B grant (google_sub included)');
 select expect_error(format($$select * from read_grant_credential(%L)$$, :'g_b'), 'ANALYTICS_FORBIDDEN', 'analytics: ownerA can not read the grant of workspace B');
 
 -- the credential table is closed to clients, by privilege and (if a grant came back) by RLS
@@ -1992,7 +1998,7 @@ select expect_count(format($$select count(*) from rotate_credential(%L, 1, 'ct2'
 select expect_count(format($$select count(*) from rotate_credential(%L, 1, 'ct3', 3) where rotate_credential$$, :'g_a'), 0, 'analytics: rotate_credential does nothing at a stale version');
 select expect_count($$select count(*) from list_credential_versions(ws_a()) where key_version = 2$$, 1, 'analytics: list_credential_versions shows the rotated version');
 select expect_error(format($$select delete_credential(%L)$$, :'g_a'), 'GRANT_IN_USE', 'analytics: a grant in use can not be deleted');
-select store_credential(ws_a(), 'sub-unused', 'client-1', 'ctu', 1) as g_u \gset
+select store_credential(ws_a(), gen_random_uuid(), 'sub-unused', 'client-1', 'ctu', 1) as g_u \gset
 select delete_credential(:'g_u');
 select expect_count('select count(*) from list_credential_versions(ws_a())', 1, 'analytics: an unused grant can be deleted');
 
@@ -2141,7 +2147,7 @@ select expect_fail($$update analytics_connections set status = 'active' where id
 reset role;
 delete from blog_metric_snapshots where metric = 'f';
 select as_user('00000000-0000-0000-0000-0000000000a1');
-select store_credential(ws_a(), 'sub-1', 'client-1', 'ct-renewed', 3) as g_a2 \gset
+select store_credential(ws_a(), gen_random_uuid(), 'sub-1', 'client-1', 'ct-renewed', 3) as g_a2 \gset
 select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'pending'$$, 1, 'sync: a new consent puts needs_reauth back to pending');
 select expect_count($$select count(*) from analytics_connections where id = an_conn('a2') and status = 'active'$$, 1, 'sync: other connections of the grant are not reset when they were fine');
 
@@ -2159,7 +2165,7 @@ select expect_count($$select count(*) from analytics_sync_runs where connection_
 
 -- ---- member removal / demotion (trigger) ----
 select as_user('00000000-0000-0000-0000-0000000000c3');
-select store_credential(ws_a(), 'sub-c3', 'client-1', 'ctc3', 1) as g_c3 \gset
+select store_credential(ws_a(), gen_random_uuid(), 'sub-c3', 'client-1', 'ctc3', 1) as g_c3 \gset
 insert into analytics_connections (id, workspace_id, blog_id, grant_id, provider, external_ref, scopes, connected_by)
   values (an_conn('a3'), ws_a(), '20000000-0000-0000-0000-00000000000a', :'g_c3', 'ga4', 'properties/1',
           array['https://www.googleapis.com/auth/analytics.readonly'], '00000000-0000-0000-0000-0000000000c3');
@@ -2172,7 +2178,7 @@ select expect_count($$select count(*) from analytics_connections where id = an_c
 select change_member_role(ws_a(), '00000000-0000-0000-0000-0000000000c3', 'admin');
 select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'needs_reauth'$$, 1, 'member: promoting back does not restore the connection');
 select as_user('00000000-0000-0000-0000-0000000000c3');
-select store_credential(ws_a(), 'sub-c3', 'client-1', 'ctc3b', 1);
+select store_credential(ws_a(), gen_random_uuid(), 'sub-c3', 'client-1', 'ctc3b', 1);
 select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'pending'$$, 1, 'member: only a new consent brings it back');
 select as_user('00000000-0000-0000-0000-0000000000a1');
 select remove_member(ws_a(), '00000000-0000-0000-0000-0000000000c3');
@@ -2187,9 +2193,23 @@ alter table memberships enable trigger memberships_analytics_changed;
 update analytics_connections set status = 'pending' where id = an_conn('a3');
 select as_user('00000000-0000-0000-0000-0000000000a1');
 select expect_error($$select * from read_credential(an_conn('a3'))$$, 'GRANT_OWNER_INACTIVE', 'grant owner: read_credential refuses the grant of a demoted admin');
+select expect_error(format($$select * from read_grant_credential(%L)$$, :'g_c3'), 'GRANT_OWNER_INACTIVE', 'grant owner: read_grant_credential refuses the grant of a demoted admin');
 select expect_error($$select begin_sync_run(an_conn('a3'), date '2026-10-01', date '2026-10-02')$$, 'GRANT_OWNER_INACTIVE', 'grant owner: begin_sync_run refuses the grant of a demoted admin');
 select expect_error(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, scopes, connected_by)
   values (ws_a(), %L, 'ga4', 'properties/2', array['https://www.googleapis.com/auth/analytics.readonly'], '00000000-0000-0000-0000-0000000000a1')$$, :'g_c3'), 'GRANT_OWNER_INACTIVE', 'grant owner: a new connection can not use the grant of a demoted admin');
+select expect_error(format($$select * from read_grant_for_revoke(%L)$$, :'g_c3'), 'GRANT_IN_USE', 'revoke path: a grant a live connection still uses is refused');
+reset role;
+insert into analytics_credentials (workspace_id, google_sub, client_id, ciphertext, key_version, created_by)
+  values (ws_a(), 'sub-demoted', 'client-1', 'ctd', 1, '00000000-0000-0000-0000-0000000000c3') returning grant_id as g_d \gset
+select as_user('00000000-0000-0000-0000-0000000000a3');
+select expect_error(format($$select * from read_grant_for_revoke(%L)$$, :'g_d'), 'ANALYTICS_FORBIDDEN', 'revoke path: a non-admin member can not read a grant');
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select expect_error(format($$select * from read_grant_for_revoke(%L)$$, :'g_d'), 'ANALYTICS_FORBIDDEN', 'revoke path: an owner of another workspace can not read it');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_error(format($$select * from read_grant_credential(%L)$$, :'g_d'), 'GRANT_OWNER_INACTIVE', 'revoke path: the normal read still refuses the demoted admin grant');
+select expect_count(format($$select count(*) from read_grant_for_revoke(%L) where ciphertext = 'ctd' and google_sub = 'sub-demoted'$$, :'g_d'), 1, 'revoke path: another admin reads the unused grant of a demoted admin');
+select delete_credential(:'g_d');
+select expect_error(format($$select * from read_grant_for_revoke(%L)$$, :'g_d'), 'ANALYTICS_FORBIDDEN', 'revoke path: ...and deletes it (the grant is gone)');
 reset role;
 update memberships set role = 'admin' where workspace_id = ws_a() and user_id = '00000000-0000-0000-0000-0000000000c3';
 update analytics_connections set status = 'needs_reauth' where id = an_conn('a3');
