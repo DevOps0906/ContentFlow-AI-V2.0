@@ -1,10 +1,11 @@
-// "Sync now" for a Search Console connection (CF-07b A4). Runs under the session's own Supabase client and the
+// "Sync now" for a Search Console / AdSense / GA4 connection (CF-07b A4). Runs under the session's own Supabase client and the
 // 0024/0026 RPCs (no service role). Order: begin_sync_run (cooldown / one running / admin checks are the
 // database's) -> refresh the access token -> fetch every page -> replace_synced_range in one transaction.
 // Any failure closes the run with finish_sync_run and writes no rows (a failure is never stored as 0).
 import type { Authed } from "./api";
 import { AnalyticsError, readRefreshToken } from "./analytics-connections-server";
-import { ADSENSE_ACCOUNT_RE } from "./google-oauth";
+import { ADSENSE_ACCOUNT_RE, GA4_PROPERTY_RE } from "./google-oauth";
+import { fetchGa4Pairs, Ga4SyncError, toGa4SyncRows } from "./ga4-sync";
 import { AdsenseSyncError, fetchAccountTimeZone, fetchAdsenseReport } from "./adsense-sync";
 import { fetchGscPairs, GscSyncError, syncRange, toSyncRows } from "./gsc-sync";
 import { GoogleError, refreshAccessToken, type GoogleConfig } from "./google-oauth";
@@ -45,8 +46,9 @@ export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: 
     .maybeSingle();
   if (error) throw new SyncError("연결을 불러오지 못했습니다.", 500, "read_failed");
   if (!con) throw new SyncError("연결을 찾을 수 없습니다.", 404, "not_found");
-  if (con.provider !== "gsc" && con.provider !== "adsense") throw new SyncError("이 연결은 아직 동기화를 지원하지 않습니다.", 400, "provider_unsupported");
+  if (con.provider !== "gsc" && con.provider !== "adsense" && con.provider !== "ga4") throw new SyncError("이 연결은 아직 동기화를 지원하지 않습니다.", 400, "provider_unsupported");
   if (con.provider === "adsense" && !ADSENSE_ACCOUNT_RE.test(con.external_ref)) throw new SyncError("저장된 AdSense 계정 값이 올바르지 않습니다. 연결을 해제하고 다시 연결해주세요.", 409, "CONNECTION_INVALID");
+  if (con.provider === "ga4" && !GA4_PROPERTY_RE.test(con.external_ref)) throw new SyncError("저장된 GA4 속성 값이 올바르지 않습니다. 연결을 해제하고 다시 연결해주세요.", 409, "CONNECTION_INVALID");
   if (!["pending", "active", "error"].includes(con.status) || !con.grant_id) throw mapRpc({ message: "CONNECTION_NOT_ACTIVE" });
 
   const { data: last } = await db
@@ -84,6 +86,9 @@ export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: 
       rows = report.rows;
       skipped = report.skipped;
       pageLevel = report.pageLevel;
+    } else if (con.provider === "ga4") {
+      const pairs = await fetchGa4Pairs(cfg.ga4DataBase, access, con.external_ref, range, deps.fetchImpl);
+      ({ rows, skipped } = toGa4SyncRows(pairs));
     } else {
       const pairs = await fetchGscPairs(cfg.apiBase, access, con.external_ref, range, deps.fetchImpl);
       ({ rows, skipped } = toSyncRows(pairs));
@@ -103,8 +108,8 @@ export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: 
     let out: SyncError;
     let status: "failed" | "delayed" = "failed";
     let conn: "needs_reauth" | null = null;
-    const prov = e instanceof AdsenseSyncError ? "AdSense" : "Search Console";
-    const kind = e instanceof GscSyncError || e instanceof AdsenseSyncError ? e.kind : null;
+    const prov = e instanceof AdsenseSyncError ? "AdSense" : e instanceof Ga4SyncError ? "Google Analytics" : "Search Console";
+    const kind = e instanceof GscSyncError || e instanceof AdsenseSyncError || e instanceof Ga4SyncError ? e.kind : null;
     if (kind === "auth") {
       out = new SyncError("Google 권한이 만료되었거나 철회되었습니다. 다시 연결해주세요.", 409, "NEEDS_REAUTH");
       conn = "needs_reauth";
@@ -113,6 +118,8 @@ export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: 
       status = "delayed";
     } else if (kind === "cap") {
       out = mapRpc({ message: "SYNC_CAP_EXCEEDED" });
+    } else if (kind === "forbidden") {
+      out = new SyncError("이 Google 계정에 해당 GA4 속성을 읽을 권한이 없거나 Analytics Data API를 쓸 수 없습니다.", 502, "PROVIDER_FORBIDDEN", "failed");
     } else if (kind === "currency") {
       out = new SyncError("AdSense 보고서에서 통화를 확인하지 못해 가져오지 않았습니다.", 502, "CURRENCY_MISSING", "failed");
     } else if (kind === "timezone") {

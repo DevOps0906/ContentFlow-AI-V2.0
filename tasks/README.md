@@ -27,7 +27,7 @@
 | CF-23 | 초과 슬롯 실결제 연동(권고 토스페이먼츠) | 기획 초안·착수 보류 | [명세 초안](../docs/01-planning/PAYMENTS.md) challenger REVISE(🔴4: 무이벤트 달 청구 근거, plan 변경 판정, 무인 주체 비밀, 웹훅 anon 모순). 착수 전 사용자 결정 7건(§12) |
 | CF-24 | 발행 큐(블로그별 동시 1건·워크스페이스 상한·백오프·Retry-After·idempotency) | 완료 | 0020·0021·rls 시험·단위 355·build. reviewer security·contract 반영. e2e `publish-queue.mjs` 17건 통과(2026-11-15: 중복·취소·WP 중단/복구 재시도·동시 전송·viewer 403·키보드·3구간 넘침 0) |
 | CF-07c | 팀 초대·역할 변경·제거(설정 화면 팀 패널), 비밀번호 재설정·이메일 확인 콜백 | 완료 | 0004 RPC·RLS, `/api/team/*`·`/api/auth/{reset,password}`·`/auth/callback`. W8 e2e(초대·수락, 재설정 메일→새 비밀번호 로그인) 통과. 초대 메일은 보내지 않음(가입·로그인 시 표시) |
-| CF-07b | 광고·분석 API 동기화(GSC → AdSense → GA4, 세션 기반) | 구현 완료(GSC·AdSense, 실 Google 미검증) | [명세](../docs/01-planning/ANALYTICS_SYNC.md). 0022~0027, OAuth·GSC·AdSense 수집·연결 패널. 단위 414, RLS ALL PASSED, 가짜 Google+브라우저 e2e 39. reviewer security·contract·code 반영. 남은 것: 실제 Google 클라이언트로 검증(사용자 발급), GA4(A7, 선택·후속) |
+| CF-07b | 광고·분석 API 동기화(GSC → AdSense → GA4, 세션 기반) | 구현 완료(GSC·AdSense·GA4, 실 Google 미검증) | [명세](../docs/01-planning/ANALYTICS_SYNC.md). 0022~0027, OAuth·GSC·AdSense 수집·연결 패널. 단위 439, RLS ALL PASSED, 가짜 Google+브라우저 e2e 46. reviewer security·contract·code 반영. 남은 것: 실제 Google 클라이언트로 검증(사용자 발급) |
 | CF-08 | 브라우저/3구간 시각 검증 | 완료 | W8 e2e 67건(2026-11-12): 500/768/1000/1440px 넘침 0, 키보드·저장 실패·인증 복구·WordPress slug. 스크립트 `apps/web/tests/e2e/` |
 
 현재 작업: [NOW](NOW.md).

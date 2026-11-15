@@ -26,9 +26,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const KEY = randomBytes(32).toString("base64");
 const GSC = "https://www.googleapis.com/auth/webmasters.readonly";
 const ADS = "https://www.googleapis.com/auth/adsense.readonly";
+const GA4 = "https://www.googleapis.com/auth/analytics.readonly";
 
 // ---- fake Google ----------------------------------------------------------------------------
-const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0, gscMode: "ok", gscSeed: 1, queries: [], adsPage: "ok", adsCurrency: "USD", adsTz: "Asia/Seoul", adsSeed: 1, adsQueries: [], grantScope: null };
+const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0, gscMode: "ok", gscSeed: 1, queries: [], adsPage: "ok", adsCurrency: "USD", adsTz: "Asia/Seoul", adsSeed: 1, adsQueries: [], grantScope: null, ga4Mode: "ok", ga4Seed: 1, ga4PageSize: 50, ga4Queries: [] };
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const googleServer = createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -100,6 +101,34 @@ const googleServer = createServer(async (req, res) => {
       for (const page of ["https://blog.example.com/a", "https://blog.example.com/b"])
         rows.push({ keys: [new Date(d).toISOString().slice(0, 10), page], clicks: g.gscSeed * 10, impressions: g.gscSeed * 100, ctr: 0.1, position: 2.5 });
     return send(200, { rows: body.startRow ? [] : rows });
+  }
+  // Analytics Admin API (accountSummaries) and Data API (runReport), fake
+  if (url.pathname === "/api/v1beta/accountSummaries") {
+    if (!/^Bearer at-/.test(req.headers.authorization ?? "")) return send(401, { error: "unauthorized" });
+    return send(200, {
+      accountSummaries: [
+        { name: "accountSummaries/1", account: "accounts/1", displayName: "E2E GA", propertySummaries: [{ property: "properties/111", displayName: "Blog GA4" }, { property: "properties/222", displayName: "Other GA4" }] },
+      ],
+    });
+  }
+  const rr = /^\/api\/v1beta\/properties\/(\d+):runReport$/.exec(url.pathname);
+  if (rr) {
+    if (!/^Bearer at-/.test(req.headers.authorization ?? "")) return send(401, { error: "unauthorized" });
+    const body = JSON.parse(raw);
+    g.ga4Queries.push({ property: rr[1], ...body });
+    if (g.ga4Mode === "429") return send(429, { error: { code: 429, status: "RESOURCE_EXHAUSTED" } });
+    if (g.ga4Mode === "403") return send(403, { error: { code: 403, status: "PERMISSION_DENIED", message: "no access" } });
+    if (g.ga4Mode === "scope") return send(403, { error: { code: 403, status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } });
+    const { startDate, endDate } = body.dateRanges[0];
+    const all = [];
+    for (let d = Date.parse(`${startDate}T00:00:00Z`); d <= Date.parse(`${endDate}T00:00:00Z`); d += 86400000) {
+      const date = new Date(d).toISOString().slice(0, 10).replaceAll("-", "");
+      for (const page of ["/a", "/b"])
+        all.push({ dimensionValues: [{ value: date }, { value: page }], metricValues: [{ value: String(10 * g.ga4Seed) }, { value: String(5 * g.ga4Seed) }, { value: String(4 * g.ga4Seed) }] });
+    }
+    // the fake serves g.ga4PageSize rows per call so the app has to page with offset
+    const size = Math.min(body.limit, g.ga4PageSize);
+    return send(200, { metricHeaders: ["screenPageViews", "sessions", "activeUsers"].map((name) => ({ name })), rows: all.slice(body.offset, body.offset + size), rowCount: all.length });
   }
   // AdSense Management API v2 (fake): accounts, account (time zone), reports:generate
   if (url.pathname.startsWith("/api/v2/accounts")) {
@@ -551,7 +580,7 @@ try {
   const adsBackdate = () => sql(`update analytics_sync_runs set requested_at = now() - interval '1 hour' where connection_id = '${ctx.ads}'`);
 
   await step("AdSense 동의: 알 수 없는 provider 400, adsense.readonly만 + include_granted_scopes=true, 콜백 provider=adsense, 암호문 저장", async () => {
-    const bad = await A.api("POST", "/api/integrations/google/start", { provider: "ga4" });
+    const bad = await A.api("POST", "/api/integrations/google/start", { provider: "bogus" });
     ok(bad.status === 400, `bad provider ${bad.status}`);
     const s = await A.api("POST", "/api/integrations/google/start", { provider: "adsense" });
     ok(s.status === 200, `start ${s.status}`);
@@ -672,6 +701,120 @@ try {
     ok(sql(`select count(*) from analytics_credentials where grant_id = '${ctx.adsGrant}'`) === "0", "grant가 남음");
     ok(adsCount() === rows && rows > 0, "행이 바뀜");
     ok(sql(`select status from analytics_connections where id = '${ctx.ads}'`) === "revoked", "상태");
+    g.revokeHits.length = 0;
+  });
+
+  // ===== GA4 (A7): incremental consent, property pick, runReport paging, cooldown, failures =====
+  const ga4Count = () => Number(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.ga4}'`));
+  const ga4Backdate = () => sql(`update analytics_sync_runs set requested_at = now() - interval '1 hour' where connection_id = '${ctx.ga4}'`);
+  const ga4Value = (v) => Number(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.ga4}' and metric = '조회수' and value = ${v}`));
+
+  await step("GA4 동의: analytics.readonly만 + include_granted_scopes=true, 허용 scope 없으면 scope_missing, 콜백 provider=ga4", async () => {
+    const s = await A.api("POST", "/api/integrations/google/start", { provider: "ga4" });
+    ok(s.status === 200, `start ${s.status}`);
+    const u = new URL(s.data.url);
+    ok(u.searchParams.get("scope") === `openid email ${GA4}` && u.searchParams.get("include_granted_scopes") === "true", u.search);
+    const denied = consent(s.data.url, "sub-GA-denied", "gad@google.test");
+    g.grantScope = `openid email ${GSC}`;
+    const dcb = await A.api("GET", `/api/integrations/google/callback?code=${denied.code}&state=${denied.state}`);
+    g.grantScope = null;
+    ok(reason(dcb.location) === "scope_missing", dcb.location);
+    const s2 = await A.api("POST", "/api/integrations/google/start", { provider: "ga4" });
+    const { code, state } = consent(s2.data.url, "sub-GA", "ga@google.test");
+    const cb = await A.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
+    const loc = new URL(cb.location, APP);
+    ok(cb.status === 303 && loc.searchParams.get("google") === "connected" && loc.searchParams.get("provider") === "ga4", cb.location);
+    ctx.ga4Grant = loc.searchParams.get("grant");
+    ok(sql(`select count(*) from analytics_credentials where grant_id = '${ctx.ga4Grant}' and ciphertext like 'v1.%'`) === "1", "credential");
+  });
+
+  await step("GA4 속성 목록·연결: editor 거부, 허용 밖·형식 오류 400, 연결 201, 같은 블로그 슬롯 중복 409", async () => {
+    const ed = await E.api("GET", `/api/integrations/google/sites?grant=${ctx.ga4Grant}&provider=ga4`);
+    ok(ed.status === 403, `editor ${ed.status}`);
+    const l = await A.api("GET", `/api/integrations/google/sites?grant=${ctx.ga4Grant}&provider=ga4`);
+    ok(l.status === 200 && l.data.properties.map((p) => p.name).join() === "properties/111,properties/222", JSON.stringify(l.data));
+    const other = await B.api("GET", `/api/integrations/google/sites?grant=${ctx.ga4Grant}&provider=ga4`);
+    ok(other.status !== 200, `B ${other.status}`);
+    const notAllowed = await A.api("POST", "/api/analytics/connections", { provider: "ga4", grantId: ctx.ga4Grant, propertyName: "properties/999" });
+    ok(notAllowed.status === 400 && notAllowed.data.code === "site_not_allowed", `not allowed ${notAllowed.status}`);
+    for (const bad of ["properties/1x", "accounts/111", "properties/111/../x", ""]) {
+      const r = await A.api("POST", "/api/analytics/connections", { provider: "ga4", grantId: ctx.ga4Grant, propertyName: bad });
+      ok(r.status === 400, `bad ${bad} ${r.status}`);
+    }
+    const c = await A.api("POST", "/api/analytics/connections", { provider: "ga4", grantId: ctx.ga4Grant, propertyName: "properties/111" });
+    ok(c.status === 201 && c.data.connection.provider === "ga4" && c.data.connection.status === "pending", `connect ${c.status} ${JSON.stringify(c.data)}`);
+    ctx.ga4 = c.data.connection.id;
+    ok(sql(`select scopes::text from analytics_connections where id = '${ctx.ga4}'`) === `{${GA4}}`, "scopes");
+    const second = await A.api("POST", "/api/analytics/connections", { provider: "ga4", grantId: ctx.ga4Grant, propertyName: "properties/222" });
+    ok(second.status === 409 && second.data.code === "duplicate", `second ${second.status}`);
+  });
+
+  await step("GA4 동기화: editor 거부, 최초 90일 × 2페이지 × 3지표를 offset으로 나눠 가져와 tool ga4-api로 저장, 연결 active", async () => {
+    const e = await E.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    ok(e.status === 403, `editor ${e.status}`);
+    ga4Backdate();
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    ok(r.status === 200 && r.data.status === "succeeded" && r.data.rows === 540, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    ok(g.ga4Queries.map((q) => q.offset).join() === "0,50,100,150", `offsets ${g.ga4Queries.map((q) => q.offset).join()}`);
+    const q0 = g.ga4Queries[0];
+    ok(q0.property === "111" && q0.dimensions.map((d) => d.name).join() === "date,pagePath" && q0.metrics.map((m) => m.name).join() === "screenPageViews,sessions,activeUsers", JSON.stringify(q0));
+    ok(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.ga4}' and tool = 'ga4-api' and scope = 'page' and coverage = 'complete' and sync_run_id = '${r.data.runId}'`) === "540", "행 속성");
+    ok(sql(`select string_agg(distinct metric || ':' || unit, ',' order by metric || ':' || unit) from blog_metric_snapshots where connection_id = '${ctx.ga4}'`) === "세션:회,조회수:회,활성 사용자:명", "지표 이름·단위");
+    ok(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.ga4}' and dimension not in ('/a', '/b')`) === "0", "pagePath");
+    ok(sql(`select status from analytics_connections where id = '${ctx.ga4}'`) === "active", "연결 상태");
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ga4}'`) === "0", "수익 행이 생김");
+    const l = await A.api("GET", "/api/analytics/connections");
+    ok(l.data.connections.find((x) => x.id === ctx.ga4).lastRun?.status === "succeeded", "목록 lastRun");
+  });
+
+  await step("GA4 쿨다운: 바로 다시 누르면 409 SYNC_COOLDOWN, Google 호출 없음", async () => {
+    const hits = g.ga4Queries.length;
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    ok(r.status === 409 && r.data.code === "SYNC_COOLDOWN" && g.ga4Queries.length === hits, `${r.status} ${JSON.stringify(r.data)}`);
+  });
+
+  await step("GA4 재조회: 마지막 끝 − 3일부터 다시 가져와 겹치는 날만 교체(행 수 그대로, 앞 구간 값 유지)", async () => {
+    ga4Backdate();
+    g.ga4Seed = 2;
+    g.ga4Queries.length = 0;
+    const rows = ga4Count();
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    g.ga4Seed = 1;
+    ok(r.status === 200, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    ok(g.ga4Queries[0].dateRanges[0].startDate === r.data.range.start, "범위");
+    ok(ga4Count() === rows, "행 수가 바뀜");
+    ok(ga4Value(20) === 8, `겹친 4일 x 2페이지만 새 값: ${ga4Value(20)}`);
+    ok(ga4Value(10) === 172, `앞 구간 값 유지: ${ga4Value(10)}`);
+  });
+
+  await step("GA4 실패: 429 → PROVIDER_QUOTA(delayed), 속성 403 → PROVIDER_FORBIDDEN(재연결 상태 아님), 범위 403 → NEEDS_REAUTH; 행 변화·0 저장 없음", async () => {
+    const rows = ga4Count();
+    ga4Backdate();
+    g.ga4Mode = "429";
+    const q = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    ok(q.status === 502 && q.data.code === "PROVIDER_QUOTA" && q.data.status === "delayed", `429 ${q.status} ${JSON.stringify(q.data)}`);
+    ga4Backdate();
+    g.ga4Mode = "403";
+    const f = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    ok(f.status === 502 && f.data.code === "PROVIDER_FORBIDDEN", `403 ${f.status} ${JSON.stringify(f.data)}`);
+    ok(sql(`select status from analytics_connections where id = '${ctx.ga4}'`) !== "needs_reauth", "403으로 재연결 상태가 됨");
+    ga4Backdate();
+    g.ga4Mode = "scope";
+    const s = await A.api("POST", `/api/analytics/connections/${ctx.ga4}/sync`);
+    g.ga4Mode = "ok";
+    ok(s.status === 409 && s.data.code === "NEEDS_REAUTH", `scope ${s.status} ${JSON.stringify(s.data)}`);
+    ok(sql(`select status from analytics_connections where id = '${ctx.ga4}'`) === "needs_reauth", "연결 상태");
+    ok(ga4Count() === rows, "행이 바뀜");
+    ok(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.ga4}' and value = 0`) === "0", "0이 저장됨");
+  });
+
+  await step("GA4 해제: 마지막 연결이라 Google revoke 후 grant 삭제, 가져온 행은 유지", async () => {
+    const rows = ga4Count();
+    g.revokeHits.length = 0;
+    const r = await A.api("DELETE", `/api/analytics/connections/${ctx.ga4}`);
+    ok(r.status === 200 && r.data.revoke === "done" && g.revokeHits.length === 1, JSON.stringify(r.data));
+    ok(sql(`select count(*) from analytics_credentials where grant_id = '${ctx.ga4Grant}'`) === "0", "grant가 남음");
+    ok(ga4Count() === rows && rows > 0, "행이 바뀜");
     g.revokeHits.length = 0;
   });
 

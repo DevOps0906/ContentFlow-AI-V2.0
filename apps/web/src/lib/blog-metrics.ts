@@ -1,6 +1,7 @@
 // Per-tool performance records of blog accounts (`blog_metric_snapshots`, migration 0017). Rules:
 //  - values only come from manual entry or a Search Console CSV, always with tool and measurement date
-//  - nothing is fetched from the tools and no tool is shown as connected: they are shortcuts only
+//  - nothing is fetched from the tools except tool gsc-api / ga4-api rows, which only the connection sync writes
+//    (ga4-api: page x day views / sessions / active users; active users are never added across days or pages)
 //  - values of different tools (or accounts) are never added, converted or ranked together
 //  - a blog index is what a third-party tool displayed; it is not official and is never computed here
 import { isUuid } from "./articles-db";

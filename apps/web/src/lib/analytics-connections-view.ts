@@ -44,6 +44,7 @@ export const syncErrorMessages: Record<string, string> = {
   PROVIDER_ERROR: "Google에서 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.",
   CURRENCY_MISSING: "AdSense 보고서에서 통화를 확인하지 못해 가져오지 않았습니다. 수익은 N/A로 유지됩니다.",
   TIMEZONE_MISSING: "AdSense 계정의 시간대를 확인하지 못해 가져오지 않았습니다. 수익은 N/A로 유지됩니다.",
+  PROVIDER_FORBIDDEN: "이 Google 계정에 해당 GA4 속성을 읽을 권한이 없거나 Analytics Data API를 쓸 수 없습니다. 속성 접근 권한을 확인해주세요.",
   PROVIDER_QUOTA: "Google 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.",
 };
 export function syncErrorMessage(code: unknown, status: number): string {
@@ -93,4 +94,12 @@ export function adsenseLines(info: ConnectionView["adsense"]): string[] {
   if (info?.currency) lines.push(`통화 ${info.currency} · 보고 시간대 ${info.timezone ?? "N/A"}`);
   if (info?.pageLevel === false) lines.push("글별 미지원: 이 계정은 페이지별 보고서를 허용하지 않아 사이트·일 단위로만 가져옵니다. 글별 ROI는 N/A입니다.");
   return lines;
+}
+
+/** Text lines of a GA4 connection: separate rows, never added to GSC/AdSense, users are not additive (D3). */
+export function ga4Lines(): string[] {
+  return [
+    "GA4 조회수·세션·활성 사용자는 페이지·일 단위 별도 기록입니다. Search Console·AdSense 값과 합치지 않고, RPM 계산에도 쓰지 않습니다.",
+    "활성 사용자는 날짜·페이지 사이에 합산할 수 없어 합계를 만들지 않습니다.",
+  ];
 }

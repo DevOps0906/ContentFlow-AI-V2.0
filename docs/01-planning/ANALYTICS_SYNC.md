@@ -28,6 +28,8 @@
 | AdSense 보고서 | ESTIMATED_EARNINGS, PAGE_VIEWS, IMPRESSIONS, CLICKS | DATE, PAGE_URL(계정별 `미확인`) | `revenue_rows` source `adsense-api`, status `estimated` | [Metric](https://developers.google.com/adsense/management/reference/rest/v2/Metric), [Dimension](https://developers.google.com/adsense/management/reference/rest/v2/Dimension), [reports.generate](https://developers.google.com/adsense/management/reference/rest/v2/accounts.reports/generate) |
 | GA4 Data API (선택) | 세션·조회수·참여 지표(확정 목록 `미확인`) | date, pagePath | `blog_metric_snapshots` tool `ga4-api`(신규 값) | [Data API v1](https://developers.google.com/analytics/devguides/reporting/data/v1) |
 
+> GA4 구현 메모(A7, 2026-11-16): 차원은 `date`×`pagePath`만 쓴다 — 한 속성이 여러 호스트를 추적하면 같은 경로가 합쳐지므로 **다중 호스트 속성은 미지원**(블로그당 단일 호스트 속성을 연결). `(not set)` 경로는 페이지가 아닌 행이라 저장하지 않으며 coverage에 영향을 주지 않는다. 활성 사용자는 비가산이라 병합 시 최댓값, 화면 합계 없음.
+
 고정 규칙(PRD#11과 같다, 재서술 최소화):
 - AdSense `ESTIMATED_EARNINGS`는 항상 `status=estimated`. API로 `finalized`를 만들지 않는다.
 - 페이지 RPM의 분모는 **같은 AdSense 보고서의 PAGE_VIEWS**만. GA4 조회수는 분모·분자 어디에도 섞지 않고 별도 행으로만 보인다.

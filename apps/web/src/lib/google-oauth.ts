@@ -6,10 +6,11 @@ import { openValue, parseKeyRing, sealValue, type KeyRing } from "./token-crypto
 
 export const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 export const ADSENSE_SCOPE = "https://www.googleapis.com/auth/adsense.readonly";
+export const GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const START_SCOPES = ["openid", "email", GSC_SCOPE] as const;
-export type GoogleProvider = "gsc" | "adsense";
+export type GoogleProvider = "gsc" | "adsense" | "ga4";
 /** Scopes asked per source (incremental consent: each source is its own consent, never a bundle). */
-export const PROVIDER_SCOPES: Record<GoogleProvider, string> = { gsc: GSC_SCOPE, adsense: ADSENSE_SCOPE };
+export const PROVIDER_SCOPES: Record<GoogleProvider, string> = { gsc: GSC_SCOPE, adsense: ADSENSE_SCOPE, ga4: GA4_SCOPE };
 export const OAUTH_COOKIE = "cf_goog_oauth";
 export const OAUTH_COOKIE_PATH = "/api/integrations/google";
 export const OAUTH_TTL_MS = 10 * 60_000;
@@ -24,6 +25,9 @@ export type GoogleConfig = {
   apiBase: string;
   /** AdSense Management API root (v2 paths hang below it). GOOGLE_API_BASE overrides it, so tests use a fake. */
   adsenseBase: string;
+  /** Analytics Admin API root (accountSummaries) and Data API root (runReport); GOOGLE_API_BASE overrides both. */
+  ga4AdminBase: string;
+  ga4DataBase: string;
   ring: KeyRing;
 };
 
@@ -42,6 +46,8 @@ export function googleConfig(env = process.env): GoogleConfig | null {
     revokeUrl: base ? `${base}/revoke` : "https://oauth2.googleapis.com/revoke",
     apiBase: (env.GOOGLE_API_BASE?.trim() || "https://www.googleapis.com").replace(/\/+$/, ""),
     adsenseBase: (env.GOOGLE_API_BASE?.trim() || "https://adsense.googleapis.com").replace(/\/+$/, ""),
+    ga4AdminBase: (env.GOOGLE_API_BASE?.trim() || "https://analyticsadmin.googleapis.com").replace(/\/+$/, ""),
+    ga4DataBase: (env.GOOGLE_API_BASE?.trim() || "https://analyticsdata.googleapis.com").replace(/\/+$/, ""),
     ring,
   };
 }
@@ -90,7 +96,7 @@ export function checkFlow(ring: KeyRing, cookie: string | undefined, stateParam:
     return { ok: false, code: "bad_cookie" };
   }
   const f = raw as Partial<OAuthFlow> | null;
-  if (!f || typeof f.s !== "string" || typeof f.v !== "string" || typeof f.u !== "string" || typeof f.w !== "string" || typeof f.x !== "number" || (f.p !== "gsc" && f.p !== "adsense"))
+  if (!f || typeof f.s !== "string" || typeof f.v !== "string" || typeof f.u !== "string" || typeof f.w !== "string" || typeof f.x !== "number" || (f.p !== "gsc" && f.p !== "adsense" && f.p !== "ga4"))
     return { ok: false, code: "bad_cookie" };
   if (now > f.x) return { ok: false, code: "expired" };
   const a = Buffer.from(f.s);
@@ -146,7 +152,7 @@ export async function exchangeCode(cfg: GoogleConfig, code: string, verifier: st
   if (status !== 200 || typeof body.access_token !== "string") throw new GoogleError("upstream", "Google이 인가 코드를 받아들이지 않았습니다.");
   const scopes = typeof body.scope === "string" ? body.scope.split(" ") : [];
   if (!scopes.includes(PROVIDER_SCOPES[provider]))
-    throw new GoogleError("scope_missing", provider === "adsense" ? "AdSense 읽기 권한이 허용되지 않았습니다." : "Search Console 읽기 권한이 허용되지 않았습니다.");
+    throw new GoogleError("scope_missing", provider === "adsense" ? "AdSense 읽기 권한이 허용되지 않았습니다." : provider === "ga4" ? "Google Analytics 읽기 권한이 허용되지 않았습니다." : "Search Console 읽기 권한이 허용되지 않았습니다.");
   if (typeof body.refresh_token !== "string" || !body.refresh_token) throw new GoogleError("no_refresh_token", "Google이 갱신 토큰을 주지 않았습니다.");
   const { sub, email } = idTokenClaims(body.id_token);
   return { refreshToken: body.refresh_token, accessToken: body.access_token, sub, email };
@@ -228,3 +234,42 @@ export async function listAdsenseAccounts(cfg: GoogleConfig, accessToken: string
   return out.slice(0, 100);
 }
 export const ADSENSE_ACCOUNT_RE = /^accounts\/[A-Za-z0-9_-]{1,100}$/;
+
+/** GA4 property resource name as Admin API returns it; checked when a connection is made and again on every sync. */
+export const GA4_PROPERTY_RE = /^properties\/\d{1,20}$/;
+export type Ga4Property = { name: string; displayName: string; account: string };
+/** GA4 properties the Google account can read (accountSummaries.list, paged). `name` is "properties/123". */
+export async function listGa4Properties(cfg: GoogleConfig, accessToken: string, fetchImpl: typeof fetch = fetch): Promise<Ga4Property[]> {
+  const out: Ga4Property[] = [];
+  let pageToken = "";
+  for (let page = 0; page < 5 && out.length < 500; page++) {
+    let res: Response;
+    try {
+      res = await fetchImpl(`${cfg.ga4AdminBase}/v1beta/accountSummaries?pageSize=200${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}`, {
+        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+        redirect: "error",
+      });
+    } catch {
+      throw new GoogleError("upstream", "Google Analytics 속성 목록을 가져오지 못했습니다.");
+    }
+    if (res.status !== 200) throw new GoogleError("upstream", "Google Analytics 속성 목록을 가져오지 못했습니다.");
+    let body: { accountSummaries?: unknown; nextPageToken?: unknown };
+    try {
+      body = JSON.parse((await res.text()).slice(0, 1_000_000));
+    } catch {
+      throw new GoogleError("bad_response", "Google 응답을 확인하지 못했습니다.");
+    }
+    for (const raw of Array.isArray(body.accountSummaries) ? body.accountSummaries : []) {
+      const a = raw as { displayName?: unknown; propertySummaries?: unknown } | null;
+      for (const p of Array.isArray(a?.propertySummaries) ? (a!.propertySummaries as unknown[]) : []) {
+        const x = p as { property?: unknown; displayName?: unknown } | null;
+        if (!x || typeof x.property !== "string" || !GA4_PROPERTY_RE.test(x.property)) continue;
+        out.push({ name: x.property, displayName: typeof x.displayName === "string" ? x.displayName.slice(0, 200) : "", account: typeof a?.displayName === "string" ? a.displayName.slice(0, 200) : "" });
+      }
+    }
+    pageToken = typeof body.nextPageToken === "string" ? body.nextPageToken : "";
+    if (!pageToken) break;
+  }
+  return out.slice(0, 500);
+}

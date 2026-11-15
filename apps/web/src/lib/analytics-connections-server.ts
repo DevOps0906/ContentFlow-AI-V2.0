@@ -3,7 +3,7 @@
 // The token is decrypted only inside these functions and never returned or logged.
 import { randomUUID } from "node:crypto";
 import type { Authed } from "./api";
-import { ADSENSE_SCOPE, GSC_SCOPE, listAdsenseAccounts, listGscSites, refreshAccessToken, revokeToken, GoogleError, type AdsenseAccount, type GoogleConfig, type GscSite } from "./google-oauth";
+import { ADSENSE_SCOPE, GA4_PROPERTY_RE, GA4_SCOPE, GSC_SCOPE, listAdsenseAccounts, listGa4Properties, listGscSites, refreshAccessToken, revokeToken, GoogleError, type AdsenseAccount, type Ga4Property, type GoogleConfig, type GscSite } from "./google-oauth";
 import { decryptToken, encryptToken, reencryptToken, TokenCryptoError, type KeyRing } from "./token-crypto";
 
 export class AnalyticsError extends Error {
@@ -135,6 +135,16 @@ export async function adsenseAccountsOfGrant(account: Authed, cfg: GoogleConfig,
   }
 }
 
+export async function ga4PropertiesOfGrant(account: Authed, cfg: GoogleConfig, grantId: string): Promise<Ga4Property[]> {
+  const access = await accessFor(account, cfg, grantId);
+  try {
+    return await listGa4Properties(cfg, access);
+  } catch (e) {
+    if (e instanceof GoogleError) throw new AnalyticsError(e.message, 502, e.code);
+    throw e;
+  }
+}
+
 const COLUMNS = "id, blog_id, grant_id, provider, external_ref, status, last_attempt_at, last_success_at, last_error_code, created_at";
 /** What the stored AdSense rows of a connection say: currency, time zone, and whether pages are available. */
 export type AdsenseInfo = { currency: string | null; timezone: string | null; pageLevel: boolean | null };
@@ -208,6 +218,42 @@ export async function createAdsenseConnection(account: Authed, cfg: GoogleConfig
     .single();
   if (error) {
     if (error.code === "23505") throw new AnalyticsError("이미 연결된 AdSense 계정이 있습니다. 워크스페이스당 AdSense 계정은 1개만 연결할 수 있습니다.", 409, "duplicate");
+    if ((error.message ?? "").includes("GRANT_OWNER_INACTIVE")) throw rpcFail(error);
+    if (error.code === "42501" || error.code === "PGRST116") throw new AnalyticsError("연결 관리는 소유자·관리자만 할 수 있습니다.", 403, "forbidden");
+    throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  }
+  return data as ConnectionRow;
+}
+
+export async function createGa4Connection(account: Authed, cfg: GoogleConfig, input: { grantId: string; propertyName: string; blogId: string | null }): Promise<ConnectionRow> {
+  if (!GA4_PROPERTY_RE.test(input.propertyName)) throw new AnalyticsError("GA4 속성 값이 올바르지 않습니다.", 400, "site_not_allowed");
+  const props = await ga4PropertiesOfGrant(account, cfg, input.grantId);
+  if (!props.some((p) => p.name === input.propertyName)) throw new AnalyticsError("이 Google 계정에서 볼 수 없는 속성입니다.", 400, "site_not_allowed");
+  const { data: prior, error: priorError } = await account.supabase
+    .from("analytics_connections")
+    .select(COLUMNS)
+    .eq("workspace_id", account.workspaceId)
+    .eq("provider", "ga4")
+    .eq("external_ref", input.propertyName)
+    .maybeSingle();
+  if (priorError) throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  if ((prior as ConnectionRow | null)?.status === "revoked") return reconnectRevoked(account, prior as ConnectionRow, input.grantId, input.blogId);
+  const { data, error } = await account.supabase
+    .from("analytics_connections")
+    .insert({
+      workspace_id: account.workspaceId,
+      blog_id: input.blogId,
+      grant_id: input.grantId,
+      provider: "ga4",
+      external_ref: input.propertyName,
+      scopes: [GA4_SCOPE],
+      connected_by: account.user.id,
+    })
+    .select(COLUMNS)
+    .single();
+  if (error) {
+    if (error.code === "23505") throw new AnalyticsError("이미 연결된 속성이거나, 이 블로그에 이미 Google Analytics 연결이 있습니다.", 409, "duplicate");
+    if (error.code === "23503") throw new AnalyticsError("이 워크스페이스의 블로그가 아닙니다.", 400, "blog_invalid");
     if ((error.message ?? "").includes("GRANT_OWNER_INACTIVE")) throw rpcFail(error);
     if (error.code === "42501" || error.code === "PGRST116") throw new AnalyticsError("연결 관리는 소유자·관리자만 할 수 있습니다.", 403, "forbidden");
     throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");

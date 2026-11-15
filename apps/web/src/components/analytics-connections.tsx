@@ -4,6 +4,7 @@ import { RefreshCw, Unplug } from "lucide-react";
 import { blogName, type Blog } from "@/lib/blogs";
 import {
   adsenseLines,
+  ga4Lines,
   connectionStatusClass,
   connectionStatusLabels,
   googleErrorMessage,
@@ -18,8 +19,9 @@ import { useFeedback } from "./feedback";
 
 type Listing = { configured: boolean; canManage: boolean; connections: ConnectionView[]; unusedGrants: string[] };
 type Site = { siteUrl: string; permissionLevel?: string; label?: string };
-type Provider = "gsc" | "adsense";
-const providerName = (p: string) => (p === "adsense" ? "AdSense" : "Search Console");
+type Provider = "gsc" | "adsense" | "ga4";
+const providerName = (p: string) => (p === "adsense" ? "AdSense" : p === "ga4" ? "Google Analytics 4" : "Search Console");
+const asProvider = (p: string): Provider => (p === "adsense" || p === "ga4" ? p : "gsc");
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { ...init, headers: init?.body ? { "Content-Type": "application/json" } : undefined });
@@ -70,9 +72,9 @@ function DisconnectDialog({ target, shared, busy, onCancel, onConfirm }: { targe
           {target.external_ref} 연결만 끊습니다. 이 Google 계정으로 연결된 마지막 연결이면 Google 권한 철회까지 함께 진행합니다. 이미 가져온 데이터는 기본적으로 남고 &quot;연결 해제됨&quot;으로
           표시됩니다.
         </p>
-        {shared && target.provider === "adsense" && (
+        {shared && target.provider !== "gsc" && (
           <p className="metric-note">
-            Google 쪽 AdSense 읽기 권한은 같은 Google 계정의 다른 연결이 남아 있어 철회되지 않습니다. 완전히 철회하려면 Google 계정 권한 페이지에서 제거하세요.
+            Google 쪽 {providerName(target.provider)} 읽기 권한은 같은 Google 계정의 다른 연결이 남아 있어 철회되지 않습니다. 완전히 철회하려면 Google 계정 권한 페이지에서 제거하세요.
           </p>
         )}
         <label className="conn-check">
@@ -128,10 +130,14 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
   const openPicker = useCallback(async (grant: string, provider: Provider) => {
     setPicker({ provider, grant, sites: null, site: "", blog: "" });
     try {
-      const q = `grant=${encodeURIComponent(grant)}${provider === "adsense" ? "&provider=adsense" : ""}`;
-      const r = await call<{ sites?: Site[]; accounts?: { name: string; displayName: string }[] }>(`/api/integrations/google/sites?${q}`);
+      const q = `grant=${encodeURIComponent(grant)}${provider === "gsc" ? "" : `&provider=${provider}`}`;
+      const r = await call<{ sites?: Site[]; accounts?: { name: string; displayName: string }[]; properties?: { name: string; displayName: string; account?: string }[] }>(`/api/integrations/google/sites?${q}`);
       const sites: Site[] =
-        provider === "adsense" ? (r.accounts ?? []).map((a) => ({ siteUrl: a.name, label: a.displayName ? `${a.displayName} (${a.name})` : a.name })) : (r.sites ?? []);
+        provider === "adsense"
+          ? (r.accounts ?? []).map((a) => ({ siteUrl: a.name, label: a.displayName ? `${a.displayName} (${a.name})` : a.name }))
+          : provider === "ga4"
+            ? (r.properties ?? []).map((p) => ({ siteUrl: p.name, label: `${p.displayName || p.name}${p.account ? ` · ${p.account}` : ""} (${p.name})` }))
+            : (r.sites ?? []);
       setPicker({ provider, grant, sites, site: sites[0]?.siteUrl ?? "", blog: "" });
     } catch (e) {
       setPicker(null);
@@ -147,7 +153,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
     if (!g) return;
     const grant = q.get("grant");
     const reason = q.get("reason");
-    const provider: Provider = q.get("provider") === "adsense" ? "adsense" : "gsc";
+    const provider = asProvider(q.get("provider") ?? "");
     for (const k of ["google", "grant", "reason", "provider"]) q.delete(k);
     const rest = q.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
@@ -221,7 +227,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
   if (!account)
     return (
       <p className="metric-note">
-        로컬 모드에서는 Google 연결을 사용할 수 없습니다. 계정 모드(로그인)에서 Search Console·AdSense를 연결할 수 있습니다. 연결 전까지 광고·검색 성과는 N/A입니다.
+        로컬 모드에서는 Google 연결을 사용할 수 없습니다. 계정 모드(로그인)에서 Search Console·AdSense·GA4를 연결할 수 있습니다. 연결 전까지 광고·검색 성과는 N/A입니다.
       </p>
     );
   if (!data && !error) return <p className="metric-note">연결 정보를 불러오고 있어요.</p>;
@@ -231,7 +237,8 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
   const blogById = (id: string | null): Blog | undefined => (id ? blogs.find((b) => b.id === id) : undefined);
   const blogLabel = (id: string | null) => (id ? (blogById(id) ? blogName(blogById(id)!) : "알 수 없는 블로그") : "블로그 미지정");
   const adsenseConns = connections.filter((c) => c.provider === "adsense" && c.status !== "revoked");
-  const usedBlogs = new Set(connections.filter((c) => c.provider === "gsc" && c.status !== "revoked").map((c) => c.blog_id));
+  const ga4Conns = connections.filter((c) => c.provider === "ga4" && c.status !== "revoked");
+  const usedBlogs = new Set(connections.filter((c) => c.provider === (picker?.provider ?? "gsc") && c.status !== "revoked").map((c) => c.blog_id));
 
   return (
     <>
@@ -286,19 +293,30 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
             <p className="metric-note">연결과 해제는 소유자·관리자만 할 수 있습니다.</p>
           )}
         </section>
-        <section className="conn-card conn-card-off" aria-label="Google Analytics 4">
+        <section className="conn-card" aria-label="Google Analytics 4">
           <div className="conn-head">
             <b>Google Analytics 4</b>
-            <span className="status write">연결되지 않음</span>
+            <span className={`status ${data?.configured && ga4Conns.length ? "approve" : "write"}`}>{data?.configured && ga4Conns.length ? "연결됨" : "연결 안 됨"}</span>
           </div>
-          <p className="metric-note">후속 단계입니다. 방문 지표는 N/A로 표시됩니다.</p>
+          <p className="metric-note">
+            Analytics 읽기 권한만 따로 동의합니다(다른 연결과 별개). 조회수·세션·활성 사용자를 페이지·일 단위로 가져오며 RPM 계산에는 쓰지 않습니다. 연결 전까지 방문 지표는 N/A입니다.
+          </p>
+          {manage ? (
+            <div className="editor-actions">
+              <button className="button primary" onClick={() => startConsent("ga4")} disabled={busy || !data?.configured}>
+                GA4 연결
+              </button>
+            </div>
+          ) : (
+            <p className="metric-note">연결과 해제는 소유자·관리자만 할 수 있습니다.</p>
+          )}
         </section>
       </div>
 
       {picker && manage && (
         <form
           className="conn-picker"
-          aria-label={picker.provider === "adsense" ? "AdSense 계정 선택" : "Search Console 속성 선택"}
+          aria-label={picker.provider === "adsense" ? "AdSense 계정 선택" : picker.provider === "ga4" ? "GA4 속성 선택" : "Search Console 속성 선택"}
           onSubmit={(e) => {
             e.preventDefault();
             if (!picker.site) return;
@@ -308,7 +326,9 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                 body: JSON.stringify(
                   picker.provider === "adsense"
                     ? { provider: "adsense", grantId: picker.grant, accountName: picker.site }
-                    : { grantId: picker.grant, siteUrl: picker.site, blogId: picker.blog || null },
+                    : picker.provider === "ga4"
+                      ? { provider: "ga4", grantId: picker.grant, propertyName: picker.site, blogId: picker.blog || null }
+                      : { grantId: picker.grant, siteUrl: picker.site, blogId: picker.blog || null },
                 ),
               });
               setPicker(null);
@@ -342,7 +362,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                   ))}
                 </select>
               </div>
-              {picker.provider === "gsc" && (
+              {picker.provider !== "adsense" && (
               <div className="field">
                 <label htmlFor="conn-blog">블로그 계정(선택)</label>
                 <select id="conn-blog" value={picker.blog} disabled={busy} onChange={(e) => setPicker({ ...picker, blog: e.target.value })}>
@@ -430,6 +450,12 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                       {line}
                     </p>
                   ))}
+                {c.provider === "ga4" &&
+                  ga4Lines().map((line) => (
+                    <p key={line} className="metric-note">
+                      {line}
+                    </p>
+                  ))}
                 {last.partial && <p className="metric-note">일부 데이터만 가져왔습니다. 합계에서 완전한 데이터로 취급하지 않습니다.</p>}
                 {c.status === "revoked" && <p className="metric-note">연결이 해제되었습니다. 이전에 가져온 데이터는 남아 있을 수 있습니다.</p>}
                 {c.status === "error" && <p className="metric-note">마지막 동기화가 실패했습니다. 15분 뒤에 다시 동기화할 수 있습니다.</p>}
@@ -442,7 +468,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                 {manage && c.status !== "revoked" && (
                   <div className="editor-actions">
                     {needsReauth ? (
-                      <button className="button primary" onClick={() => startConsent(c.provider === "adsense" ? "adsense" : "gsc")} disabled={busy || !data?.configured}>
+                      <button className="button primary" onClick={() => startConsent(asProvider(c.provider))} disabled={busy || !data?.configured}>
                         다시 연결
                       </button>
                     ) : (

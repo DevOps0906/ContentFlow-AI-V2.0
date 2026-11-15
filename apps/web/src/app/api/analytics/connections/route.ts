@@ -1,8 +1,8 @@
 import { requireAccount } from "@/lib/api";
-import { adsenseInfos, AnalyticsError, createAdsenseConnection, createGscConnection, listConnections } from "@/lib/analytics-connections-server";
+import { adsenseInfos, AnalyticsError, createAdsenseConnection, createGa4Connection, createGscConnection, listConnections } from "@/lib/analytics-connections-server";
 import { lastRuns } from "@/lib/analytics-sync-server";
 import { isUuid } from "@/lib/articles-db";
-import { ADSENSE_ACCOUNT_RE, googleConfig } from "@/lib/google-oauth";
+import { ADSENSE_ACCOUNT_RE, GA4_PROPERTY_RE, googleConfig } from "@/lib/google-oauth";
 import { json, readJson, sharedLimited } from "@/lib/server";
 import { canManageTeam } from "@/lib/team";
 
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
   }
 }
 
-/** Connects one Search Console property to a blog, or (provider "adsense") one AdSense account to the workspace. Owner/admin only. */
+/** Connects one Search Console property (or, provider "ga4", one GA4 property) to a blog, or (provider "adsense") one AdSense account to the workspace. Owner/admin only. */
 export async function POST(req: Request) {
   const account = await requireAccount(req);
   if (account instanceof Response) return account;
@@ -39,18 +39,27 @@ export async function POST(req: Request) {
   if (!cfg) return json({ error: "Google 연결이 설정되지 않았습니다.", code: "not_configured" }, 503);
   if (await sharedLimited(account.supabase, `an-connect:${account.user.id}`, 20, 60_000))
     return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
-  let body: { provider?: unknown; grantId?: unknown; siteUrl?: unknown; accountName?: unknown; blogId?: unknown } | null;
+  let body: { provider?: unknown; grantId?: unknown; siteUrl?: unknown; accountName?: unknown; propertyName?: unknown; blogId?: unknown } | null;
   try {
     body = (await readJson(req, 4_000)) as typeof body;
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "잘못된 요청입니다." }, 400);
   }
-  const { provider, grantId, siteUrl, accountName, blogId } = body ?? {};
+  const { provider, grantId, siteUrl, accountName, propertyName, blogId } = body ?? {};
   if (typeof grantId !== "string" || !isUuid(grantId)) return json({ error: "잘못된 연결 ID입니다." }, 400);
   if (provider === "adsense") {
     if (typeof accountName !== "string" || !ADSENSE_ACCOUNT_RE.test(accountName)) return json({ error: "AdSense 계정을 선택해주세요." }, 400);
     try {
       return json({ connection: await createAdsenseConnection(account, cfg, { grantId, accountName }) }, 201);
+    } catch (e) {
+      return fail(e);
+    }
+  }
+  if (provider === "ga4") {
+    if (typeof propertyName !== "string" || !GA4_PROPERTY_RE.test(propertyName)) return json({ error: "GA4 속성을 선택해주세요." }, 400);
+    if (blogId != null && (typeof blogId !== "string" || !isUuid(blogId))) return json({ error: "잘못된 블로그 ID입니다." }, 400);
+    try {
+      return json({ connection: await createGa4Connection(account, cfg, { grantId, propertyName, blogId: (blogId as string | null | undefined) ?? null }) }, 201);
     } catch (e) {
       return fail(e);
     }
