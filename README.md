@@ -21,7 +21,14 @@
 |---|---|---|
 | ![로그인](docs/07-design/screens/14-login.png) | ![목록](docs/07-design/screens/11-content-list-data.png) | ![편집기](docs/07-design/screens/12-editor-approved.png) |
 
-## 진행 현황 (2026-11-13 기준)
+## 진행 현황 (2026-11-16 기준)
+
+**2026-11-16 추가:** 마이그레이션 0022~0027 로컬 적용.
+
+| 묶음 | 내용 | 제한 |
+|---|---|---|
+| 광고·분석 API 동기화 (CF-07b, 0022~0027) | 설정 → 일반 "광고·분석 연결": Google OAuth(쿠키 state·PKCE·사용자/권한 재확인)로 Search Console·AdSense 연결, 토큰 AES-256-GCM 암호문만 DB 저장, 세션 기반 동기화(지금 동기화·화면 열림 시 24시간 경과 자동, 15분 쿨다운, 최초 90일·재조회 3일), API 행은 `gsc-api`·`adsense-api` 출처로 CSV와 합산하지 않음, AdSense는 예상 수익만·통화/시간대 필수·글별 불가 시 사이트 단위, 해제 시 데이터 유지 또는 삭제 선택 | `GOOGLE_OAUTH_CLIENT_ID/SECRET`·`ANALYTICS_TOKEN_KEYS` 미설정 시 "연결 안 됨". 가짜 Google 서버 e2e 39건만 — 실제 Google 계정 미검증. Testing 상태는 7일마다 재연결. GA4·무인 예약 동기화 후속 |
+| 발행 큐 e2e (CF-24) | `publish-queue.mjs` 17건 통과(중복·취소·WP 중단/복구 재시도·동시·viewer 403·3구간) | — |
 
 **2026-11-12 추가:** 아래 2026-11-11 목록 이후 작업이다. 마이그레이션 0018까지 로컬 적용.
 

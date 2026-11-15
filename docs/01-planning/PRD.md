@@ -1,7 +1,7 @@
 # PRD — ContentFlow AI v2.1
 **버전:** 2.1 · **상태:** 계획 + 로컬 프로토타입 구현 · **기준일:** 2026-11-06
 
-**로컬 구현 현황:** 사용자 후속 요청으로 `apps/web` 대시보드, 10종 템플릿 선택, 콘텐츠 편집/로컬 저장/수동 승인/HTML export를 구현했다. 아래 서비스 MVP 3종 우선순위와 달리 로컬 골격 선택은 10종 모두 제공한다. 이후 16단계 글 상태 UI, AI 초안 생성(OpenAI 호환 API), WordPress **초안** 전송, Docker 이미지, 로컬 Supabase(마이그레이션·RLS 적용)를 추가했다. 이메일 로그인, 앱 데이터의 DB 저장, DB 상태 전이 트리거(승인 우회 차단·승인 스냅샷)를 추가했다. 팀 초대·역할 변경(설정 화면)과 비밀번호 재설정은 구현했고, 광고·분석 연동은 여전히 미구현이다. 구현 상태와 완성도는 [개발 단계와 완성도](../07-design/IMPLEMENTATION_STATUS.md), 화면은 [디자인 시안](../07-design/DESIGN_SPEC.md), 작업 항목은 [작업 현황](../../tasks/README.md)을 따른다.
+**로컬 구현 현황:** 사용자 후속 요청으로 `apps/web` 대시보드, 10종 템플릿 선택, 콘텐츠 편집/로컬 저장/수동 승인/HTML export를 구현했다. 아래 서비스 MVP 3종 우선순위와 달리 로컬 골격 선택은 10종 모두 제공한다. 이후 16단계 글 상태 UI, AI 초안 생성(OpenAI 호환 API), WordPress **초안** 전송, Docker 이미지, 로컬 Supabase(마이그레이션·RLS 적용)를 추가했다. 이메일 로그인, 앱 데이터의 DB 저장, DB 상태 전이 트리거(승인 우회 차단·승인 스냅샷)를 추가했다. 팀 초대·역할 변경(설정 화면)과 비밀번호 재설정은 구현했고, 광고·분석은 Search Console·AdSense API 동기화를 구현했다(가짜 Google 서버로만 검증, GA4 후속 — [명세](ANALYTICS_SYNC.md)). 구현 상태와 완성도는 [개발 단계와 완성도](../07-design/IMPLEMENTATION_STATUS.md), 화면은 [디자인 시안](../07-design/DESIGN_SPEC.md), 작업 항목은 [작업 현황](../../tasks/README.md)을 따른다.
 
 v2.1은 최초 출시 범위를 좁힌 기획 보강안이다. 제품명은 ContentFlow AI v2.0을 유지한다. 상세 근거·정책 출처·백로그는 [수익화·템플릿 실행 기획](MONETIZATION_STRATEGY.md)을 따른다. 아래 MVP 범위는 기존 v2.0의 다채널 동시 구현 계획보다 우선한다.
 
