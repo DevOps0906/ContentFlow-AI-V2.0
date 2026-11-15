@@ -1,5 +1,6 @@
 import { requireAccount } from "@/lib/api";
 import { AnalyticsError, createGscConnection, listConnections } from "@/lib/analytics-connections-server";
+import { lastRuns } from "@/lib/analytics-sync-server";
 import { isUuid } from "@/lib/articles-db";
 import { googleConfig } from "@/lib/google-oauth";
 import { json, readJson, sharedLimited } from "@/lib/server";
@@ -16,7 +17,13 @@ export async function GET(req: Request) {
   if (account instanceof Response) return account;
   try {
     const { connections, unusedGrants } = await listConnections(account);
-    return json({ configured: googleConfig() !== null, canManage: canManageTeam(account.role), connections, unusedGrants });
+    const runs = await lastRuns(account);
+    return json({
+      configured: googleConfig() !== null,
+      canManage: canManageTeam(account.role),
+      connections: connections.map((c) => ({ ...c, lastRun: runs.get(c.id) ?? null })),
+      unusedGrants,
+    });
   } catch (e) {
     return fail(e);
   }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { decryptToken, encryptToken, parseKeyRing, reencryptToken, sealValue, TokenCryptoError } from "../src/lib/token-crypto";
 import { checkFlow, googleConfig, startFlow, OAUTH_TTL_MS } from "../src/lib/google-oauth";
-import { disconnect, rotateGrants, storeGrant } from "../src/lib/analytics-connections-server";
+import { disconnect, reconnectRevoked, rotateGrants, storeGrant } from "../src/lib/analytics-connections-server";
 import type { Authed } from "../src/lib/api";
 
 const k = () => randomBytes(32).toString("base64");
@@ -185,4 +185,21 @@ test("disconnect: other connections left -> no revoke; none left + revoke fails 
   assert.deepEqual(deleted, []);
   const unconfigured = await disconnect(fakeAccount(handlers(0, deleted), { connection: { grant_id: aad.grantId } }).account, null, "c1", false);
   assert.equal(unconfigured.revoke, "failed");
+});
+
+test("reconnectRevoked: same blog revives through reconnect_connection; other blog with data gets the hint", async () => {
+  const prior = { id: "c1", blog_id: "b1", grant_id: null, provider: "gsc", external_ref: "sc-domain:x.com", status: "revoked", last_attempt_at: null, last_success_at: null, last_error_code: null, created_at: "t" };
+  const { account, calls } = fakeAccount({ reconnect_connection: () => null });
+  const row = await reconnectRevoked(account, prior, aad.grantId, "b1");
+  assert.equal(row.status, "pending");
+  assert.deepEqual(calls.map((c) => c.fn), ["reconnect_connection"]);
+  const blocked = {
+    rpc: async () => ({ data: null, error: null }),
+    from: () => ({
+      update: () => ({ eq: () => ({ eq: async () => ({ error: { message: "CONNECTION_HAS_DATA", code: "P0001" } }) }) }),
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { display_name: "내 블로그", domain: "a.com" }, error: null }) }) }),
+    }),
+  };
+  const acc = { ...account, supabase: blocked } as unknown as Authed;
+  await assert.rejects(reconnectRevoked(acc, prior, aad.grantId, "b2"), (e: Error & { status?: number }) => e.status === 409 && e.message.includes("내 블로그에 연결되어 데이터가 남아 있습니다"));
 });

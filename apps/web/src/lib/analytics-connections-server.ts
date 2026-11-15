@@ -19,6 +19,7 @@ const RPC_ERRORS: [string, number, string, string][] = [
   ["GRANT_OWNER_INACTIVE", 409, "grant_owner_inactive", "이 Google 연결을 만든 사람이 더 이상 관리자가 아닙니다. 다시 연결해주세요."],
   ["GRANT_IN_USE", 409, "grant_in_use", "아직 이 Google 연결을 쓰는 연결이 있습니다."],
   ["CONNECTION_NOT_ACTIVE", 409, "not_active", "다시 연결이 필요한 상태입니다."],
+  ["CONNECTION_NOT_REVOKED", 409, "duplicate", "이미 연결된 속성입니다."],
 ];
 function rpcFail(error: { message?: string } | null): AnalyticsError {
   const msg = error?.message ?? "";
@@ -156,6 +157,16 @@ export async function createGscConnection(account: Authed, cfg: GoogleConfig, in
   // The allow list is the sites the Google account can see with this grant (an app-side limit only).
   const sites = await sitesOfGrant(account, cfg, input.grantId);
   if (!sites.some((s) => s.siteUrl === input.siteUrl)) throw new AnalyticsError("이 Google 계정에서 볼 수 없는 속성입니다.", 400, "site_not_allowed");
+  // A property disconnected earlier keeps its row (and imported data): bring that row back instead of inserting a duplicate.
+  const { data: prior, error: priorError } = await account.supabase
+    .from("analytics_connections")
+    .select(COLUMNS)
+    .eq("workspace_id", account.workspaceId)
+    .eq("provider", "gsc")
+    .eq("external_ref", input.siteUrl)
+    .maybeSingle();
+  if (priorError) throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  if ((prior as ConnectionRow | null)?.status === "revoked") return reconnectRevoked(account, prior as ConnectionRow, input.grantId, input.blogId);
   const { data, error } = await account.supabase
     .from("analytics_connections")
     .insert({
@@ -177,6 +188,31 @@ export async function createGscConnection(account: Authed, cfg: GoogleConfig, in
     throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
   }
   return data as ConnectionRow;
+}
+
+/**
+ * Revived through reconnect_connection (rows and blog stay). Another blog is allowed only while no imported
+ * rows are attached: the 0022 guard raises CONNECTION_HAS_DATA, shown as a hint to reuse the old blog or purge.
+ */
+export async function reconnectRevoked(account: Authed, prior: ConnectionRow, grantId: string, blogId: string | null): Promise<ConnectionRow> {
+  if (blogId !== prior.blog_id) {
+    const { error } = await account.supabase.from("analytics_connections").update({ blog_id: blogId }).eq("id", prior.id).eq("workspace_id", account.workspaceId);
+    if (error) {
+      if ((error.message ?? "").includes("CONNECTION_HAS_DATA") || error.code === "P0001") {
+        let name = "다른 블로그";
+        if (prior.blog_id) {
+          const { data } = await account.supabase.from("blogs").select("display_name, domain").eq("id", prior.blog_id).maybeSingle();
+          const b = data as { display_name: string | null; domain: string } | null;
+          if (b) name = b.display_name || b.domain;
+        } else name = "블로그 미지정 상태";
+        throw new AnalyticsError(`이 속성은 이전에 ${name}에 연결되어 데이터가 남아 있습니다. 같은 블로그로 다시 연결하거나 해제 시 데이터 삭제를 선택하세요.`, 409, "has_data");
+      }
+      if (error.code === "23503") throw new AnalyticsError("이 워크스페이스의 블로그가 아닙니다.", 400, "blog_invalid");
+      throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+    }
+  }
+  await call<void>(account.supabase, "reconnect_connection", { p_connection: prior.id, p_grant: grantId });
+  return { ...prior, blog_id: blogId, grant_id: grantId, status: "pending", last_error_code: null };
 }
 
 export type RevokeOutcome = "done" | "failed" | "kept";

@@ -3374,3 +3374,73 @@ footer {
     white-space: nowrap;
   }
 }
+
+/* Analytics connection panel (settings) */
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.conn-card,
+.conn-item,
+.conn-picker {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+.conn-card-off {
+  background: var(--bg);
+}
+.conn-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.conn-site {
+  overflow-wrap: anywhere;
+}
+.conn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.conn-picker {
+  margin-bottom: 14px;
+  max-width: 520px;
+}
+.conn-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: var(--font-base);
+  margin: 12px 0;
+}
+.conn-check input {
+  width: auto;
+  margin-top: 3px;
+}
+.conn-detail {
+  margin: 0;
+}
+@media (max-width: 1199px) {
+  .conn-grid,
+  .conn-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .conn-grid,
+  .conn-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

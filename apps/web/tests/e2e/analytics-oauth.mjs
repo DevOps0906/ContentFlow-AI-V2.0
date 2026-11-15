@@ -6,8 +6,10 @@ import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchChrome } from "./cdp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const web = resolve(here, "../..");
@@ -15,8 +17,9 @@ const root = resolve(web, "../..");
 const APP_PORT = Number(process.env.E2E_APP_PORT ?? 3395);
 const GOOGLE_PORT = Number(process.env.E2E_GOOGLE_PORT ?? 8092);
 const APP = `http://127.0.0.1:${APP_PORT}`;
-const OUT = resolve(process.argv[2] ?? resolve(process.env.TEMP ?? "/tmp", "goog-run-" + Date.now().toString(36)));
-mkdirSync(OUT, { recursive: true });
+const OUT = resolve(process.argv[2] ?? resolve(root, ".nomad/logs/analytics-oauth"));
+const SHOTS = resolve(OUT, "shots");
+mkdirSync(SHOTS, { recursive: true });
 const stamp = Date.now().toString(36);
 const PW = "goog-Passw0rd-A!";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -24,13 +27,14 @@ const KEY = randomBytes(32).toString("base64");
 const GSC = "https://www.googleapis.com/auth/webmasters.readonly";
 
 // ---- fake Google ----------------------------------------------------------------------------
-const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0 };
+const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0, gscMode: "ok", gscSeed: 1, queries: [] };
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const googleServer = createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+  const raw = Buffer.concat(chunks).toString("utf8");
+  const form = new URLSearchParams(raw);
   const send = (status, body) => {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
@@ -56,6 +60,15 @@ const googleServer = createServer(async (req, res) => {
     }
     return send(400, { error: "unsupported_grant_type" });
   }
+  if (url.pathname === "/oauth/auth") {
+    // the consent screen, auto-approved: what Google does after the user clicks "Allow"
+    const { code, state } = consent(url.href, "sub-A-browser", "a-browser@google.test");
+    const back = new URL(url.searchParams.get("redirect_uri"));
+    back.searchParams.set("code", code);
+    back.searchParams.set("state", state);
+    res.writeHead(302, { Location: back.href });
+    return res.end();
+  }
   if (url.pathname === "/oauth/revoke") {
     const t = form.get("token");
     g.revokeHits.push(t);
@@ -72,6 +85,20 @@ const googleServer = createServer(async (req, res) => {
         { siteUrl: "https://unverified.example/", permissionLevel: "siteUnverifiedUser" },
       ],
     });
+  }
+  const q = /^\/api\/webmasters\/v3\/sites\/([^/]+)\/searchAnalytics\/query$/.exec(url.pathname);
+  if (q) {
+    if (!/^Bearer at-/.test(req.headers.authorization ?? "")) return send(401, { error: "unauthorized" });
+    const body = JSON.parse(raw);
+    g.queries.push({ site: decodeURIComponent(q[1]), ...body });
+    if (g.gscMode === "429") return send(429, { error: { code: 429, errors: [{ reason: "rateLimitExceeded" }] } });
+    if (g.gscMode === "500") return send(500, { error: "boom" });
+    // two pages per day over the requested range; the values depend on gscSeed so a refetch is visible
+    const rows = [];
+    for (let d = Date.parse(`${body.startDate}T00:00:00Z`); d <= Date.parse(`${body.endDate}T00:00:00Z`); d += 86400000)
+      for (const page of ["https://blog.example.com/a", "https://blog.example.com/b"])
+        rows.push({ keys: [new Date(d).toISOString().slice(0, 10), page], clicks: g.gscSeed * 10, impressions: g.gscSeed * 100, ctr: 0.1, position: 2.5 });
+    return send(200, { rows: body.startRow ? [] : rows });
   }
   send(404, {});
 });
@@ -199,7 +226,18 @@ const ctx = {};
 const redirectUri = `${APP}/api/integrations/google/callback`;
 void redirectUri;
 
+const browser = await launchChrome({ port: 9335, userDataDir: resolve(tmpdir(), `goog-chrome-${stamp}`) });
+let P, PE; // P: owner A, PE: editor E (separate browser contexts)
+const panelText = `(() => { const s = document.querySelector('section[aria-labelledby="analytics-conn-title"]'); return s ? s.innerText : ""; })()`;
+const browserLogin = async (page, email) => {
+  await page.goto(`${APP}/login`);
+  const r = await page.api("POST", "/api/auth/login", { email, password: PW });
+  ok(r.status === 200, `browser login ${r.status}`);
+};
+
 try {
+  P = await browser.newPage({ width: 1280 });
+  PE = await browser.newPage({ width: 1280 });
   // ===== phase 1: Google not configured =====
   await startApp({}, "next-unconfigured.log");
   await step("미설정: 가입 후 연결 시작·속성 연결은 503, 목록은 configured=false", async () => {
@@ -214,6 +252,17 @@ try {
     ok(l.status === 200 && l.data.configured === false && l.data.connections.length === 0, JSON.stringify(l.data));
     const cb = await A.api("GET", "/api/integrations/google/callback?code=x&state=y");
     ok(cb.status === 503, `callback ${cb.status}`);
+  });
+  await step("브라우저·미설정: 패널 '연결 안 됨', 설정 안내, 연결 버튼 비활성", async () => {
+    await browserLogin(P, emailA);
+    await P.goto(`${APP}/settings`, { settle: 1000 });
+    await P.waitFor(`${panelText}.includes("Google Search Console")`, 60000, "panel");
+    await P.waitFor(`${panelText}.includes("연결 안 됨")`, 20000, "연결 안 됨");
+    const t = await P.eval(panelText);
+    ok(t.includes("GOOGLE_OAUTH_CLIENT_ID"), "미설정 안내 없음");
+    const st = await P.buttonState("Google 계정 연결");
+    ok(st === "disabled", `연결 버튼 ${st}`);
+    await P.screenshot(resolve(SHOTS, "settings-unconfigured.png"));
   });
   await stopApp();
 
@@ -380,6 +429,83 @@ try {
     ok(asE.data.connections.length === 2 && !JSON.stringify(asE.data).includes("ciphertext"), "편집자 목록");
   });
 
+  await step("동기화: editor 거부(403), 비인증 연결 ID 형식 오류 400", async () => {
+    const e = await E.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(e.status === 403, `editor ${e.status}`);
+    const bad = await A.api("POST", `/api/analytics/connections/not-a-uuid/sync`);
+    ok(bad.status === 400, `bad id ${bad.status}`);
+    const other = await B.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(other.status === 404 || other.status === 403, `다른 워크스페이스 ${other.status}`);
+  });
+
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const daysBack = (n) => new Date(Date.parse(`${yesterday}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
+  const backdate = () => sql(`update analytics_sync_runs set requested_at = now() - interval '1 hour' where connection_id = '${ctx.c1}'`);
+  const countRows = () => Number(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.c1}' and tool = 'gsc-api'`));
+
+  await step("동기화 성공: 최초 90일 × 2페이지 × 4지표, 기록·연결 상태 active, 목록 lastRun", async () => {
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(r.status === 200 && r.data.status === "succeeded", `sync ${r.status} ${JSON.stringify(r.data)}`);
+    ok(r.data.rows === 90 * 2 * 4 && r.data.range.end === yesterday && r.data.range.start === daysBack(89), JSON.stringify(r.data));
+    ok(countRows() === 720, `rows ${countRows()}`);
+    const q = g.queries.at(-1);
+    ok(q.site === "sc-domain:example.com" && q.dimensions.join() === "date,page" && q.startDate === daysBack(89), JSON.stringify(q));
+    ok(sql(`select status || ':' || rows_written from analytics_sync_runs where id = '${r.data.runId}'`) === "succeeded:720", "run 기록");
+    ok(sql(`select status from analytics_connections where id = '${ctx.c1}'`) === "active", "연결 상태");
+    ok(sql(`select count(*) from blog_metric_snapshots where connection_id = '${ctx.c1}' and blog_id = '${ctx.blog1}' and scope = 'page' and coverage = 'complete'`) === "720", "blog·scope·coverage");
+    const l = await A.api("GET", "/api/analytics/connections");
+    const c = l.data.connections.find((x) => x.id === ctx.c1);
+    ok(c.lastRun?.status === "succeeded" && c.lastRun.rows === 720 && c.lastRun.finishedAt && c.lastRun.errorCode === null, JSON.stringify(c.lastRun));
+    ok(l.data.connections.find((x) => x.id === ctx.c2).lastRun === null, "c2는 실행 기록 없음");
+  });
+
+  await step("쿨다운: 바로 다시 누르면 409 SYNC_COOLDOWN, 요청·행 변화 없음", async () => {
+    const hits = g.queries.length;
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(r.status === 409 && r.data.code === "SYNC_COOLDOWN", `cooldown ${r.status} ${JSON.stringify(r.data)}`);
+    ok(g.queries.length === hits, "Google이 호출됨");
+    ok(sql(`select count(*) from analytics_sync_runs where connection_id = '${ctx.c1}'`) === "1", "실행 기록이 늘어남");
+  });
+
+  await step("재조회: 마지막 끝 − 3일부터 다시 가져와 겹치는 날만 교체(행 수 그대로), 앞 구간 값 유지", async () => {
+    backdate();
+    g.gscSeed = 2;
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(r.status === 200 && r.data.range.start === daysBack(3) && r.data.range.end === yesterday && r.data.rows === 4 * 2 * 4, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    ok(g.queries.at(-1).startDate === daysBack(3), "요청 시작일");
+    ok(countRows() === 720, `rows ${countRows()}`);
+    const click = (d) => sql(`select string_agg(distinct value::text, ',') from blog_metric_snapshots where connection_id = '${ctx.c1}' and metric = '클릭수' and measured_on = '${d}'`);
+    ok(click(daysBack(3)) === "20.0000" && click(yesterday) === "20.0000", `교체된 날 ${click(yesterday)}`);
+    ok(click(daysBack(4)) === "10.0000", `앞 구간 ${click(daysBack(4))}`);
+    ok(sql(`select count(*) from (select 1 from blog_metric_snapshots where connection_id = '${ctx.c1}' group by metric, dimension, measured_on having count(*) > 1) d`) === "0", "중복 행");
+  });
+
+  await step("429 → 502 PROVIDER_QUOTA(delayed), 5xx → 502 PROVIDER_ERROR(failed): 행·값 변화 없고 0이 저장되지 않음", async () => {
+    for (const [mode, code, status] of [["429", "PROVIDER_QUOTA", "delayed"], ["500", "PROVIDER_ERROR", "failed"]]) {
+      backdate();
+      g.gscMode = mode;
+      const r = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+      ok(r.status === 502 && r.data.code === code && r.data.status === status, `${mode} ${r.status} ${JSON.stringify(r.data)}`);
+      ok(countRows() === 720, `rows ${countRows()}`);
+      ok(sql(`select status || ':' || rows_written || ':' || error_code from analytics_sync_runs where connection_id = '${ctx.c1}' order by requested_at desc limit 1`) === `${status}:0:${code}`, "run 기록");
+    }
+    g.gscMode = "ok";
+    ok(sql(`select status from analytics_connections where id = '${ctx.c1}'`) === "active", "일시 실패로 연결 상태가 바뀜");
+  });
+
+  await step("invalid_grant → 409 NEEDS_REAUTH, 연결 needs_reauth, 이후 동기화는 CONNECTION_NOT_ACTIVE", async () => {
+    backdate();
+    g.live.delete(ctx.rt);
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    g.live.add(ctx.rt); // later steps revoke this token
+    ok(r.status === 409 && r.data.code === "NEEDS_REAUTH", `reauth ${r.status} ${JSON.stringify(r.data)}`);
+    ok(sql(`select status from analytics_connections where id = '${ctx.c1}'`) === "needs_reauth", "연결 상태");
+    ok(countRows() === 720, "행이 바뀜");
+    backdate();
+    const again = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
+    ok(again.status === 409 && again.data.code === "CONNECTION_NOT_ACTIVE", `again ${again.status} ${JSON.stringify(again.data)}`);
+  });
+
   await step("해제 1: grant를 쓰는 연결이 남아 있으면 revoke 호출 없음", async () => {
     const r = await A.api("DELETE", `/api/analytics/connections/${ctx.c1}`);
     ok(r.status === 200 && r.data.revoke === "kept", JSON.stringify(r.data));
@@ -414,12 +540,141 @@ try {
     ok(l.data.unusedGrants.length === 0, "unusedGrants");
   });
 
+  // ===== browser: connection panel against the configured stack =====
+  const cardOf = () =>
+    P.eval(`(() => { const e = [...document.querySelectorAll(".conn-item")].find((x) => x.innerText.includes("sc-domain:example.com") && !x.innerText.includes("연결 해제됨")); return e ? e.innerText.replace(/\\s+/g, " ") : ""; })()`);
+  await step("브라우저 admin: 연결 시작 → 가짜 Google 동의 → 속성 선택 → 연결 카드, 지금 동기화 → 활성·마지막 동기화", async () => {
+    await P.goto(`${APP}/settings`, { settle: 1000 });
+    await P.waitFor(`${panelText}.includes("Google Search Console")`, 60000, "panel");
+    // earlier steps left two revoked connections: they are listed as "연결 해제됨" with no action buttons
+    await P.waitFor(async () => (await P.buttonState("Google 계정 연결")) === "enabled", 20000, "연결 버튼 활성");
+    const before = await P.eval(panelText);
+    ok(before.includes("연결 해제됨") && !before.includes("지금 동기화"), "해제된 연결 표시/버튼");
+    await P.clickText("Google 계정 연결");
+    await P.waitFor(`location.pathname === "/settings" && !!document.querySelector("#conn-site")`, 60000, "동의 후 속성 선택 폼");
+    ok(!(await P.eval(`location.search`)).includes("google="), "쿼리 정리 안 됨");
+    const opts = await P.eval(`[...document.querySelectorAll("#conn-site option")].map((o) => o.value)`);
+    ok(opts.includes("sc-domain:example.com") && !opts.includes("https://unverified.example/"), opts.join());
+    await P.fill("#conn-site", "sc-domain:example.com");
+    ok(await P.eval(`[...document.querySelectorAll("#conn-blog option")].some((o) => o.value === ${JSON.stringify(ctx.blog2)})`), "블로그 선택지 없음");
+    await P.fill("#conn-blog", ctx.blog1); // the revoked connection of this property was on blog1 and kept its data
+    await P.screenshot(resolve(SHOTS, "picker-1280.png"));
+    await P.clickText("속성 연결", { exact: true });
+    try {
+      await P.waitFor(`!!document.querySelector("#conn-site") === false && !!document.querySelector(".conn-item")`, 30000, "선택 폼 닫힘·연결 카드");
+    } catch (e) {
+      await P.screenshot(resolve(SHOTS, "picker-fail.png"));
+      throw new Error(`${e.message} :: ${(await P.eval(panelText)).replace(/\s+/g, " ").slice(0, 600)}`);
+    }
+    await P.waitFor(async () => (await cardOf()) !== "", 20000, "재연결한 속성 카드");
+    let card = await cardOf();
+    ok(card.includes("sc-domain:example.com"), `카드 ${card}`);
+    ok(card.includes("동의 대기") || card.includes("활성"), `카드 상태 ${card}`);
+    ctx.uiStatus = card.includes("동의 대기") ? "pending" : "active";
+    // first sync from the UI only: the button is enabled while pending (or the automatic run already started)
+    if (ctx.uiStatus === "pending") {
+      const disabled = await P.eval(`(() => { const e = [...document.querySelectorAll(".conn-item")].find((x) => x.innerText.includes("동의 대기")); const b = e && [...e.querySelectorAll("button")].find((x) => x.innerText.includes("지금 동기화")); return b ? b.disabled : "no-button"; })()`);
+      ok(disabled === false || disabled === "no-button", `동의 대기 동기화 버튼 disabled=${disabled}`);
+      if (disabled === false) await P.clickText("지금 동기화");
+    }
+    await P.waitFor(async () => {
+      const c = await cardOf();
+      return c.includes("활성") && !/마지막 동기화 없음/.test(c);
+    }, 40000, "활성·마지막 동기화");
+    card = await cardOf();
+    // a revived connection keeps its rows: only the re-fetch window (3 days + yesterday) is imported again
+    ok(/성공/.test(card) && /\d+행/.test(card), `최근 실행 ${card}`);
+    ctx.cardConn = sql(`select id from analytics_connections where workspace_id = '${ctx.wsA}' and external_ref = 'sc-domain:example.com' and status = 'active'`);
+    ok(ctx.cardConn, "DB에 active 연결 없음");
+    return card.slice(0, 160);
+  });
+
+  await step("브라우저 재연결: 해제(revoked)한 속성을 같은 워크스페이스에서 다시 연결할 수 있다", async () => {
+    ok(ctx.uiStatus, "UI 재연결 단계가 앞 단계에서 통과해야 함");
+  });
+
+  await step("브라우저 첫 동기화: 새로 연결한 속성(동의 대기)을 UI에서 동기화할 수 있다", async () => {
+    ok(ctx.uiStatus, "UI 첫 동기화 단계가 앞 단계에서 통과해야 함");
+  });
+
+  await step("브라우저 editor: 패널은 읽기 전용(연결·동기화·해제 버튼 없음, 안내 문구, 목록은 보임)", async () => {
+    await browserLogin(PE, emailE);
+    const sw = await PE.api("POST", "/api/workspaces/active", { id: ctx.wsA });
+    ok(sw.status === 200, `switch ${sw.status}`);
+    await PE.goto(`${APP}/settings`, { settle: 1000 });
+    await PE.waitFor(`${panelText}.includes("sc-domain:example.com")`, 60000, "연결 목록");
+    const t = await PE.eval(panelText);
+    ok(t.includes("소유자·관리자만"), "읽기 전용 안내 없음");
+    for (const b of ["Google 계정 연결", "지금 동기화", "연결 해제", "다시 연결", "철회 다시 시도"]) {
+      const has = await PE.eval(`[...document.querySelectorAll('section[aria-labelledby="analytics-conn-title"] button')].some((x) => x.innerText.includes(${JSON.stringify(b)}))`);
+      ok(!has, `editor에게 '${b}' 버튼이 보임`);
+    }
+    await PE.screenshot(resolve(SHOTS, "settings-editor-1280.png"));
+  });
+
+  await step("해제 대화상자: 키보드로 열기 → 포커스 취소 → Tab 트랩 → Esc 닫기 → 포커스 복귀, 연결은 유지", async () => {
+    await P.goto(`${APP}/settings`, { settle: 1000 });
+    await P.waitFor(`document.querySelectorAll(".conn-item").length > 0`, 30000, "연결 카드");
+    await P.eval(`(document.activeElement && document.activeElement.blur && document.activeElement.blur(), window.scrollTo(0, 0), true)`);
+    let f = "";
+    for (let i = 0; i < 120; i++) {
+      await P.key("Tab");
+      f = await P.focused();
+      if (f.startsWith("BUTTON") && f.includes("연결 해제")) break;
+    }
+    ok(f.startsWith("BUTTON") && f.includes("연결 해제"), `Tab으로 해제 버튼에 못 닿음: ${f}`);
+    await P.key("Enter");
+    await P.waitFor(`!!document.querySelector('[role="alertdialog"]')`, 5000, "대화상자");
+    ok((await P.focused()) === "BUTTON 취소", `초기 포커스 ${await P.focused()}`);
+    const inside = () => P.eval(`!!document.activeElement && !!document.activeElement.closest('[role="alertdialog"]')`);
+    const seen = new Set();
+    for (let i = 0; i < 7; i++) {
+      await P.key("Tab");
+      ok(await inside(), `Tab ${i + 1}회: 포커스가 대화상자 밖 ${await P.focused()}`);
+      seen.add(await P.focused());
+    }
+    for (let i = 0; i < 4; i++) {
+      await P.key("Tab", { shift: true });
+      ok(await inside(), `Shift+Tab ${i + 1}회: 포커스가 대화상자 밖`);
+    }
+    ok(seen.size >= 3, `순환한 요소 ${[...seen].join(" | ")}`);
+    await P.screenshot(resolve(SHOTS, "disconnect-dialog-1280.png"), { full: false });
+    await P.key("Escape");
+    await P.waitFor(`!document.querySelector('[role="alertdialog"]')`, 5000, "대화상자 닫힘");
+    const back = await P.focused();
+    ok(back.startsWith("BUTTON") && back.includes("연결 해제"), `닫힌 뒤 포커스 ${back}`);
+    ok(sql(`select status from analytics_connections where id = '${ctx.cardConn}'`) === "active", "Esc로 닫았는데 연결 상태가 바뀜");
+  });
+
+  for (const w of [500, 768, 1440]) {
+    await step(`브라우저 반응형: 설정 > 광고·분석 연결 ${w}px 가로 넘침 0 (패널·해제 대화상자)`, async () => {
+      await P.viewport(w);
+      await P.goto(`${APP}/settings`, { settle: 1200 });
+      await P.waitFor(`document.querySelectorAll(".conn-item").length > 0`, 30000, "연결 카드");
+      const o = await P.overflow();
+      await P.screenshot(resolve(SHOTS, `settings-conn-${w}.png`));
+      ok(!o.over && !o.scrollable, `over ${JSON.stringify(o)}`);
+      await P.clickText("연결 해제");
+      await P.waitFor(`!!document.querySelector('[role="alertdialog"]')`, 5000, "대화상자");
+      const d = await P.eval(`(() => { const r = document.querySelector('[role="alertdialog"]').getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), w: document.documentElement.clientWidth }; })()`);
+      await P.screenshot(resolve(SHOTS, `disconnect-dialog-${w}.png`), { full: false });
+      await P.key("Escape");
+      ok(d.l >= 0 && d.r <= d.w, `대화상자가 화면 밖 ${JSON.stringify(d)}`);
+      return `${o.sw}/${o.w}`;
+    });
+  }
+
+  await step("브라우저 예외 0 (owner·editor 페이지)", async () => {
+    ok(P.errors.length === 0 && PE.errors.length === 0, JSON.stringify({ P: P.errors.slice(0, 3), E: PE.errors.slice(0, 3) }));
+  });
+
   await step("서버 로그에 refresh token·client secret·키·state 쿠키 없음 (인가 코드는 next dev 요청 로그에 URL로 남음: 1회용·PKCE 결합)", async () => {
     await sleep(500);
     const log = readFileSync(resolve(OUT, "next-configured.log"), "utf8");
     for (const needle of ["rt-", "e2e-secret", KEY, "cf_goog_oauth="]) ok(!log.includes(needle), `로그에 ${needle.slice(0, 4)}… 포함`);
   });
 } finally {
+  await browser.close();
   await stopApp();
   googleServer.close();
 }

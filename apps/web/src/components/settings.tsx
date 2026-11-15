@@ -11,6 +11,7 @@ import { BlogAccounts } from "./blog-accounts";
 import { ConfirmDialog } from "./dialog";
 import { useFeedback } from "./feedback";
 import { AiApiPanel } from "./ai-api-panel";
+import { AnalyticsConnections } from "./analytics-connections";
 export function Settings() {
   const { articles, clear, mode, email, importLocal } = useWorkspace();
   const [localCount, setLocalCount] = useState(0);
@@ -137,6 +138,10 @@ export function Settings() {
           <TeamPanel />
         </section>
       )}
+      <section className="panel settings-panel" aria-labelledby="analytics-conn-title">
+        <h2 id="analytics-conn-title">광고·분석 연결</h2>
+        <AnalyticsConnections account={mode === "account"} />
+      </section>
       <section className="panel settings-panel" aria-labelledby="blog-accounts-title">
         <h2 id="blog-accounts-title">블로그 계정</h2>
         <BlogAccounts account={mode === "account"} />
