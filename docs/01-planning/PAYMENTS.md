@@ -1,204 +1,201 @@
-# 초과 슬롯 실결제 연동과 다운그레이드 보관 요구 (기능 명세, 초안 r1)
+# 초과 슬롯 실결제 연동 (기능 명세, 초안 r2 — B안: 세션 기반·소유자 수동 결제)
 
-버전: **r1** (2026-11-16) · 상태: 초안 · 작업: CF-23(구현은 §10 결정과 가맹점 계약 후) · 상위: [MULTI_BLOG_BILLING.md#3](MULTI_BLOG_BILLING.md), [#4](MULTI_BLOG_BILLING.md), [#13](MULTI_BLOG_BILLING.md), [MONETIZATION_STRATEGY.md#9](MONETIZATION_STRATEGY.md), [PRD.md#8](PRD.md)
-현재 상태: **결제사가 연결되어 있지 않다.** 지금 있는 것은 월 peak 계량(`blog_usage_snapshots`)과 초과 고지뿐이다([0019](../../supabase/migrations/0019_blog_entitlements.sql)). 연결 전에는 화면·문구가 "청구됨·결제됨·자동결제 중"을 말하지 않는다(문구는 "결제 준비 중" 유지).
+버전: **r2** (2026-11-16) · 상태: 초안(구현 보류) · 작업: CF-23(착수는 §10 사용자 결정·가맹점 계약·challenger r2 후) · 상위: [MULTI_BLOG_BILLING.md#3](MULTI_BLOG_BILLING.md), [#4](MULTI_BLOG_BILLING.md), [#13](MULTI_BLOG_BILLING.md), [MONETIZATION_STRATEGY.md#9](MONETIZATION_STRATEGY.md), [PRD.md#8](PRD.md)
+현재 상태: **결제사가 연결되어 있지 않다.** 있는 것은 월 peak 계량(`blog_usage_snapshots`)과 초과 고지뿐이다([0019](../../supabase/migrations/0019_blog_entitlements.sql)). 연결 전에는 화면·문구가 "청구됨·결제됨"을 말하지 않는다(문구는 "결제 준비 중" 유지).
+r1 → r2: challenger r1(REVISE) 지적을 반영하고 범위를 B안으로 좁혔다. 반영 위치는 §12. **D2는 B안 가정**이며 최종은 사용자 결정 대기(§10).
 
 ## 1. 목적·범위
-- 목적: 워크스페이스 **소유자**가 결제수단(카드 빌링키)을 등록하면, 월 마감(KST 달력 월)에 서버가 peak 기반 초과 슬롯 금액을 재계산해 자동결제하고, 실패·유예·제한과 다운그레이드 시 보관 요구까지 처리한다.
-- 계산 규칙은 [MULTI_BLOG_BILLING.md#4](MULTI_BLOG_BILLING.md)·[#13](MULTI_BLOG_BILLING.md)을 그대로 쓴다(월 단위 peak, 일할 없음). 이 문서는 다시 정의하지 않는다.
-- 금액은 **설정값**이다. 확정 가격이 없으므로 이 문서와 코드에 가격 상수를 넣지 않는다(DB 설정 테이블, §5).
+- 목적: 워크스페이스 **소유자**가 결제수단(카드 빌링키)을 등록하고, 지난달 초과 슬롯 금액의 invoice를 **직접 눌러** 결제한다. 서버는 invoice를 SQL로 확정하고 결제사 응답을 재조회해 결과를 기록한다.
+- 계산 규칙은 [MULTI_BLOG_BILLING.md#4](MULTI_BLOG_BILLING.md)·[#13](MULTI_BLOG_BILLING.md)(월 단위 peak, 일할 없음). 금액은 **설정값**이며 가격 상수를 코드·문서에 넣지 않는다(§5 `billing_prices`).
+- 실행 주체는 세션뿐이다(소유자가 화면을 열거나 버튼을 누를 때). 무인 작업·새 비밀 주체는 없다([ANALYTICS_SYNC.md#8 D0](ANALYTICS_SYNC.md) 선례).
 
-| 비범위 | 이유 |
+| 비범위(후속, 별도 challenger) | 이유 |
 |---|---|
-| 세금계산서·현금영수증 자동 발행 | 사업자 요건·연동 범위 `미확인`. 후속(§10) |
-| 해외 결제·다중 통화 | KRW만. 해외 카드 지원 여부는 결제사 정책 `미확인` |
-| 기본료(플랜 구독료) 청구 | 포함 여부가 §10 D3에서 결정되기 전에는 초과 슬롯 청구만 설계. 구조는 `invoice_lines`로 확장 가능 |
-| 쿠폰·프로모션·크레딧·연 결제 | 가격 확정 전 범위 밖 |
-| 카드번호·CVC 수집·저장 | 결제사 결제창/빌링키만 사용(고정 규칙) |
-| 결제 수단 다중 등록·계좌이체·간편결제 | 카드 빌링키 1개만(MVP) |
-| 로컬 모드 | 서버·DB 없음. 계정 모드만 |
-| 미성년·법인 명의 검증 | 결제사 심사에 위임 |
+| 자동 청구·재시도 스케줄·유예 일수·미납 자동 제한 | 무인 실행 = 새 비밀 주체 필요(§10 D2) |
+| 결제사 웹훅 수신 | 공개·무세션 엔드포인트가 필요해 "클라이언트 접근 차단"과 충돌. 승인 응답+재조회로 충분 |
+| 플랜 변경·구독 해지·플랜 하향 처리 | 초과 슬롯만 청구. `enforce_plan_lock`·`cf_caller_is_client()` 변경 불필요(§5) |
+| 세금계산서·현금영수증, 해외 결제, 쿠폰·연 결제, 기본료 청구 | 요건 `미확인`(D3·D5). invoice는 줄 단위(`invoice_lines`)로 확장 가능 |
+| 카드번호·CVC 수집·저장, 다중 수단, 로컬 모드 | 결제사 결제창/빌링키만(고정), 카드 1개, 계정 모드만 |
 
 ## 2. 결제사 비교·권고
-권고: **토스페이먼츠 자동결제(빌링)**. 근거는 국내 사업자 대상 KRW 카드 청구라는 범위와 결제사 직계약 구조의 단순함이다. 아래 표의 수치·정책은 공식 문서·계약서로 확인되기 전까지 `미확인`이며 구현 착수 전 확인한다.
+권고: **토스페이먼츠 빌링(카드 저장 결제)**. 근거는 국내 사업자 대상 KRW 카드 청구와 직계약의 단순함이다. 표의 수치·정책은 공식 문서·계약서로 확인되기 전까지 `미확인`이다.
 
 | 항목 | 토스페이먼츠(권고) | 포트원 경유 | Stripe |
 |---|---|---|---|
-| 구조 | 결제사 직접 연동 | 결제 연동 중개 계층, 실제 PG 계약 별도 가능성 `미확인` | 글로벌 결제사 직접 |
-| 정기결제 방식 | 빌링키 발급 후 서버 승인 호출(개요, 세부는 공식 문서) | 빌링키 지원 PG에 따름 `미확인` | Subscriptions·SetupIntent(카드 저장) |
-| KRW·국내 카드 | 국내 카드 지원(목적상 핵심) | PG에 따름 | 한국 사업자 가입·국내 카드 정기결제 지원 범위 `미확인` |
-| 수수료 | `미확인`(계약 협의) | `미확인`(PG 수수료+중개 수수료 가능성) | `미확인` |
-| 가맹점 심사·자동결제 계약 | 자동결제용 별도 승인 필요 여부 `미확인` | `미확인` | `미확인` |
-| 웹훅 서명 검증 | 방식·헤더 `미확인`. **서명 유무와 무관하게 서버가 결제를 재조회해 확정**(§4) | `미확인` | 서명 헤더 제공(문서 확인 필요) |
-| 멱등 키 | 지원 여부 `미확인`. 자체 `order_id` UNIQUE로 보완 | `미확인` | 지원(문서 확인 필요) |
-| 거래 한도·정산 주기 | `미확인` | `미확인` | `미확인` |
-| 락인·전환 비용 | 낮음~중간(빌링키는 결제사 종속) | 낮음(PG 교체 용이, 중개 의존) | 중간 |
+| 구조 | 결제사 직접 연동 | 중개 계층, PG 계약 별도 가능성 `미확인` | 글로벌 직접 |
+| 정기결제 방식 | 빌링키 발급 후 서버 승인 호출(세부는 공식 문서) | PG에 따름 `미확인` | SetupIntent(카드 저장) |
+| KRW·국내 카드 | 국내 카드 지원 | PG에 따름 | 한국 사업자 가입·국내 카드 범위 `미확인` |
+| 수수료·한도·정산 | `미확인`(계약 협의) | `미확인` | `미확인` |
+| 가맹점 심사·빌링 계약 | 별도 승인 필요 여부 `미확인` | `미확인` | `미확인` |
+| 주문 조회(재조회)·멱등 키 | 조회 API·멱등 키 지원 여부 `미확인`. 자체 `order_id` UNIQUE로 보완 | `미확인` | 지원(문서 확인 필요) |
+| 결제사 측 금액 상한·IP 허용 목록 | `미확인`(§9 피해 범위) | `미확인` | `미확인` |
 | 공식 문서 | [docs.tosspayments.com](https://docs.tosspayments.com/) | [developers.portone.io](https://developers.portone.io/) | [docs.stripe.com](https://docs.stripe.com/) |
 
-- 결제사 추상화는 만들지 않는다(원칙 2). 서버 모듈 경계만 `payments/` 한 곳으로 모아 교체 비용을 낮춘다.
-- 결제사는 사용자가 계약하는 항목이다(§10 D1). 계약 전 구현·시험은 **가짜 결제사 서버**로 진행하고, 실제 연동 문구는 열지 않는다([ANALYTICS_SYNC.md#8 D8](ANALYTICS_SYNC.md) 선례).
+- 결제사 추상화는 만들지 않는다. 서버 모듈 경계만 `payments/` 한 곳으로 모은다.
+- 결제사 선택·계약은 사용자 항목(§10 D1). 계약 전 구현·시험은 **가짜 결제사 서버**로 하고 실제 연동 문구는 열지 않는다([ANALYTICS_SYNC.md#8 D8](ANALYTICS_SYNC.md) 선례).
 
 ## 3. 과금 흐름
-후불(월 마감 후 청구)이다. 한 달의 peak는 마감 시점에 확정된다.
+후불(지난달 분을 다음 달 이후 소유자가 결제). 한 달의 금액은 **invoice 확정 시 1회 계산하고 이후 불변**이다.
 
 | 단계 | 규칙 | 주체 |
 |---|---|---|
-| 1 결제수단 등록 | 소유자가 결제창에서 카드 인증 → 우리 서버가 `authKey`로 빌링키 발급 → 암호화 저장 + 카드 표시 정보(브랜드·끝 4자리)만 저장 | 서버 |
-| 2 월 마감 | 다음 달 1일 00:00 KST 이후, 직전 달 `blog_usage_snapshots` 행을 **마감 기준**으로 사용. 마감 후 늦게 들어온 변경은 직전 달에 반영하지 않음(원본 snapshot 읽기, 재계산 금지) | 서버 작업 |
-| 3 청구 금액 계산 | 서버가 `overage_slots × unit_price_krw`(설정값, 정수 원)로 **직접** 계산해 `invoices`에 확정. 클라이언트 입력 금액은 받지 않음. 0원이면 결제 호출 없이 `no_charge`로 종료 | 서버 |
-| 4 자동결제 | 빌링키로 승인 호출(금액=invoice 금액, `order_id`=invoice+시도 번호). 호출 전 `payment_attempts(requested)` 선기록 | 서버 |
-| 5 결과 확정 | 승인 응답과 **웹훅 둘 다** 결제를 재조회해 같은 invoice로 수렴(§4). 성공 → `paid`, 영수증 링크 저장 | 서버 |
-| 6 실패 재시도 | 실패 시 `past_due`. 재시도 간격·횟수는 §10 D4(권고 가설: D+1·D+3·D+5, 총 3회). 알림은 소유자 화면 배너(이메일 발송은 후속 `미확인`) | 서버 |
-| 7 유예·제한 | 재시도 소진 후 유예 N일(D4 가설 7일) 안에 수단 변경·수동 결제 가능. 유예 만료 시 **서비스 제한**: 초과 슬롯 신규 활성화 차단 + §7 다운그레이드 보관 요구 발동. **삭제·열람 차단은 없음** | 서버 |
-| 8 복구 | 수동 결제 성공 시 제한 해제. 미납 invoice는 최신 달부터 순서 없이 개별 결제 가능, 합산 결제 없음 | 서버 |
+| 1 결제수단 등록 | 소유자가 결제창에서 카드 인증 → 서버가 `authKey`로 빌링키 발급 → 암호화 저장 + 표시 정보(브랜드·끝 4자리)만 저장 | 소유자 세션 |
+| 2 invoice 확정 | 소유자가 청구 화면을 열거나 "결제"를 누를 때 `finalize_invoices(workspace)` SQL이 **지난달 이전 월**만 확정(§3-A). 같은 (workspace, period) 1건 UNIQUE, 확정 후 값 불변 | DB 함수 |
+| 3 금액 | 확정 시 `overage_slots × unit_price_krw`(정수 원, 총액)를 DB가 계산해 복사 저장. 클라이언트 금액 입력 없음. 0원이면 `no_charge`로 종료, 결제 호출 없음 | DB 함수 |
+| 4 결제 | **소유자의 POST로만** 시작. 화면 열기·링크 prefetch·다중 탭은 결제를 일으키지 않는다. 서버가 `begin_payment_attempt`로 `requested`를 **선기록**한 뒤 빌링키로 승인 호출(금액=invoice 금액, `order_id`=서버 발급) | 소유자 세션+서버 |
+| 5 확정 | 승인 응답을 받으면 결제사 조회 API로 재조회해 상태·금액·`order_id`를 대조(§4). 성공 → `paid`, 영수증 링크 저장 | 서버 |
+| 6 실패 | 실패 사유 코드를 보여 주고 소유자가 다시 누르면 새 시도. 자동 재시도 없음 | 소유자 |
 
-- 시간 경계: KST 달력 월만 사용([MULTI_BLOG_BILLING.md#13](MULTI_BLOG_BILLING.md)). 마감 작업은 같은 (workspace, period)를 두 번 청구하지 않는다(`invoices` UNIQUE).
-- 승인 응답 타임아웃: 결과 불명 상태(`unknown`)면 **재호출하지 않고** 결제사 조회로 확정한 뒤에만 재시도(이중 청구 방지).
-- 마감 작업 실행 방식은 §10 D2(무인 실행 vs 세션 기반)에 달려 있다.
+- 미납은 **표시만** 한다(청구 내역 `미납` 배지). 서비스 제한·보관 요구 발동은 r2에 없다(§10 D4). 수금은 소유자가 누르는 데 달려 있다는 사업 리스크가 있다.
+- 시간 경계: KST 달력 월([MULTI_BLOG_BILLING.md#13](MULTI_BLOG_BILLING.md)). 이번 달 이후는 확정하지 않는다.
 
-## 4. 웹훅·멱등성·서명 검증·금액 위변조 방지
+### 3-A. invoice 확정 규칙 (SQL 함수, 이월 계산)
+0019 snapshot은 blogs 변경 이벤트가 있는 달에만 생긴다. 이벤트 없는 달은 아래 규칙으로 **확정 시 1회** 계산하며 이후 재계산하지 않는다(원본 snapshot은 수정하지 않는다).
+
+| 지난달 상황 | 그 달 peak (이월) |
+|---|---|
+| snapshot 있음 | `peak_active` 그대로 |
+| 없음, 이전 달 snapshot 있음 | 가장 가까운 이전 snapshot의 `active_at_close` |
+| 없음, 이전·이후 snapshot 모두 없음 | 현재 `blogs` 활성 수(이벤트 없음 = 변화 없음) |
+| 없음, 이전 없고 이후만 있음(계량 시작 전 달) | 청구 안 함(`no_charge`) |
+
+- 초과 슬롯 = max(0, peak − 포함 수). 포함 수는 확정 시 `workspace_entitlements.included_blogs`를 복사한다(snapshot의 `overage_slots`는 이벤트 시점 포함 수라 쓰지 않는다).
+- **월중 플랜 변경이 있었던 달**(운영자 SQL로 `workspace_entitlements.updated_at ≥ period_start`)은 확정을 보류하고 운영자가 처리한다(플랜 변경 흐름은 비범위라 재계량을 만들지 않는다). 감지 방식의 정확성은 P1 검토 대상.
+- 가격은 청구 대상 월 `period_start`에 유효한(`effective_from ≤ period_start`) 최신 `billing_prices` 행.
+- **청구 제외(DB 조건)**: ① 해당 월 말 시점 유예 유효(`grace_until ≥ period_end`) ② 해당 워크스페이스에 `blog.overage_ack` audit 기록이 없음(동의 없는 청구 금지). 동의 판정이 월·블로그 단위로 충분한지는 P1에서 검토(`팀장 결정 필요` 아님, 설계 검증 항목).
+- 결제수단 없이 초과 활성화를 허용할지는 §10 D13(사용자 결정). 허용 시 초과분은 invoice로만 쌓이고 결제는 소유자가 수단 등록 후 누른다.
+
+## 4. 결제 결과 확정·금액 위변조 방지 (웹훅 없음)
 | 항목 | 규칙 |
 |---|---|
-| 엔드포인트 | `POST /api/payments/webhook`(인터넷 공개, 세션 없음). 결제사 공식 IP·서명 방식은 공식 문서로 확인 `미확인` |
-| 신뢰 원칙 | **웹훅 본문을 믿지 않는다.** 본문은 "어떤 결제를 조회할지" 힌트일 뿐이며, 서버가 결제사 API를 비밀 키로 재조회한 결과(상태·금액·order_id)만 반영한다 |
-| 서명 검증 | 결제사가 서명 헤더를 제공하면 원문(raw body) 기준 상수 시간 비교로 검증, 실패 시 400·본문 저장 안 함. 제공하지 않으면 위 재조회가 유일한 신뢰 근거 |
-| 멱등성 | `payment_webhook_events`에 (provider, event_id 또는 payment_key+status) UNIQUE. 중복 수신은 200 반환·재처리 안 함. 처리는 단일 트랜잭션 RPC |
-| 금액 위변조 | 재조회 결과의 `amount`가 `invoices.amount_krw`와 정수 일치할 때만 `paid`. 불일치 → `amount_mismatch`로 격리·결제 취소 검토·운영 알림. 승인 호출 금액은 항상 DB invoice에서 읽음 |
-| 매칭 | `order_id`가 우리 `payment_attempts`에 없으면 무시(200, 기록만). 다른 워크스페이스 invoice로 교차 반영 금지 |
-| 순서 역전·재전송 | 상태 전이표(`requested→paid|failed|unknown`, `paid→refunded`)만 허용, 역행 거부. 최종 강제는 DB 트리거([AGENTS 지침](../../AGENTS.md)) |
-| 빌링키 발급 콜백 | 성공 리다이렉트의 `authKey`·`customerKey`를 세션 사용자(owner)·쿠키 state와 대조해야만 빌링키 발급. `customerKey`는 서버 발급 랜덤 값(추측 불가, 워크스페이스 id 직접 사용 금지) |
-| 응답 속도 | 200을 빨리 반환하고 무거운 처리는 재시도 가능한 상태로 남김(재전송 정책 `미확인`) |
+| 신뢰 원칙 | 승인 응답 본문을 그대로 믿지 않는다. 서버가 결제사 API를 비밀 키로 **재조회**한 결과(상태·금액·order_id)만 반영 |
+| 금액 | 승인 금액 = invoice 총액(`amount_krw`, VAT 포함 여부는 D5). 재조회 `amount`와 정수 일치할 때만 `paid`. 불일치 → 기록 `failed(amount_mismatch)`·운영 확인. 승인 호출 금액은 항상 DB invoice에서 읽음 |
+| 진행 중 1건 | `payment_attempts`에 **invoice당 부분 unique**(`status in ('requested','unknown')`). 동시 클릭·다중 탭은 DB가 거부 → 이중 승인 불가 |
+| 복구(requested 이후 종료·타임아웃) | `requested`·`unknown`이면 **승인 재호출 금지**. 소유자가 "결과 확인"을 누르면 서버가 `order_id`로 결제사 조회: 완료 → `paid`, 실패 → `failed`, 조회 결과 없음 → 일정 시간(`미확인`, 결제사 조회 보존 기간 확인 후 확정) 지난 뒤에만 `failed(not_found)`로 닫고 새 시도 허용 |
+| 매칭 | `order_id`는 서버 발급·UNIQUE. 다른 워크스페이스 invoice로 교차 반영 금지 |
+| 상태 역행 | 전이표(`requested→paid|failed|unknown`, `unknown→paid|failed`, `paid→refunded`)만. 최종 강제는 DB 트리거 |
+| 빌링키 발급 콜백 | 복귀 `authKey`·`customerKey`를 세션 사용자(owner)·쿠키 state(1회용·만료)와 대조해야만 발급. `customerKey`는 서버 발급 랜덤 값(워크스페이스 id 직접 사용 금지) |
+| 결과 기록 위조 | §9 체인 ①: DB는 결제사 응답을 검증할 수 없다. 소유자 JWT로 결과 RPC를 직접 호출하면 `paid` 위조 가능 → §10 D14 |
 
 ## 5. 데이터 모델 변경안
-마이그레이션 **0028~**(0027까지 사용 중). 아래는 안이며 SQL은 builder가 쓴다. 공통: 금액은 `bigint`(정수 원, `check >= 0`), RLS 활성 + 정책 + 정책 컬럼 인덱스 + 코멘트, authenticated·anon 쓰기 권한 없음(`revoke`), 비밀·원문 응답 저장 금지.
+마이그레이션 **0028~0030**(0027까지 사용 중). 안이며 SQL은 builder가 쓴다. 공통: 금액 `bigint`(정수 원, `check >= 0`), RLS 활성 + 정책 + 정책 컬럼 인덱스 + 코멘트, authenticated·anon 테이블 쓰기 권한 없음(`revoke`), 비밀·원문 응답 저장 금지.
 
 | 번호(안) | 테이블 | 핵심 컬럼 | RLS·원칙 |
 |---|---|---|---|
-| 0028 | `billing_prices` | `plan`, `unit_price_krw`, `vat_mode`(미결 D5), `effective_from`, `created_by` | 멤버 읽기 X(내부 설정). 변경은 운영자 SQL만, 이력 보존(UPDATE 금지·INSERT만) |
-| 0028 | `billing_customers` | `workspace_id`(PK), `provider`, `customer_key`(서버 발급), `billing_key_ct`(암호문)·`key_version`, `card_brand`, `card_last4`, `status`(active·needs_update·removed) | 소유자만 select(암호문 컬럼 제외 view 또는 컬럼 권한). 쓰기·복호화 RPC는 서버 전용 |
-| 0029 | `invoices` | `id`, `workspace_id`, `period_start`, `peak_active`, `included_blogs`, `overage_slots`, `unit_price_krw`, `amount_krw`, `vat_krw`, `status`(draft·no_charge·pending·paid·past_due·void·refunded·disputed), `due_at`, `paid_at`, `receipt_url` | UNIQUE(workspace_id, period_start). 소유자만 select. 계산 입력은 **snapshot 값 복사**(재계산해도 같은 결과) |
-| 0029 | `invoice_lines` | `invoice_id`, `kind`(overage 등), `quantity`, `unit_price_krw`, `amount_krw` | invoice 합계 = 줄 합 검사 트리거 |
-| 0030 | `payment_attempts` | `id`, `invoice_id`, `attempt_no`, `order_id` UNIQUE, `provider_payment_key`, `amount_krw`, `status`(requested·paid·failed·unknown), `failure_code`, `requested_at` | 소유자 select(실패 코드만). 원문 응답·카드 정보 저장 안 함 |
-| 0030 | `payment_webhook_events` | `provider`, `event_key` UNIQUE, `payload_hash`, `received_at`, `processed_at`, `result` | 클라이언트 접근 전부 차단 |
-| 0031 | `workspace_entitlements` 확장 | `over_entitlement_since timestamptz`, `restricted_until_paid boolean`, `pending_plan text`, `plan_effective_from date` | 기존 정책 유지(멤버 select). 쓰기 시스템 경로만 |
-| 0031 | `audit_logs` 액션 | `billing.method_registered`·`billing.method_removed`·`billing.invoice_paid`·`billing.plan_change`·`billing.refund` | `billing.%`도 트리거·RPC만 기록([0019 정책](../../supabase/migrations/0019_blog_entitlements.sql)과 같은 방식) |
+| 0028 | `billing_prices` | `unit_price_krw`, `vat_mode`(D5), `effective_from`, `created_by` | 멤버 읽기 X. 운영자 SQL INSERT만(UPDATE 금지), 이력 보존 |
+| 0028 | `billing_customers` | `workspace_id`(PK), `provider`, `customer_key`, `billing_key_ct`·`key_version`, `card_brand`, `card_last4`, `status`(active·removed) | 소유자 select(암호문 제외 view). 쓰기는 security definer RPC만 |
+| 0029 | `invoices` | `id`, `workspace_id`, `period_start`, `peak_active`, `included_blogs`, `overage_slots`, `unit_price_krw`, `amount_krw`(총액), `vat_krw`(표시용), `status`(no_charge·pending·paid·void·refunded), `paid_at`, `receipt_url` | UNIQUE(workspace_id, period_start). 소유자 select. 입력값 복사 후 **불변 트리거**(status·paid_at·receipt_url만 전이) |
+| 0029 | `invoice_lines` | `invoice_id`, `kind`, `quantity`, `unit_price_krw`, `amount_krw` | 합계 = 줄 합 검사 |
+| 0030 | `payment_attempts` | `id`, `invoice_id`, `attempt_no`, `order_id` UNIQUE, `provider_payment_key`, `amount_krw`, `status`(requested·unknown·paid·failed), `failure_code`, `requested_at` | **부분 unique(invoice_id) where status in ('requested','unknown')**. 소유자 select(실패 코드만) |
+| 0030 | `audit_logs` 액션 | `billing.method_registered`·`billing.method_removed`·`billing.invoice_finalized`·`billing.invoice_paid`·`billing.refund` | `billing.%`는 definer RPC만 기록([0019 정책](../../supabase/migrations/0019_blog_entitlements.sql) 방식) |
 
-- **쓰기 주체 문제**: 웹훅·월 마감은 세션이 없다. service role은 앱에 넣지 않는다(고정). 후보 두 가지와 위험은 §10 D2에 둔다. 어느 쪽이든 `cf_caller_is_client()`는 새 역할을 시스템으로 보지 않으므로 `workspaces.plan` 변경은 별도 `security definer` RPC로만 하고, **`set_config('role', ...)`·`SET ROLE` 금지**([0019](../../supabase/migrations/0019_blog_entitlements.sql) 주석).
-- 플랜 변경은 `invoices.paid` 또는 소유자 변경 요청의 서버 처리 결과로만 `workspaces.plan`을 바꾼다(클라이언트 `PLAN_CHANGE_FORBIDDEN` 유지).
-- 빌링키 암호화: AES-GCM, 키는 서버 환경 변수·버전 관리, AAD = workspace_id·provider·key_version([ANALYTICS_SYNC.md#8 D2](ANALYTICS_SYNC.md) 방식 재사용).
-- 변경 후 `sql2erd`로 `docs/diagrams/erd.mmd`를 갱신하고 `supabase/tests/run.ps1`에 권한 시험을 추가한다.
+- 쓰기 경로: security definer RPC(`finalize_invoices`·`begin_payment_attempt`·`record_payment_result`·키 저장·삭제)가 **세션의 `auth.uid()`가 owner인지** 확인한다. EXECUTE는 authenticated에만, 시험에 권한 검증을 넣는다([ANALYTICS_SYNC.md#8 D2](ANALYTICS_SYNC.md) 방식). service role·새 DB 역할·`set_config('role', ...)`·`SET ROLE` 금지.
+- **`workspaces.plan`은 바꾸지 않는다.** 따라서 `enforce_plan_lock`·`cf_caller_is_client()`·블로그 상한 검사(`enforce_blog_limits`)는 **변경하지 않는다**(r1 🔴 해소, 면제 범위 확대 없음). 플랜 변경 컬럼(`pending_plan` 등)은 만들지 않는다.
+- 빌링키 암호화: AES-GCM, 키는 서버 환경 변수·버전 관리, AAD = workspace_id·provider·key_version([ANALYTICS_SYNC.md#8 D2](ANALYTICS_SYNC.md) 재사용).
+- 변경 후 `sql2erd`로 `docs/diagrams/erd.mmd` 갱신, `supabase/tests/run.ps1`에 권한·UNIQUE·전이 시험 추가.
 
 ## 6. 화면
-소유자만 결제수단·청구·결제를 본다. 관리자·편집자는 "결제는 소유자만 관리합니다" 안내와 사용량 배지만 본다. 설정 > 결제(신규) 안에 둔다. 표 형식은 ux-patterns 2절.
+소유자만 결제수단·청구·결제를 본다. 관리자·편집자는 "결제는 소유자만 관리합니다" 안내와 사용량 배지만 본다. 설정 > 결제(신규). 표 형식은 ux-patterns 2절.
 
 | 화면/요소 | 유형 | 구성 블록 | 상태 | 다음 |
 |---|---|---|---|---|
-| 결제 개요 | 설정 페이지 | 이번 달 사용량("peak n / 포함 m, 초과 k"), 예상 금액("금액 미정" 또는 설정값 기준), 결제수단 카드, 최근 청구 3건 | 빈(수단 없음)·로딩·저장 실패·권한 없음·결제 미연동(`미연동` 배지) | 결제수단 등록, 청구 내역 |
-| 결제수단 등록 | 외부 결제창 이동 + 복귀 | 안내(카드 정보는 결제사가 처리, 우리는 저장 안 함), 약관·자동결제 동의 체크, "카드 등록" 버튼 | 동의 전 비활성·발급 중·성공·결제창 취소·인증 실패(코드별 문구) | 결제 개요 |
-| 결제수단 변경·삭제 | alert dialog([OVERLAY_UX.md](../07-design/OVERLAY_UX.md)) | 현재 카드(브랜드·끝 4자리), 삭제 시 "미납이 있으면 제한될 수 있습니다" | 확인 체크 전 비활성·미납 있음 경고 | 결제 개요 |
-| 청구 내역 | 목록(표/카드) | 월·peak·초과 슬롯·금액·상태 배지·영수증 링크 | 빈·로딩·실패·`미납`·`환불됨`·`분쟁 중` | 청구 상세 |
-| 청구 상세 | 상세 패널 | 계산 근거(peak·포함 수·단가·합계 복사된 값), 결제 시도 목록(시각·결과·실패 사유), "지금 결제" | 결제 중(중복 클릭 비활성)·`결과 확인 중`(unknown) | 청구 내역 |
-| 결제 실패 안내 | 상단 배너+목록 행 | 실패 사유 요약, 다음 재시도일, 유예 만료일, "결제수단 변경"·"지금 결제" | 재시도 대기·유예 중·제한됨 | 결제 개요 |
-| 다운그레이드 보관 요구 | 배너+선택 목록 | §7 참조 | §7 | 블로그 계정 목록 |
+| 결제 개요 | 설정 페이지 | 이번 달 사용량("peak n / 포함 m, 초과 k"), 예상 금액("금액 미정" 또는 설정값 기준), 결제수단 카드, 미결제 청구 안내, 최근 청구 3건 | 빈(수단 없음)·로딩·저장 실패·권한 없음·`미연동` 배지 | 결제수단 등록, 청구 내역 |
+| 결제수단 등록 | 외부 결제창 이동 + 복귀 | 안내(카드 정보는 결제사가 처리, 우리는 저장 안 함), "카드를 저장하고 내가 결제할 때 사용" 동의 체크, "카드 등록" | 동의 전 비활성·발급 중·성공·결제창 취소·인증 실패(코드별 문구) | 결제 개요 |
+| 결제수단 변경·삭제 | alert dialog([OVERLAY_UX.md](../07-design/OVERLAY_UX.md)) | 현재 카드(브랜드·끝 4자리), 미결제 청구 있음 경고 | 확인 체크 전 비활성 | 결제 개요 |
+| 청구 내역 | 목록(표/카드) | 월·peak·초과 슬롯·금액·상태 배지·영수증 링크 | 빈·로딩·실패·`미결제`·`환불됨`·`청구 없음` | 청구 상세 |
+| 청구 상세 | 상세 패널 | 계산 근거(확정 때 복사된 peak·포함 수·단가·합계), 결제 시도 목록(시각·결과·실패 사유), "결제하기"(소유자 클릭 POST) | 결제 중(중복 클릭 비활성)·`결과 확인 중`(requested·unknown, "결과 확인" 버튼) | 청구 내역 |
 
 - 3구간: 모바일(~767) 카드형·대화상자 전체 폭 하단, 태블릿(768~1199)·데스크톱(1200~) 표형·중앙 대화상자. 폰트 크기는 디자인 토큰.
-- 키보드: 포커스 트랩, Esc 취소, 동의 체크박스·결제 버튼 Tab 도달, 상태는 색+텍스트로 표시.
-- 문구 금지: 연동 전 "자동결제 중·청구됨"·확정 금액 표시. 로컬 모드에는 결제 메뉴 없음. 실제 금액이 없으면 N/A([AGENTS 지침](../../AGENTS.md) 수익 N/A 규칙과 별개로 "금액 미정").
+- 키보드: 포커스 트랩, Esc 취소, 동의 체크박스·결제 버튼 Tab 도달, 상태는 색+텍스트.
+- 문구 금지: "자동결제"·연동 전 "청구됨·결제됨"·확정 금액. 로컬 모드에는 결제 메뉴 없음. 금액이 없으면 "금액 미정".
 
-## 7. 다운그레이드 보관 요구 (`BLOG_OVER_ENTITLEMENT`)
-[MULTI_BLOG_BILLING.md#5](MULTI_BLOG_BILLING.md)·[#6](MULTI_BLOG_BILLING.md)에서 이관된 항목이다.
+## 7. 다운그레이드 보관 요구 (`BLOG_OVER_ENTITLEMENT`) — r2 비범위(규칙만 보존)
+[MULTI_BLOG_BILLING.md#5](MULTI_BLOG_BILLING.md)·[#6](MULTI_BLOG_BILLING.md)에서 이관된 항목. 플랜 변경·미납 제한이 비범위라 r2에서는 구현하지 않고 후속 규칙으로 남긴다.
 
-| 항목 | 규칙 |
+| 항목 | 규칙(후속) |
 |---|---|
-| 발동 조건 | `활성 수 > 허용 수` 일 때. 허용 수 = `overage_allowed ? max_blogs : included_blogs`. 원인: 플랜 하향, 구독 해지, 결제 실패 제한(§3-7) |
-| 적용 시점 | 하향·해지는 **다음 달 1일 00:00 KST**에 적용(권고, §10 D6). 결제 실패 제한은 유예 만료 시점 |
-| 데이터 | **삭제하지 않는다.** 기존 글·키워드는 열람·수정 가능([MULTI_BLOG_BILLING.md#10](MULTI_BLOG_BILLING.md)) |
-| 차단 | 보관 선택 전 **새 글·키워드의 블로그 연결**과 `archived → active` 복원을 막는다. 오류 코드 `BLOG_OVER_ENTITLEMENT`(409). 최종 강제는 DB 트리거, 앱 검사는 보조 |
-| 해제 | 소유자·관리자가 활성 블로그를 허용 수 이하로 보관하면 즉시 해제(`over_entitlement_since` 비움) |
-| 선택 주체 | 소유자·관리자가 보관 대상을 고른다. **자동 보관은 하지 않는다**(사용자 데이터 임의 변경 금지, §10 D7 확인) |
-| 알림 | 적용 7일 전부터 배너("n개를 보관해야 합니다"), 값은 설정값(D6) |
+| 발동 | `활성 수 > 허용 수`(허용 = `overage_allowed ? max_blogs : included_blogs`). 원인은 플랜 하향·해지·미납 제한(후속) |
+| 데이터 | **삭제하지 않는다**. 기존 글·키워드 열람·수정 가능([MULTI_BLOG_BILLING.md#10](MULTI_BLOG_BILLING.md)) |
+| 차단 | 보관 선택 전 새 글·키워드 연결과 `archived → active` 복원 차단, `BLOG_OVER_ENTITLEMENT`(409). 최종 강제는 DB 트리거(`enforce_blog_limits` 변경이므로 후속 challenger) |
+| 선택 | 소유자·관리자가 선택. 자동 보관 없음(D7) |
 
-| 화면/요소 | 유형 | 구성 블록 | 상태 | 다음 |
-|---|---|---|---|---|
-| 보관 요구 배너 | 상단 배너 | 초과 수, 적용일, "보관할 블로그 선택" | 적용 전 예고·적용 후 차단 중 | 선택 목록 |
-| 보관 선택 목록 | 체크 목록(모바일 카드) | 블로그 이름·연결 글 수·최근 활동, 선택 수 카운터("n/k개 더 선택"), 확인 버튼 | 선택 부족 시 확인 비활성·저장 실패·완료 | 블로그 계정 목록 |
-
-- 시험: 하향 후 보관 전 새 글 연결 거부, 기존 글 수정 가능, 보관 후 해제, API 직접 호출 우회 거부.
+화면(보관 요구 배너·보관 선택 목록)은 후속 설계에서 §6 표 형식으로 추가한다.
 
 ## 8. 환불·취소·분쟁 최소 규칙
-법률 요건(청약철회·환불 기한·고지 항목)은 `미확인`이며 §10 D8 법무 확인 전에는 아래를 **운영 규칙 초안**으로만 둔다.
+법률 요건(청약철회·환불 기한·고지)은 `미확인`이며 §10 D8 법무 확인 전에는 **운영 규칙 초안**이다.
 
 | 상황 | 규칙 |
 |---|---|
-| 이중 결제·금액 불일치 | 서버가 감지(`amount_mismatch`·동일 invoice 2건 paid) → 초과분 전액 취소 API 호출, `billing.refund` audit |
-| 사용자 환불 요청 | 자동 환불 없음. 운영자가 invoice 단위로 취소(결제사 콘솔/API) → `refunded`. 부분 환불 지원 여부는 설계 안 함(전액만) |
-| 구독 해지 | 소유자가 요청 → 다음 달 1일 적용(§7). 이미 마감된 달의 청구는 취소되지 않음 |
-| 분쟁(카드사 이의) | 해당 invoice `disputed`, 추가 자동 청구 중단, 소유자 화면에 "분쟁 중" 표시, 처리는 운영자 수동 |
-| 청구 내용 이의 | 계산 근거(`invoices` 복사 값·`blog_usage_snapshots`·audit)로 소명. 오류가 확인되면 `void` 후 재발행 |
-| 결제수단 삭제 | 빌링키를 결제사에서 삭제 후 우리 암호문 제거. 실패 시 `removing`으로 두고 재시도 |
+| 이중 결제·금액 불일치 | 서버 감지 시 초과분 전액 취소 API 호출 + `billing.refund` audit. 이중 승인은 §4 부분 unique로 원천 차단 |
+| 사용자 환불 요청 | 자동 환불 없음. 운영자가 invoice 단위 취소(결제사 콘솔/API) → `refunded`. 전액만 |
+| 분쟁(카드사 이의) | 운영자 수동 처리, 소유자 화면에 별도 상태 없음(r2는 상태 5종 유지, 필요 시 후속) |
+| 청구 내용 이의 | 복사된 계산 근거·`blog_usage_snapshots`·audit로 소명. 오류 확인 시 `void` 후 운영자가 재확정 |
+| 결제수단 삭제 | 결제사에서 빌링키 삭제 후 우리 암호문 제거. 실패 시 재시도 안내 |
 
 ## 9. 보안 위협 메모
 | 항목 | 내용 |
 |---|---|
-| 노출 면 | 결제수단 등록 시작·복귀 엔드포인트, 웹훅 엔드포인트(인터넷 공개·무세션), 수동 결제 트리거, 월 마감 작업 진입점 |
-| 인증·인가 | 등록·삭제·수동 결제는 세션 소유자만(서버 재확인). 웹훅은 서명(있으면)+재조회. 조회는 소유자만. 마감·재시도는 시스템 경로만 |
-| 데이터 | 빌링키(고민감), 카드 표시 정보(브랜드·끝 4자리), 청구 금액·결제 이력, 영수증 URL. **카드번호·CVC는 우리 서버·DB·로그에 없음** |
-| 키·권한 | 결제사 시크릿 키·웹훅 비밀은 서버 환경 변수(키 이름은 구현 때 확정), 빌링키 암호화 키 버전 관리. **service role 키는 앱에 넣지 않는다.** 결제 클라이언트 키(공개용)만 브라우저. 브라우저↔Supabase 직접 통신 없음 |
-| 신뢰 경계 | 같은 워크스페이스 관리자도 결제수단·청구에 접근 못 한다(소유자만). 소유자 이전 시 빌링키 재등록 요구 |
-| 입력 | 웹훅 본문(크기 상한·스키마 검증), 복귀 쿼리 `authKey`·`customerKey`·`state`(1회용·만료), 결제사 응답(스키마 검증) |
-| 체인 | ① 웹훅 위조로 남의 invoice를 `paid` 처리 → 서명+재조회+금액·order_id 대조. ② 금액 변조(클라이언트 값)로 저가 결제 → 서버 재계산, 입력 금액 없음. ③ 빌링키 탈취 후 임의 청구 → 암호화·AAD·최소 복호화 RPC·승인 금액을 항상 DB invoice에서만 읽음. ④ 복귀 콜백 CSRF로 공격자 카드가 피해자 워크스페이스에 연결 → 쿠키 state·세션 사용자 일치. ⑤ 타임아웃 후 재호출 이중 청구 → `unknown`은 조회 후 처리·`order_id` UNIQUE. ⑥ 새 DB 역할 권한 과다 → EXECUTE 최소·권한 시험. ⑦ `cf_caller_is_client()` 오판으로 플랜 잠금 우회 → 전용 RPC·역할 추가 검토 |
-| 피해 범위 | 빌링키 유출 시 그 카드로 결제사 정책 범위의 승인 가능성(암호화·키 회전으로 제한). 금액 위변조는 재계산으로 차단 |
-| 남용 | 수동 결제·카드 등록 난발 → 쿨다운·동시 1건·시도 상한, 결제 실패 반복 시 결제사 차단 위험 → 재시도 횟수 상한 |
-| 로그 | 시도·결과 코드·invoice id O. 빌링키·authKey·카드 정보·응답 본문 원문·비밀 키 X |
-| 결정 | 위험도 **높음**(결제·RLS·마이그레이션·외부 계약·키·노출 면·새 DB 역할 가능성) → challenger 선행 + codex-reviewer(code) + reviewer(security/contract) → tester. PRD 보안 레벨은 `PRD.md#8` 갱신 필요(L 수준 `팀장 결정 필요`) |
+| 노출 면 | 결제수단 등록 시작·복귀 엔드포인트, 소유자 결제 POST, "결과 확인" POST, invoice 확정 RPC. **웹훅·무인 작업 진입점 없음** |
+| 인증·인가 | 모든 경로 세션 + 서버·RPC의 owner 재확인. 관리자·편집자 접근 불가. 조회는 소유자만 |
+| 데이터 | 빌링키(고민감), 카드 표시 정보, 청구 금액·결제 이력, 영수증 URL. **카드번호·CVC는 서버·DB·로그에 없음** |
+| 키·권한 | 결제사 시크릿 키·빌링키 암호화 키는 서버 환경 변수(키 이름은 구현 때 확정, 서로 별도 변수·버전 관리). **service role 키·새 DB 역할·새 비밀 주체 없음.** 결제 클라이언트 키(공개용)만 브라우저. 브라우저↔Supabase 직접 통신 없음 |
+| 신뢰 경계 | 같은 워크스페이스 관리자도 결제수단·청구 접근 불가. 소유자 이전 시 빌링키 재등록(D10) |
+| 입력 | 복귀 쿼리 `authKey`·`customerKey`·`state`(1회용·만료), 결제사 응답(스키마 검증·크기 상한) |
+| 체인 | ① **결과 기록 위조**: 소유자가 자기 JWT로 `record_payment_result`를 직접 호출해 결제 없이 `paid` 기록 → 데이터 해킹이 아니라 **청구 우회**. 후보 대응은 D14. ② 금액 변조 → DB가 invoice에서 읽음, 입력 금액 없음. ③ 빌링키 탈취 후 임의 청구 → 아래 피해 범위. ④ 복귀 콜백 CSRF(공격자 카드 연결) → 쿠키 state·세션 일치. ⑤ 타임아웃 재호출 이중 청구 → §4 부분 unique·재호출 금지. ⑥ 화면 열기·prefetch로 결제 → 결제는 POST만, GET은 읽기만. ⑦ RPC EXECUTE 과다 → 최소 부여·권한 시험 |
+| 피해 범위(env 유출) | AES 키와 결제사 시크릿이 같은 서버 환경에 있으면, env와 DB 읽기를 함께 얻은 공격자는 모든 빌링키를 복호화해 **임의 금액 승인**을 시도할 수 있다. 완화: 키 별도 변수·버전 회전, 승인 금액은 invoice에서만 읽는 **서버 코드**(env 유출 시엔 무력). 결제사 측 **금액 상한·IP 허용 목록 지원 여부는 `미확인`**(D1에서 확인·적용 요청) |
+| 남용 | 카드 등록·결제 클릭 난발 → 쿨다운·시도 상한(값 `미확인`, 구현 때 확정). 결제사 차단 위험 |
+| 로그 | 시도·결과 코드·invoice id O. 빌링키·authKey·카드 정보·응답 원문·비밀 키 X |
+| 결정 | 위험도 **높음**(결제·RLS·마이그레이션·외부 계약·키·노출 면) → challenger 선행 + codex-reviewer(code) + reviewer(security/contract) → tester. PRD 보안 레벨은 `PRD.md#8` 갱신 필요(레벨 값 `팀장 결정 필요`) |
 
 ## 10. 사용자 결정 필요 항목
+착수 전 사용자 결정 7건(challenger 요청 ①~⑦)은 아래 **굵은 행**이다. 번호는 r1과 같게 유지했다.
+
 | # | 항목 | 권고(가설) | 상태 |
 |---|---|---|---|
-| D1 | **사업자 등록·가맹점 계약·결제사 선택** | 토스페이먼츠 자동결제 계약. 자동결제 별도 승인·심사 기간·수수료·정산 `미확인` → 계약 전 확인 | **사용자 결정 필요**(외부 절차) |
-| D2 | **무인 실행·쓰기 주체**(월 마감·웹훅·재시도) | A: 전용 DB 역할(해당 RPC EXECUTE만)·서버 비밀로 접속(service role 아님). B: 세션 기반만(소유자가 화면을 열 때만 마감·재시도, 웹훅은 기록 큐만). A가 청구 누락이 없으나 새 비밀 주체라 challenger 필수([ANALYTICS_SYNC.md#1](ANALYTICS_SYNC.md) 선례) | **팀장 결정 필요** |
-| D3 | **확정 가격**·기본료 청구 여부 | 초과 슬롯 단가는 설정값. 확정은 인터뷰·파일럿 후([MULTI_BLOG_BILLING.md#3](MULTI_BLOG_BILLING.md)). 가격 없이는 실결제 개시 불가 | **사용자 결정 필요** |
-| D4 | 재시도 횟수·간격, 유예 일수 | 가설: D+1·D+3·D+5, 유예 7일 | 팀장 결정 필요 |
-| D5 | 부가세 처리(포함/별도 표시), 영수증·세금계산서 | 사업자 과세 유형에 따라 다름 `미확인`. 금액은 정수 원, VAT 컬럼 분리 | **사용자 결정 필요**(세무 확인) |
-| D6 | 하향·해지 적용 시점, 사전 안내 기간 | 다음 달 1일 00:00 KST, 7일 전 예고 | 팀장 결정 필요 |
-| D7 | 보관 선택을 사용자가 하지 않을 때(차단 상태 장기화) | 자동 보관 안 함, 차단 유지(권고). 자동 보관은 사용자 데이터 임의 변경 | 팀장 결정 필요 |
-| D8 | 약관·개인정보 처리방침·전자상거래 고지(자동결제 동의 문구·환불 규정·사업자 정보 표시) | 법무 확인 필요 `미확인`. 문구 버전은 `v1`부터 앱 상수·SQL 동일 관리([MULTI_BLOG_BILLING.md#13](MULTI_BLOG_BILLING.md) 방식) | **사용자 결정 필요** |
-| D9 | 마감 시각 이후 지연된 peak 변경 처리 | 직전 달 snapshot 확정 후 변경은 다음 달로 이월 | 팀장 결정 필요 |
-| D10 | 소유자 이전·소유자 탈퇴 시 빌링키·미납 처리 | 이전 시 빌링키 삭제·재등록. 미납 있으면 이전 차단 | 팀장 결정 필요 |
+| D1 | **사업자 등록·가맹점·빌링 계약, 결제사 선택**, 약관상 빌링키 보관 책임, 결제사 측 IP 허용 목록·금액 상한 가능 여부 | 토스페이먼츠 빌링. 승인·심사 기간·수수료·정산 `미확인` → 계약 전 확인 | **사용자 결정 필요**(외부 절차) |
+| D2 | **실행 주체** | **B안 가정**: 세션 기반만(소유자 열기·클릭 시 invoice 확정·결제, 웹훅·무인 작업 없음). A(전용 DB 역할)는 JWT 서명 비밀 또는 DB 접속 비밀이 필요해 service role 금지를 실질적으로 우회 → 후속·별도 challenger. [ANALYTICS_SYNC.md#8 D0](ANALYTICS_SYNC.md)과 일관 | **사용자 결정 대기**(B안 가정으로 작성) |
+| D3 | **확정 가격·기본료 청구 여부** | 초과 슬롯 단가는 설정값. 파일럿 후 확정([MULTI_BLOG_BILLING.md#3](MULTI_BLOG_BILLING.md)). 가격 없이는 실결제 불가 | **사용자 결정 필요** |
+| D5 | **부가세 처리**(포함/별도), 영수증·세금계산서 | 사업자 과세 유형에 따라 다름 `미확인`. 승인 금액 = 총액, `vat_krw`는 표시용 분리 | **사용자 결정 필요**(세무 확인) |
+| D8 | **약관·개인정보 처리방침·전자상거래 고지**(동의 문구·환불 규정·사업자 정보) | 법무 확인 `미확인`. 문구 버전 `v1`부터 앱 상수·SQL 동일 관리([MULTI_BLOG_BILLING.md#13](MULTI_BLOG_BILLING.md) 방식) | **사용자 결정 필요** |
+| D11 | **유예·무동의 워크스페이스 비청구 확인**(§3-A 제외 조건 ①②) | 비청구(DB 제외). 동의 판정 방식은 P1 검토 | **사용자 결정 필요**(확인) |
+| D12 | **테스트 키 제공·실키 사용 승인** | 구현·시험은 가짜 결제사. 실키 소액 결제는 승인 후만 | **사용자 결정 필요** |
+| D13 | 결제수단 **미등록 상태의 초과 활성화** 허용 여부(결제수단 선등록 요구) | 선등록 요구가 안전하나 `enforce_blog_limits` 변경(후속 challenger). r2 기본은 허용·invoice 누적(수금 위험 명시) | **사용자 결정 필요**(r1 지적 🟡) |
+| D4 | 미납 처리 | r2는 표시만, 제한 없음(권고). 재시도 횟수·유예는 자동 청구 도입 시 후속 | 팀장 결정 필요 |
+| D6 | 하향·해지 적용 시점·예고 기간(후속) | 다음 달 1일 00:00 KST, 7일 전 예고 | 후속(비범위) |
+| D7 | 보관 미선택 장기화(후속) | 자동 보관 안 함, 차단 유지 | 후속(비범위) |
+| D9 | 마감 후 지연 변경 | **해소**: 확정 시 1회 계산·불변(§3-A). 지연 변경은 이후 월 | 반영됨 |
+| D10 | 소유자 이전·탈퇴 시 빌링키·미납 | 이전 시 빌링키 삭제·재등록. 미납 있으면 이전 차단 | 팀장 결정 필요 |
+| D14 | **결과 기록 위조 대응**(§4·§9 ①): (a) 서버가 결과에 HMAC 증명을 붙이고 DB가 검증(검증 비밀을 DB에 둠 — 새 비밀 위치) (b) 결과를 위조 가능한 채로 두고 결제사 정산 대조로 사후 검증 | **팀장 권고: (a)+(b).** 결과 기록 RPC는 서버가 결제사 응답(paymentKey·orderId·승인 총액·승인 시각)에 HMAC을 붙여야만 paid를 받는다. 검증 비밀은 클라이언트 권한이 전혀 없는 DB 전용 테이블(또는 Vault)에 두고 서버 env의 같은 값과 대조 — 소유자 JWT로 직접 호출해도 비밀 없이는 paid를 쓸 수 없다. 월 1회 결제사 정산 내역 대조(수동)로 사후 확인. 비밀 회전 절차는 P1에서 정의 | P1 challenger에서 확정 |
 
 ## 11. 작업 분해
-근거는 이 문서의 장. CF-23 착수는 D1·D2·D3 확정과 challenger 검토 후 사용자 승인으로만 한다([MULTI_BLOG_BILLING.md#10](MULTI_BLOG_BILLING.md)).
+근거는 이 문서의 장. CF-23 착수는 D1·D2·D3·D5·D8·D11~D13 확정과 challenger r2 후 사용자 승인으로만 한다([MULTI_BLOG_BILLING.md#10](MULTI_BLOG_BILLING.md)).
 
 | ID | 작업 | 담당 | 근거 | 위험 | 완료 조건 |
 |---|---|---|---|---|---|
-| P0 | 결정 D1~D3·D8 확정, 결제사 비교표 `미확인` 해소, 다이어그램(과금 시퀀스·상태도) | 팀장·사용자·diagrammer | §2·§10 | 낮음 | 결정 기록 |
-| P1 | 계획 공격(결제·새 DB 역할·키) | challenger | §3~§5, §9 | — | 🔴 해소 |
-| P2 | 0028~0031 테이블·RLS·상태 전이 트리거·audit 규칙 | builder | §5 | **높음**(RLS·마이그레이션) | `supabase/tests/run.ps1`: 타 워크스페이스·비소유자·anon 접근 불가, 금액 합 검사, 상태 역행 거부, 빌링키 암호문 직접 조회 불가 |
-| P3 | 결제수단 등록 서버(결제창 복귀·빌링키 발급·암호화·삭제) + 가짜 결제사 서버 | builder | §3-1, §4, §9 | **높음**(키·결제) | 단위+e2e: CSRF 복귀 거부, 키·카드 정보 로그 없음 |
-| P4 | 월 마감·금액 계산·승인 호출·재시도·유예·제한 | builder | §3 | **높음**(결제) | 이중 청구 0건(타임아웃·재시도 시험), 서버 재계산, KST 경계 시험 |
-| P5 | 웹훅 수신·서명(해당 시)·재조회·멱등 | builder | §4 | **높음**(외부 계약·노출 면) | 위조·중복·순서 역전·금액 불일치 시험 |
-| P6 | 다운그레이드 보관 요구 트리거·API·화면(`BLOG_OVER_ENTITLEMENT`) | builder+designer | §7 | 보통~높음(트리거) | 보관 전 연결 거부, 우회 거부, 기존 글 유지, 3구간·키보드 |
-| P7 | 결제 개요·등록·청구·실패 안내 화면 | builder+designer | §6 | 보통 | 3구간·키보드·소유자만·문구 금지 시험 |
-| P8 | 환불·분쟁 운영 절차(운영자 수동), 감사 로그 확인 | planner·팀장 | §8 | 낮음 | 절차 문서 |
-| P9 | 통합 검증·보안 리뷰, README·`tasks/NOW.md`·PRD#8 갱신 | codex-reviewer+reviewer+tester | §9 | **높음** | 시험 통과, 🔴 0 |
-| P10 | (조건부) 실키 소액 결제 검증·전환 | 사용자 승인 | §2·D1 | **높음**(실결제) | 승인 후만, 환불 경로 확인 |
+| P0 | 사용자 결정 §10 확정, 결제사 비교표 `미확인` 해소, 다이어그램(과금 시퀀스·invoice 확정·시도 상태도) | 팀장·사용자·diagrammer | §2·§10 | 낮음 | 결정 기록 |
+| P1 | r2 계획 공격(결과 위조 D14·이월 규칙·무동의 판정·env 피해 범위) | challenger | §3-A·§4·§9 | — | 🔴 0 |
+| P2 | 0028~0030 테이블·RLS·부분 unique·불변·전이 트리거·audit | builder | §5 | **높음**(RLS·마이그레이션) | `supabase/tests/run.ps1`: 타 워크스페이스·비소유자·anon 접근 불가, 합계 검사, 상태 역행·동시 시도 거부, 암호문 직접 조회 불가 |
+| P3 | `finalize_invoices` SQL(이월·제외·보류) | builder | §3-A | **높음**(결제 금액) | 이벤트 없는 달·플랜 변경 달·유예·무동의·KST 경계·재호출 멱등 시험 |
+| P4 | 결제수단 등록 서버(복귀·빌링키 발급·암호화·삭제) + 가짜 결제사 서버 | builder | §3-1, §4, §9 | **높음**(키) | CSRF 복귀 거부, 키·카드 정보 로그 없음 |
+| P5 | 소유자 결제 POST·시도 선기록·재조회·복구("결과 확인") | builder | §3-4~5, §4 | **높음**(결제) | 이중 승인 0건(동시 클릭·타임아웃·requested 직후 종료 시험), GET 무결제, 금액 불일치 거부 |
+| P6 | 결제 개요·등록·청구 내역·상세 화면 | builder+designer | §6 | 보통 | 3구간·키보드·소유자만·문구 금지 시험 |
+| P7 | 환불·분쟁 운영 절차(운영자 수동) | planner·팀장 | §8 | 낮음 | 절차 문서 |
+| P8 | 통합 검증·보안 리뷰, README·`tasks/NOW.md`·PRD#8 갱신 | codex-reviewer+reviewer+tester | §9 | **높음** | 시험 통과, 🔴 0 |
+| P9 | (조건부) 실키 소액 결제 검증 | 사용자 승인 | §2·D12 | **높음**(실결제) | 승인 후만, 환불 경로 확인 |
+| 후속 | 자동 청구·재시도·웹훅·플랜 변경·보관 요구(§7)·미납 제한 | — | §1·§7 | 높음 | 별도 challenger 후 별도 명세 |
 
-## 12. challenger r1 결과 (2026-11-16, 판정 REVISE — 착수 보류)
-r2에서 반영해야 할 지적. 반영 전에는 구현하지 않는다.
+## 12. challenger r1 지적 → r2 반영 위치
+판정 r1: REVISE(2026-11-16). 아래 모두 반영했으나 구현은 보류다(§10 사용자 결정·P1 대기).
 
-| 등급 | 지적 | r2가 답할 것 |
+| 등급 | r1 지적 | r2 반영 위치 |
 |---|---|---|
-| 🔴 | 0019 snapshot은 blogs 변경 이벤트가 있을 때만 생겨, 변경 없는 달은 청구 근거가 없다. `overage_slots`는 이벤트 시점 포함 수로 계산되어 월중 플랜 변경 시 낡는다 | 이벤트 없는 달의 이월 규칙, 플랜 변경 시 재계량 |
-| 🔴 | security definer RPC로 plan을 바꿔도 `enforce_plan_lock`은 GUC `role`을 읽어 client로 판정(PLAN_CHANGE_FORBIDDEN). 새 역할을 예외에 넣으면 블로그 상한 검사(0019)도 면제된다 | 판정 함수/트리거 변경 방식과 면제 범위 |
-| 🔴 | A안(전용 DB 역할)은 PostgREST에서 JWT 서명 비밀 또는 DB 직접 접속 비밀번호가 필요 — 둘 다 service role 금지를 실질적으로 우회한다 | 접속 수단·비밀 위치·최대 피해 범위 |
-| 🔴 | B안(세션만)에서 "웹훅은 큐 기록만"은 anon EXECUTE가 필요해 §5 "클라이언트 접근 차단"과 모순 | 웹훅을 MVP 비범위로 둘지 |
-| 🟡 | 진행 중 결제 시도를 invoice당 1건으로 막는 DB 제약이 없음(재시도와 "지금 결제" 동시 → 이중 승인). `requested` 직후 프로세스 종료·조회 결과 없음 규칙 없음 | 부분 unique 제약, 복구 규칙 |
-| 🟡 | `vat_krw` 분리 시 승인 금액 비교(§4)가 `amount_krw` 기준이라 어긋남. `billing_prices.effective_from` 적용 기준일 미정 | 승인 금액 = 총액, 기준일 |
-| 🟡 | 유예 중·초과 동의(overage_ack) 없는 워크스페이스도 계량되어 동의 없는 청구 가능. 결제수단 없이 초과 활성화 허용 여부 미정 | 무동의 청구 금지, 결제수단 선등록 |
-| 🟡 | AES 키와 결제사 시크릿이 같은 env — 유출 시 모든 빌링키로 임의 금액 승인 가능 | 결제사 측 금액 상한·IP 허용 목록(`미확인`) |
-| 🟡 | B안에서 화면 열기가 청구를 일으키면 prefetch·다중 탭 청구, "자동결제" 문구와 실제 동작 불일치 | 결제는 소유자 POST로만 |
-| 🟡 | 과잉 설계: 빌링 승인은 동기 응답·재조회로 충분, 웹훅·상태 8종·플랜 변경 흐름은 초과 슬롯만 청구하는 범위에 비해 큼 | 범위 축소 |
-
-**challenger 권고(D2):** 첫 실결제는 B(세션만)로 좁힌다 — invoice는 SQL로 그때그때 확정, 결제는 소유자가 누르는 POST로만, 자동결제·재시도·웹훅은 비범위, "자동결제" 문구 미사용. A는 별도 challenger 후 후속. ANALYTICS_SYNC D0와 일관. 새 비밀 주체 도입 여부(D2)는 **사용자 결정**.
-
-**착수 전 사용자에게 받을 것:** ① D1 가맹점·자동결제 계약 여부, 약관상 빌링키 보관 책임·IP·금액 상한 ② D3 확정 단가·기본료 ③ D5 과세 유형(VAT 포함/별도) ④ D8 약관·동의·환불 고지 법무 확인 ⑤ 유예·무동의 워크스페이스 비청구 확인 ⑥ D2 결정 ⑦ 테스트 키 제공과 실키 사용 승인.
+| 🔴 | 이벤트 없는 달 근거 없음·플랜 변경 시 낡음 | §3-A 이월 표·"확정 시 1회 불변"·월중 플랜 변경 달 확정 보류(재계량은 비범위) |
+| 🔴 | `enforce_plan_lock`이 새 역할을 client로 판정, 면제 시 상한 검사도 면제 | §1 비범위·§5: plan 변경 제외 → 판정 함수·트리거 **변경 없음** |
+| 🔴 | A안은 JWT 서명 비밀·DB 접속 비밀 필요(service role 우회) | §10 D2: B안 가정, A는 후속. §9: 새 비밀 주체 없음 |
+| 🔴 | B안 웹훅 큐 기록이 anon EXECUTE 필요(모순) | §1·§4: 웹훅 비범위. 새 모순(결과 위조)은 §4·§9 ①·D14로 정직하게 표기 |
+| 🟡 | 진행 중 시도 1건 제약·requested 이후 복구 없음 | §4 부분 unique·복구 규칙, §5 `payment_attempts`, P5 시험 |
+| 🟡 | VAT 분리 시 승인 금액 비교·`effective_from` 기준일 | §4 승인 금액 = 총액, §3-A `period_start` 기준 가격, D5 |
+| 🟡 | 유예·무동의 청구·결제수단 선등록 | §3-A 제외 조건, §10 D11·D13 |
+| 🟡 | AES 키·결제사 시크릿 같은 env 유출 | §9 피해 범위(정직 기술), 금액 상한·IP 허용 목록 `미확인`(D1) |
+| 🟡 | 화면 열기가 청구 유발·"자동결제" 문구 | §3-4 결제는 소유자 POST만, §6 문구 금지, §9 체인 ⑥ |
+| 🟡 | 과잉 설계(웹훅·상태 8종·플랜 변경) | §1 비범위, §5 invoice 상태 5종·시도 4종, 플랜 컬럼 제거 |
