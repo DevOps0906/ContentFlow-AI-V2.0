@@ -93,6 +93,8 @@
 7. [x] 문서 정합화: DATABASE_SCHEMA 8절(0007~0018), ERD 재생성([ERD](docs/03-database/ERD.mmd)), WORKFLOWS 티스토리 이미지 제외. 남음: 블스피·블로그AI 정확한 주소
 8. [ ] M4 파일럿: 운영자 3~5명의 편집 시간과 반복 사용 검증 (실제 사용자 필요)
 
+완료(2026-11-15~16): 발행 큐 e2e(CF-24), 광고·분석 API 동기화 GSC·AdSense·GA4(CF-07b, 가짜 Google 검증 — 실제 Google은 OAuth 클라이언트 발급 후). 보류: 초과 슬롯 실결제(CF-23, [명세 r2](docs/01-planning/PAYMENTS.md), 사용자 결정 8건 대기).
+
 후속(MVP 이후): P0-04 필수 블록 차단(템플릿 10종 예시 글은 2026-11-12 추가, 이미지는 Gemini 결제 후 `npx tsx --env-file=../../.env.local scripts/gen-template-images.ts`로 생성), L02 목차·비교표, 외부 분석 도구 API 연동, 이전 렌더 묶음 복원.
 
 최근 추가된 기능은 팀·권한 관리, 인증 메일 콜백과 비밀번호 재설정, 수익 DB 저장, 키워드↔글 ID 연결, AI 검수 의견이다. 아래 표는 현재 코드 기준이며, 기존 [개발 단계와 완성도](docs/07-design/IMPLEMENTATION_STATUS.md)의 작업 수·완성도는 이번 추가분 이전 평가다. 화면 시안은 [디자인 시안](docs/07-design/DESIGN_SPEC.md).
@@ -161,10 +163,13 @@
 | Supabase Cloud | `pwsh scripts/supabase-cloud.ps1 link -ProjectRef <ref>` → `diff`(dry-run) → `push -Yes`. 프로젝트 생성·적용은 비용·외부 공개 승인 후 |
 | AI 초안·검수 | 설정 → **AI API** 탭에서 제공자(Gemini·OpenAI)·초안/검수 모델 선택과 연결 테스트. 키는 서버 env에만: `GEMINI_API_KEY`(기본 제공자, 기본 모델 `GEMINI_MODEL`=gemini-3.5-flash, `GEMINI_QA_MODEL`), `OPENAI_API_KEY`·`OPENAI_MODEL`·`OPENAI_BASE_URL`·`QA_MODEL`. `AI_PROVIDER`로 기본 제공자 지정, `AI_ALLOWED_MODELS`로 허용 모델 제한. 기본 모델 외를 고르면 비용은 N/A |
 | 인증 메일 | `APP_URL`에 공개 앱 주소 설정, Supabase의 Site URL·허용 redirect URL에 `/auth/callback` 등록, 운영 SMTP 설정. 비밀번호 복구는 `/login` → 메일 → `/reset` |
+| Google 광고·분석 연결 (CF-07b) | Google Cloud에서 Search Console API(필요 시 AdSense Management API, Analytics Admin·Data API) 사용 설정 → OAuth 동의 화면(외부·Testing, 테스트 사용자에 본인 추가 — Testing은 7일마다 재연결) → OAuth 클라이언트 ID(웹 애플리케이션, 리디렉션 `{APP_URL}/api/integrations/google/callback`, 로컬은 `http://localhost:3410/...`). 서버 env: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `ANALYTICS_TOKEN_KEYS`(`1:<32바이트 base64>`, 키 생성: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`), `APP_URL`. 미설정이면 화면에 "연결 안 됨". 사용: 설정 → 일반 → "광고·분석 연결". 상세: [명세](docs/01-planning/ANALYTICS_SYNC.md) |
 | WordPress | `WP_BASE_URL`(https, 로컬만 http), `WP_USERNAME`, `WP_APP_PASSWORD`(애플리케이션 비밀번호) |
 | 로그인(DB 저장) | `.env`에 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` 설정 → 비로그인은 `/login`으로 이동. 미설정이면 로컬 모드. 컨테이너에서는 `host.docker.internal`, https 운영에서는 `COOKIE_SECURE=true`, 가입 차단은 `ALLOW_SIGNUP=false` |
 | DB 마이그레이션 | `npx supabase migration up` (새 환경은 `npx supabase db reset`) |
 | DB 규칙 테스트 | `powershell -File supabase/tests/run.ps1` (Docker 필요) |
+| 광고·분석 e2e | `cd apps/web && node tests/e2e/analytics-oauth.mjs` (가짜 Google 서버 내장, 로컬 Supabase 필요) |
+| 발행 큐 e2e | `cd apps/web && node tests/e2e/publish-queue.mjs <WP 자격 파일>` (`E2E_WP_URL`로 WordPress 주소 변경) |
 | 브라우저 e2e (W8) | WordPress 컨테이너·로컬 Supabase 실행 → `node apps/web/tests/e2e/start-server.mjs <WP 자격 파일>` → `cd apps/web && node tests/e2e/w8.mjs <WP 자격 파일> <출력 폴더>` (Chrome/Edge 필요, 새 의존성 없음) |
 | 모바일 앱 (Capacitor 8, Android) | 개발: `npm run dev -w apps/mobile`(/api를 3410으로 프록시). APK: `CAP_ENV=release VITE_API_BASE=https://… node apps/mobile/scripts/build-apk.mjs`(JDK 21·Android SDK·서명 키 env 필요) → `mobile-dist/app.apk`·`app.json` → 대시보드 "모바일 앱" 카드에서 다운로드. 개발용 채널은 `CAP_ENV=dev`(appId `.dev`). 앱은 읽기 전용(글 목록·상세·승인 대기). 상세: [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md), [apps/mobile/README](apps/mobile/README.md), [계획](tasks/PLAN_CAPACITOR_W0.md) |
 | WordPress 테스트 | `docker compose -f docker-compose.wp-dev.yml up -d` 후 WP-CLI로 설치·비밀번호 발급 |
@@ -190,7 +195,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 모바일 앱 다운로드 | `/` 대시보드 카드 | [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) | [mobile-app-card](apps/web/src/components/mobile-app-card.tsx) |
 | 모바일 앱 (Android) | 앱: 로그인·글 목록·상세·승인 대기 | [Capacitor 계획](tasks/PLAN_CAPACITOR_W0.md) | [apps/mobile](apps/mobile/README.md) · [shell-bridge](packages/shell-bridge/src/index.ts) |
 
-[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [발행 큐 명세](docs/06-workflows/PUBLISH_QUEUE.md) · [광고·분석 API 동기화 명세](docs/01-planning/ANALYTICS_SYNC.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [발행 큐 명세](docs/06-workflows/PUBLISH_QUEUE.md) · [광고·분석 API 동기화 명세](docs/01-planning/ANALYTICS_SYNC.md) · [실결제 명세(보류)](docs/01-planning/PAYMENTS.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

@@ -4,7 +4,7 @@
 |---|---|
 | 최근 완료 | CF-07b 광고·분석 API 동기화: 0022~0027, Google OAuth(GSC·AdSense·GA4), 수집기, 설정 연결 패널. 명세 `docs/01-planning/ANALYTICS_SYNC.md` r2 |
 | 검증 | 단위 439, typecheck·build, `supabase/tests/run.ps1` ALL PASSED, e2e `analytics-oauth.mjs` 46(가짜 Google+브라우저), `publish-queue.mjs` 17, W8 67(11-12) |
-| 진행 중 | 없음 |
+| 진행 중 | CF-07b 실제 Google 검증 — 사용자 OAuth 클라이언트 발급 대기. `.env.local`에 ANALYTICS_TOKEN_KEYS·APP_URL=http://localhost:3410 추가됨(값 비공개) |
 | 다음 후보 | CF-23은 착수 보류 — `docs/01-planning/PAYMENTS.md` §12 사용자 결정 7건 후 r2 커밋됨(세션 기반·소유자 수동 결제, D14 팀장 권고 HMAC+정산 대조) |
 | 사용자 필요 | Google Cloud OAuth 클라이언트 발급(실제 연결 검증), CF-06 부 모델 ID, CF-23 결제사·가맹점 테스트 키 |
 | CF-07b 후속 | GA4 다중 호스트 속성, 무인 예약 동기화(새 비밀 주체, challenger 필요), 연속 실패 시 error 전환·지수 백오프 |
