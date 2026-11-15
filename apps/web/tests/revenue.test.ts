@@ -12,6 +12,7 @@ import {
   sendRevenueChunks,
   type RevenueRow,
 } from "../src/lib/revenue";
+import { dbToRevenue, REVENUE_COLUMNS } from "../src/lib/revenue-db";
 import type { Article } from "../src/lib/content";
 
 const NOW = new Date("2026-11-06T00:00:00Z");
@@ -280,4 +281,28 @@ test("older rows with no recorded time zone stay unknown and block overlapping d
   // Outside its date there is nothing to confuse.
   assert.equal(importRevenue("date,revenue\n2026-11-03,1", [read], opts).added, 1);
   assert.equal(findOverlap([read], [{ source: "x", status: "estimated", currency: "KRW", page: "" }], { timezone: "UTC", periodStart: "2026-11-02", periodEnd: "2026-11-02" }), null);
+});
+
+test("rows of a partial API run are shown apart and never enter totals, RPM or page sums", () => {
+  const row = (over: Partial<RevenueRow>): RevenueRow => ({
+    source: "adsense-api", status: "estimated", currency: "KRW", date: "2026-11-01", page: "", revenue: 100, pageviews: 1000,
+    impressions: null, clicks: null, importedAt: "t", timezone: "Asia/Seoul", periodStart: "2026-11-01", periodEnd: "2026-11-01", ...over,
+  });
+  const rows = [row({}), row({ date: "2026-11-02", revenue: 900, pageviews: 100, coverage: "partial" }), row({ date: "2026-11-03", page: "/p", coverage: "partial" })];
+  const [s] = summarize(rows);
+  assert.equal(s.revenue, 100);
+  assert.equal(s.pageviews, 1000);
+  assert.equal(s.rpm, 100);
+  assert.equal(s.days, 1);
+  assert.equal(s.partialDays, 2);
+  assert.equal(pageSummaries(rows, []).length, 0);
+  const [only] = summarize([rows[1]]);
+  assert.equal(only.revenue, null);
+  assert.equal(only.days, 0);
+  assert.equal(only.partialDays, 1);
+  assert.equal(only.from, "2026-11-02");
+  assert.ok(REVENUE_COLUMNS.split(",").includes("coverage"));
+  const db = { source: "a", status: "estimated" as const, currency: "KRW", report_date: "2026-11-01", page: "", revenue: 1, pageviews: null, impressions: null, clicks: null, created_at: "t", timezone: "Asia/Seoul", period_start: "2026-11-01", period_end: "2026-11-01", coverage: "partial" as const };
+  assert.equal(dbToRevenue(db).coverage, "partial");
+  assert.equal(dbToRevenue({ ...db, coverage: undefined }).coverage, "complete");
 });

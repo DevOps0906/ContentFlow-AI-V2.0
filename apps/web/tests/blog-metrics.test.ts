@@ -12,22 +12,25 @@ import {
   METRIC_LIMITS,
   MAX_METRICS,
   METRIC_TOOLS,
+  SYNCED_METRIC_TOOLS,
   metricKey,
   metricRowKey,
   trimSpaces,
   metricFromForm,
   parseMetricBatch,
   TOOL_INFO,
+  TOOL_GROUPS,
   toolGroupsFor,
   toolSummary,
   type MetricSnapshot,
 } from "../src/lib/blog-metrics";
 import { ALL_BLOGS, UNCLASSIFIED_BLOGS, type Blog } from "../src/lib/blogs";
-import { chunkList } from "../src/lib/revenue";
+import { chunkList, rowKey } from "../src/lib/revenue";
 import { BlogMetrics, IndexTrend, MetricTable, ToolBundles } from "../src/components/blog-metrics";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 const migration = read("../../../supabase/migrations/0017_blog_metric_snapshots.sql");
+const synced = read("../../../supabase/migrations/0025_synced_storage_contract.sql");
 const NOW = new Date("2026-11-11T12:00:00Z");
 const B1 = "11111111-1111-4111-8111-111111111111";
 const B2 = "22222222-2222-4222-8222-222222222222";
@@ -51,6 +54,44 @@ const snap = (over: Partial<MetricSnapshot> = {}): MetricSnapshot => ({
 });
 const opts = { blogId: B1, measuredOn: "2026-11-10", evidenceUrl: null, now: NOW };
 
+test("synced tools match the 0025 tool check and are not accepted from a form or import", () => {
+  const all = [...METRIC_TOOLS, ...SYNCED_METRIC_TOOLS].map((t) => `'${t}'`).join(", ");
+  assert.match(synced, new RegExp(`check \\(tool in \\(${all}\\)\\)`));
+  assert.ok(SYNCED_METRIC_TOOLS.every((t) => !(METRIC_TOOLS as readonly string[]).includes(t)));
+  const row = { blogId: null, tool: "gsc-api", metric: "클릭수", scope: "page", dimension: "a", value: 1, valueLabel: null, unit: "회", measuredOn: "2026-11-01", evidenceUrl: null, memo: "" };
+  assert.throws(() => parseMetricBatch({ rows: [row] }, NOW), /도구/);
+});
+
+test("synced tools have labels everywhere a stored row is shown, and partial rows stay out of the values", () => {
+  for (const t of [...METRIC_TOOLS, ...SYNCED_METRIC_TOOLS]) assert.ok(TOOL_INFO[t].label, t);
+  assert.ok(TOOL_GROUPS.flatMap((g) => g.tools).includes("gsc-api"));
+  const rows = [
+    snap({ tool: "gsc-api", metric: "클릭수", valueLabel: null, value: 10, unit: "회", scope: "site", measuredOn: "2026-11-01" }),
+    snap({ tool: "gsc-api", metric: "클릭수", valueLabel: null, value: 99, unit: "회", scope: "site", measuredOn: "2026-11-02", coverage: "partial" }),
+  ];
+  const s = toolSummary(rows, "gsc-api");
+  assert.equal(s.count, 1);
+  assert.equal(s.partial, 1);
+  assert.deepEqual(s.items.map((i) => i.value), ["10 회"]);
+  const onlyPartial = toolSummary([rows[1]], "gsc-api");
+  assert.equal(onlyPartial.count, 0);
+  assert.equal(onlyPartial.partial, 1);
+  assert.equal(dbToMetric({ id: "i", blog_id: null, tool: "gsc-api", metric: "m", scope: "site", dimension: "", value: "1", value_label: null, unit: "", measured_on: "2026-11-01", evidence_url: null, memo: "", coverage: "partial" }).coverage, "partial");
+  assert.ok(METRIC_COLUMNS.split(",").includes("coverage"));
+  assert.match(synced, /add column coverage text not null default 'complete'/);
+});
+
+test("revenue row_key vectors match cf_revenue_row_key in 0026 (rls.sql checks the same strings)", () => {
+  assert.equal(rowKey({ source: "AdSense-API", status: "estimated", currency: "KRW", date: "2026-10-09", page: "https://Blog.Example/Post/?x=1#f", timezone: "Asia/Seoul" }), "adsense-api|estimated|KRW|2026-10-09|blog.example/post|Asia/Seoul");
+  const k = (page: string) => rowKey({ source: "adsense-api", status: "estimated", currency: "KRW", date: "2026-10-09", page, timezone: "" });
+  assert.equal(k(""), "adsense-api|estimated|KRW|2026-10-09|");
+  assert.equal(k("https://a.example/"), "adsense-api|estimated|KRW|2026-10-09|a.example");
+  assert.equal(k("https://a.example/?p=1"), "adsense-api|estimated|KRW|2026-10-09|a.example?p=1");
+  assert.equal(k("/Rel/Path/?x"), "adsense-api|estimated|KRW|2026-10-09|/rel/path");
+  assert.equal(k("?x"), "adsense-api|estimated|KRW|2026-10-09|/");
+  assert.equal(k("https://a.example/a/b///"), "adsense-api|estimated|KRW|2026-10-09|a.example/a/b");
+});
+
 test("tools, limits and conflict columns match the migration", () => {
   assert.match(migration, new RegExp(`tool in \\(${METRIC_TOOLS.map((t) => `'${t}'`).join(", ")}\\)`));
   assert.match(migration, new RegExp(`length\\(btrim\\(metric\\)\\) between 1 and ${METRIC_LIMITS.metric}`));
@@ -61,13 +102,14 @@ test("tools, limits and conflict columns match the migration", () => {
   assert.match(migration, new RegExp(`length\\(evidence_url\\) <= ${METRIC_LIMITS.url}`));
   assert.match(migration, new RegExp(`value between -${METRIC_LIMITS.valueAbs} and ${METRIC_LIMITS.valueAbs}`));
   assert.match(migration, new RegExp(`unique nulls not distinct \\(${METRIC_CONFLICT.split(",").join(", ")}\\)`));
-  for (const c of METRIC_COLUMNS.split(",")) assert.match(migration, new RegExp(`\\n  ${c} `), c);
+  // coverage was added by 0025 (checked in the synced-tools test)
+  for (const c of METRIC_COLUMNS.split(",").filter((c) => c !== "coverage")) assert.match(migration, new RegExp(`\\n  ${c} `), c);
 });
 
 test("tools are grouped by platform and only shortcuts carry a link", () => {
   const blogs = [blog(B1, "naver"), blog(B2, "tistory")];
   assert.deepEqual(toolGroupsFor(B1, blogs).map((g) => g.tools), [["bseupi", "blackkiwi", "blogai"]]);
-  assert.deepEqual(toolGroupsFor(B2, blogs).map((g) => g.tools), [["gsc", "ubersuggest", "clarity"]]);
+  assert.deepEqual(toolGroupsFor(B2, blogs).map((g) => g.tools), [["gsc", "gsc-api", "ga4-api", "ubersuggest", "clarity"]]);
   assert.equal(toolGroupsFor(ALL_BLOGS, blogs).length, 2);
   assert.equal(toolGroupsFor(UNCLASSIFIED_BLOGS, blogs).length, 2);
   assert.equal(TOOL_INFO.bseupi.url, null);

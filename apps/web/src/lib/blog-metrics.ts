@@ -8,9 +8,14 @@ import { matchesBlogFilter, type Blog, type BlogFilterValue, type BlogPlatform }
 import { normalizePhrase, parseCsv } from "./keywords";
 import { parseDate } from "./revenue";
 
-// Keep in sync with the tool check in 0017 (a test compares them).
+// Keep in sync with the tool check in 0017 and 0025 (a test compares them).
 export const METRIC_TOOLS = ["bseupi", "blackkiwi", "blogai", "gsc", "ubersuggest", "clarity", "other"] as const;
-export type MetricTool = (typeof METRIC_TOOLS)[number];
+/** Tools an operator can pick in the form or an import. */
+export type InputMetricTool = (typeof METRIC_TOOLS)[number];
+/** Tools of rows written only by the sync RPC (migration 0025 adds them to the tool check). Never accepted from a form or an import. */
+export const SYNCED_METRIC_TOOLS = ["gsc-api", "ga4-api"] as const;
+/** Every tool a stored row can carry. */
+export type MetricTool = InputMetricTool | (typeof SYNCED_METRIC_TOOLS)[number];
 /** `url: null`: named only, no shortcut. */
 export const TOOL_INFO: Record<MetricTool, { label: string; purpose: string; url: string | null }> = {
   bseupi: { label: "블스피", purpose: "블로그지수·누락 확인", url: null },
@@ -20,10 +25,12 @@ export const TOOL_INFO: Record<MetricTool, { label: string; purpose: string; url
   ubersuggest: { label: "Ubersuggest", purpose: "키워드·SEO", url: "https://neilpatel.com/ubersuggest/" },
   clarity: { label: "Microsoft Clarity", purpose: "이탈 구간", url: "https://clarity.microsoft.com/" },
   other: { label: "기타 도구", purpose: "메모에 도구 이름을 적어 주세요", url: null },
+  "gsc-api": { label: "Search Console(API)", purpose: "연결해서 가져온 검색 유입", url: null },
+  "ga4-api": { label: "Google Analytics 4(API)", purpose: "연결해서 가져온 방문 지표", url: null },
 };
 export const TOOL_GROUPS: { id: string; label: string; platforms: BlogPlatform[]; tools: MetricTool[] }[] = [
   { id: "naver", label: "네이버 블로그", platforms: ["naver"], tools: ["bseupi", "blackkiwi", "blogai"] },
-  { id: "web", label: "구글·워드프레스·티스토리", platforms: ["tistory", "wordpress", "blogger"], tools: ["gsc", "ubersuggest", "clarity"] },
+  { id: "web", label: "구글·워드프레스·티스토리", platforms: ["tistory", "wordpress", "blogger"], tools: ["gsc", "gsc-api", "ga4-api", "ubersuggest", "clarity"] },
 ];
 /** The bundles for the filter: one account shows its platform's bundle, otherwise every bundle. */
 export function toolGroupsFor(filter: BlogFilterValue, blogs: Blog[]) {
@@ -49,7 +56,8 @@ export type MetricInput = {
   evidenceUrl: string | null;
   memo: string;
 };
-export type MetricSnapshot = MetricInput & { id: string };
+/** coverage: "partial" = a sync run that did not cover its whole range; never counted as complete data. */
+export type MetricSnapshot = MetricInput & { id: string; coverage?: "complete" | "partial" };
 
 export const MAX_METRICS = 30000;
 export const MAX_METRIC_CSV = 2_000_000;
@@ -62,7 +70,7 @@ export const isIndexMetric = (metric: string) => normalizePhrase(metric).replace
 
 function checkInput(r: MetricInput): MetricInput {
   if (r.blogId !== null && !isUuid(r.blogId)) throw new Error("블로그 계정이 올바르지 않습니다.");
-  if (!METRIC_TOOLS.includes(r.tool)) throw new Error("도구를 선택해주세요.");
+  if (!(METRIC_TOOLS as readonly string[]).includes(r.tool)) throw new Error("도구를 선택해주세요.");
   if (r.metric.length < 1 || r.metric.length > METRIC_LIMITS.metric) throw new Error("지표 이름을 1~40자로 입력해주세요.");
   if (!METRIC_SCOPES.includes(r.scope)) throw new Error("지표 범위가 올바르지 않습니다.");
   if ((r.scope === "site") !== (r.dimension === "")) throw new Error(r.scope === "site" ? "사이트 지표에는 검색어·페이지를 넣지 않습니다." : "검색어 또는 페이지가 필요합니다.");
@@ -90,7 +98,7 @@ export function parseValue(raw: string): { value: number | null; valueLabel: str
 }
 const optionalUrl = (s: string) => (s.trim() ? s.trim() : null);
 
-export type MetricForm = { blogId: string | null; tool: MetricTool; metric: string; value: string; unit: string; measuredOn: string; evidenceUrl: string; memo: string };
+export type MetricForm = { blogId: string | null; tool: InputMetricTool; metric: string; value: string; unit: string; measuredOn: string; evidenceUrl: string; memo: string };
 /** One site-level value typed by hand. */
 export function metricFromForm(f: MetricForm, now = new Date()): MetricInput {
   const measuredOn = parseDate(f.measuredOn, now);
@@ -264,7 +272,7 @@ export function importGsc(csv: string, existing: MetricInput[], opts: GscImportO
 
 // ---------- database mapping ----------
 
-export const METRIC_COLUMNS = "id,blog_id,tool,metric,scope,dimension,value,value_label,unit,measured_on,evidence_url,memo";
+export const METRIC_COLUMNS = "id,blog_id,tool,metric,scope,dimension,value,value_label,unit,measured_on,evidence_url,memo,coverage";
 export const METRIC_CONFLICT = "workspace_id,blog_id,tool,metric_key,scope,dimension_key,measured_on";
 export type MetricDbRow = {
   id: string;
@@ -279,6 +287,7 @@ export type MetricDbRow = {
   measured_on: string;
   evidence_url: string | null;
   memo: string;
+  coverage?: "complete" | "partial";
 };
 export const dbToMetric = (r: MetricDbRow): MetricSnapshot => ({
   id: r.id,
@@ -294,6 +303,7 @@ export const dbToMetric = (r: MetricDbRow): MetricSnapshot => ({
   measuredOn: r.measured_on,
   evidenceUrl: r.evidence_url,
   memo: r.memo,
+  coverage: r.coverage ?? "complete",
 });
 export const metricsToDbRows = (rows: MetricInput[], workspaceId: string, userId: string) =>
   rows.map((r) => ({
@@ -332,10 +342,13 @@ export type ToolSummary = {
   queries: number;
   pages: number;
   latest: string | null;
+  /** Rows of runs that did not cover their range: shown apart, not part of the values above. */
+  partial: number;
 };
 /** What one tool recorded for the filtered rows. Never a total across tools or accounts. */
 export function toolSummary(rows: MetricSnapshot[], tool: MetricTool): ToolSummary {
-  const own = rows.filter((r) => r.tool === tool).sort(byDateDesc);
+  const all = rows.filter((r) => r.tool === tool);
+  const own = all.filter((r) => r.coverage !== "partial").sort(byDateDesc);
   const site = new Map<string, MetricSnapshot[]>();
   for (const r of own.filter((r) => r.scope === "site")) {
     const key = normalizePhrase(r.metric);
@@ -349,7 +362,7 @@ export function toolSummary(rows: MetricSnapshot[], tool: MetricTool): ToolSumma
     const list = own.filter((r) => r.scope === scope);
     return list.length ? new Set(list.filter((r) => r.measuredOn === list[0].measuredOn).map((r) => normalizePhrase(r.dimension))).size : 0;
   };
-  return { tool, count: own.length, items, queries: latestDimensions("query"), pages: latestDimensions("page"), latest: own[0]?.measuredOn ?? null };
+  return { tool, count: own.length, items, queries: latestDimensions("query"), pages: latestDimensions("page"), latest: own[0]?.measuredOn ?? null, partial: all.length - own.length };
 }
 
 export type IndexPoint = { id: string; measuredOn: string; value: string; change: string };

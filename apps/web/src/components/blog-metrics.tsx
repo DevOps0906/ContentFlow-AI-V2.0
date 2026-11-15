@@ -19,7 +19,7 @@ import {
   type MetricImport,
   type MetricInput,
   type MetricSnapshot,
-  type MetricTool,
+  type InputMetricTool,
 } from "@/lib/blog-metrics";
 import { localDay } from "@/lib/costs";
 import { revenueSendNotice, sendRevenueChunks } from "@/lib/revenue";
@@ -29,7 +29,7 @@ import { Tooltip } from "./tooltip";
 import { useFeedback } from "./feedback";
 
 const PAGE = 100;
-const emptyForm = { tool: "bseupi" as MetricTool, metric: "", value: "", unit: "", memo: "" };
+const emptyForm = { tool: "bseupi" as InputMetricTool, metric: "", value: "", unit: "", memo: "" };
 const scopeLabel = { site: "사이트", query: "검색어", page: "페이지" } as const;
 
 const accountName = (blogs: Blog[], blogId: string | null) => {
@@ -358,7 +358,7 @@ export function ToolBundles({ rows, blogs, filter }: { rows: MetricSnapshot[]; b
                   {s.count === 0 ? (
                     <>
                       <div className="stat-value">N/A</div>
-                      <p>기록 없음</p>
+                      <p>{s.partial > 0 ? "완전한 기록 없음" : "기록 없음"}</p>
                     </>
                   ) : (
                     <ul className="tool-values">
@@ -374,6 +374,7 @@ export function ToolBundles({ rows, blogs, filter }: { rows: MetricSnapshot[]; b
                       </li>
                     </ul>
                   )}
+                  {s.partial > 0 && <p className="metric-note">부분 데이터 {s.partial.toLocaleString("ko-KR")}개(일부 구간만 가져옴)는 위 값에서 제외했습니다. 표에서 확인하세요.</p>}
                 </article>
               );
             })}
@@ -465,7 +466,10 @@ export function MetricTable({
             <tr key={r.id}>
               <td data-label="측정일">{r.measuredOn}</td>
               <td data-label="블로그 계정">{accountName(blogs, r.blogId)}</td>
-              <td data-label="도구">{TOOL_INFO[r.tool].label}</td>
+              <td data-label="도구">
+                {TOOL_INFO[r.tool].label}
+                {r.coverage === "partial" && <small> · 부분 데이터</small>}
+              </td>
               <td data-label="지표" className="trend-keyword">
                 {r.metric}
               </td>

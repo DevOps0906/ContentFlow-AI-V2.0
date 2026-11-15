@@ -32,6 +32,8 @@ export type RevenueRow = {
   /** First and last day the whole import covered (YYYY-MM-DD). null as for `timezone`. */
   periodStart: string | null;
   periodEnd: string | null;
+  /** "partial": an API run that did not cover its whole range. Shown apart, never part of the complete totals. Missing = complete. */
+  coverage?: "complete" | "partial";
 };
 export const REVENUE_STORAGE_KEY = "contentflow.revenue.v1";
 export const MAX_REVENUE_ROWS = 20000;
@@ -241,6 +243,8 @@ export type Summary = {
   /** days where a site total existed, and days built from page rows */
   siteDays: number;
   pageDays: number;
+  /** days that have rows of a partial run; those rows are not in the numbers above */
+  partialDays: number;
 };
 
 const add = (a: number | null, b: number | null) => (b === null ? a : (a ?? 0) + b);
@@ -256,7 +260,9 @@ export function summarize(rows: RevenueRow[]): Summary[] {
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
   }
   const out: Summary[] = [];
-  for (const g of groups.values()) {
+  for (const all of groups.values()) {
+    const g = all.filter((r) => r.coverage !== "partial");
+    const partialDays = new Set(all.filter((r) => r.coverage === "partial").map((r) => r.date)).size;
     const byDay = new Map<string, RevenueRow[]>();
     for (const r of g) (byDay.get(r.date) ?? byDay.set(r.date, []).get(r.date)!).push(r);
     let revenue: number | null = null, pageviews: number | null = null, clicks: number | null = null, impressions: number | null = null;
@@ -278,17 +284,18 @@ export function summarize(rows: RevenueRow[]): Summary[] {
       }
     }
     const dates = [...byDay.keys()].sort();
+    const shownDates = dates.length ? dates : [...new Set(all.map((r) => r.date))].sort();
     out.push({
-      source: g[0].source,
-      status: g[0].status,
-      currency: g[0].currency,
-      timezone: g[0].timezone,
-      from: dates[0],
-      to: dates[dates.length - 1],
+      source: all[0].source,
+      status: all[0].status,
+      currency: all[0].currency,
+      timezone: all[0].timezone,
+      from: shownDates[0],
+      to: shownDates[shownDates.length - 1],
       days: dates.length,
       revenue, pageviews, clicks, impressions,
       rpm: rpmRows > 0 && rpmPv > 0 ? (rpmRev / rpmPv) * 1000 : null,
-      siteDays, pageDays,
+      siteDays, pageDays, partialDays,
     });
   }
   return out.sort((a, b) => a.source.localeCompare(b.source) || a.status.localeCompare(b.status) || a.currency.localeCompare(b.currency) || (a.timezone ?? "").localeCompare(b.timezone ?? ""));
@@ -311,7 +318,7 @@ export function pageSummaries(rows: RevenueRow[], articles: Article[], limit = 2
   for (const a of articles) if (a.publishedUrl) byUrl.set(normalizePage(a.publishedUrl), a);
   const map = new Map<string, PageSummary>();
   for (const r of rows) {
-    if (r.page === "") continue;
+    if (r.page === "" || r.coverage === "partial") continue;
     const key = [normalizePage(r.page), r.source.toLowerCase(), r.status, r.currency, r.timezone ?? ""].join("|");
     const cur = map.get(key) ?? {
       page: r.page, source: r.source, currency: r.currency, status: r.status, timezone: r.timezone, revenue: null, pageviews: null,

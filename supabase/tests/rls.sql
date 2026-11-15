@@ -33,6 +33,11 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0019_blog_entitlements.sql
 \ir ../migrations/0020_publish_queue.sql
 \ir ../migrations/0021_publish_queue_per_workspace.sql
+\ir ../migrations/0022_analytics_connections.sql
+\ir ../migrations/0023_analytics_credentials.sql
+\ir ../migrations/0024_analytics_sync_runs.sql
+\ir ../migrations/0025_synced_storage_contract.sql
+\ir ../migrations/0026_replace_synced_range.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -45,6 +50,9 @@ revoke all on workspace_entitlements, blog_usage_snapshots from anon, authentica
 grant select on workspace_entitlements, blog_usage_snapshots to authenticated;
 revoke all on publish_jobs from anon, authenticated; -- repeat 0020's revoke
 grant select on publish_jobs to authenticated;
+revoke all on analytics_credentials from anon, authenticated; -- repeat 0023's revoke
+revoke all on analytics_sync_runs from anon, authenticated; -- repeat 0024's revoke
+grant select on analytics_sync_runs to authenticated;
 
 insert into auth.users values
   ('00000000-0000-0000-0000-0000000000a1', 'owner-a@example.com', now()), -- ownerA
@@ -1846,6 +1854,378 @@ insert into publish_jobs (workspace_id, article_id, approved_version_id, remote_
   where a.id in (select qa(n) from generate_series(20, 69) n);
 select as_user('00000000-0000-0000-0000-0000000000a2');
 select expect_error($$select enqueue_publish_job(qa(70), 'r-full')$$, '^QUEUE_FULL$', 'queue: a workspace with 50 queued jobs is full');
+reset role;
+
+-- ================= 0022-0026: analytics connections, credentials, sync =================
+reset role;
+create function ws_a() returns uuid language sql immutable as $$ select '10000000-0000-0000-0000-00000000000a'::uuid $$;
+create function ws_b() returns uuid language sql immutable as $$ select '10000000-0000-0000-0000-00000000000b'::uuid $$;
+create function an_conn(n text) returns uuid language sql immutable as $$ select ('50000000-0000-0000-0000-0000000000' || n)::uuid $$;
+
+-- static: no new function may switch the role (0019 cf_caller_is_client would then miss the client)
+select expect_count($$select count(*) from pg_proc
+  where proname in ('store_credential','read_credential','read_grant_credential','rotate_credential','delete_credential',
+    'list_credential_versions','begin_sync_run','finish_sync_run','replace_synced_range','purge_synced_rows',
+    'disconnect_connection','reconnect_connection','cf_grant_creator_active','cf_delete_synced_rows',
+    'cf_analytics_require_admin','guard_analytics_connection','guard_synced_revenue_row','guard_synced_metric_row')
+    and (prosrc ~* 'set_config\s*\(\s*''role''' or prosrc ~* '\mset\s+(local\s+)?role\M')$$, 0, 'analytics: no new function switches the role (the 0019 client check stays valid)');
+select expect_count($$select count(*) from pg_proc where proname = 'replace_synced_range' and prosecdef and proconfig::text like '%search_path=public%'$$, 1, 'analytics: replace_synced_range is security definer with a fixed search_path');
+
+-- anon / public can not execute any analytics RPC
+do $$
+declare f text; bad int := 0;
+begin
+  foreach f in array array[
+    'store_credential(uuid,text,text,text,integer)','read_credential(uuid)','read_grant_credential(uuid)',
+    'list_credential_versions(uuid)','rotate_credential(uuid,integer,text,integer)','delete_credential(uuid)',
+    'begin_sync_run(uuid,date,date)','finish_sync_run(uuid,text,text,text)',
+    'replace_synced_range(uuid,uuid,date,date,jsonb,text)','purge_synced_rows(uuid)',
+    'disconnect_connection(uuid,boolean)','reconnect_connection(uuid,uuid)','cf_grant_creator_active(uuid,uuid)'] loop
+    if has_function_privilege('anon', f, 'execute') or has_function_privilege('public', f, 'execute') then bad := bad + 1; end if;
+    if not has_function_privilege('authenticated', f, 'execute') then bad := bad + 1; end if;
+  end loop;
+  if bad > 0 then raise exception 'FAIL: analytics RPC privileges (% problems)', bad; end if;
+  raise notice 'PASS: analytics RPCs execute for authenticated only (anon/public revoked)';
+end $$;
+set role anon;
+do $$ begin
+  begin
+    perform store_credential('10000000-0000-0000-0000-00000000000a', 's', 'c', 'x', 1);
+    raise exception 'FAIL: anon called store_credential';
+  exception when insufficient_privilege then raise notice 'PASS: anon can not call store_credential';
+  end;
+  begin
+    perform replace_synced_range('50000000-0000-0000-0000-0000000000a1', gen_random_uuid(), date '2026-10-01', date '2026-10-02', '[]', 'complete');
+    raise exception 'FAIL: anon called replace_synced_range';
+  exception when insufficient_privilege then raise notice 'PASS: anon can not call replace_synced_range';
+  end;
+end $$;
+reset role;
+
+-- ---- grants: roles and workspaces ----
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not store a credential');
+select as_user('00000000-0000-0000-0000-0000000000a3');
+select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not store a credential');
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select expect_error($$select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1)$$, 'ANALYTICS_FORBIDDEN', 'analytics: an owner of another workspace can not store into A');
+select store_credential(ws_b(), 'sub-b', 'client-1', 'ctb', 1) as g_b \gset
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select store_credential(ws_a(), 'sub-1', 'client-1', 'ct1', 1) as g_a \gset
+select expect_error(format($$select * from read_grant_credential(%L)$$, :'g_b'), 'ANALYTICS_FORBIDDEN', 'analytics: ownerA can not read the grant of workspace B');
+
+-- the credential table is closed to clients, by privilege and (if a grant came back) by RLS
+select expect_fail('select count(*) from analytics_credentials', 'analytics: authenticated can not select analytics_credentials');
+select expect_fail($$insert into analytics_credentials (workspace_id, google_sub, client_id, ciphertext, key_version, created_by)
+  values (ws_a(), 'x', 'y', 'z', 1, '00000000-0000-0000-0000-0000000000a1')$$, 'analytics: authenticated can not insert analytics_credentials');
+reset role;
+grant select on analytics_credentials to authenticated;
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_count('select count(*) from analytics_credentials', 0, 'analytics: RLS alone hides every credential row (no policy)');
+reset role;
+revoke all on analytics_credentials from authenticated;
+
+-- ---- connections ----
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_fail(format($$insert into analytics_connections (id, workspace_id, blog_id, grant_id, provider, external_ref, connected_by)
+  values (an_conn('a1'), ws_a(), '20000000-0000-0000-0000-00000000000a', %L, 'gsc', 'https://a.example/', '00000000-0000-0000-0000-0000000000a2')$$, :'g_a'),
+  'analytics: editor can not create a connection');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_fail(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, connected_by, scopes)
+  values (ws_a(), %L, 'gsc', 'w', '00000000-0000-0000-0000-0000000000a1', array['https://www.googleapis.com/auth/webmasters'])$$, :'g_a'),
+  'analytics: a write scope can not be stored');
+select expect_fail(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, connected_by, status)
+  values (ws_a(), %L, 'gsc', 'w', '00000000-0000-0000-0000-0000000000a1', 'active')$$, :'g_a'),
+  'analytics: a client can not create an already active connection');
+select expect_fail(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, connected_by)
+  values (ws_a(), %L, 'gsc', 'w', '00000000-0000-0000-0000-0000000000a1')$$, :'g_b'),
+  'analytics: a connection can not use a grant of another workspace');
+insert into analytics_connections (id, workspace_id, blog_id, grant_id, provider, external_ref, scopes, connected_by)
+  values (an_conn('a1'), ws_a(), '20000000-0000-0000-0000-00000000000a', :'g_a', 'gsc', 'https://a.example/',
+          array['https://www.googleapis.com/auth/webmasters.readonly'], '00000000-0000-0000-0000-0000000000a1');
+insert into analytics_connections (id, workspace_id, grant_id, provider, external_ref, scopes, connected_by)
+  values (an_conn('a2'), ws_a(), :'g_a', 'adsense', 'pub-1',
+          array['https://www.googleapis.com/auth/adsense.readonly'], '00000000-0000-0000-0000-0000000000a1');
+select expect_fail(format($$insert into analytics_connections (workspace_id, blog_id, grant_id, provider, external_ref, connected_by)
+  values (ws_a(), '20000000-0000-0000-0000-00000000000a', %L, 'gsc', 'https://a2.example/', '00000000-0000-0000-0000-0000000000a1')$$, :'g_a'), 'analytics: one GSC connection per blog');
+select expect_fail(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, connected_by)
+  values (ws_a(), %L, 'adsense', 'pub-2', '00000000-0000-0000-0000-0000000000a1')$$, :'g_a'), 'analytics: one AdSense connection per workspace');
+select expect_fail($$update analytics_connections set status = 'active' where id = an_conn('a1')$$, 'analytics: a client can not set the connection status');
+select expect_fail($$update analytics_connections set last_success_at = now() where id = an_conn('a1')$$, 'analytics: a client can not set last_success_at');
+update analytics_connections set blog_id = null where id = an_conn('a1');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and blog_id is null$$, 1, 'analytics: the blog mapping can be changed by the owner');
+update analytics_connections set blog_id = '20000000-0000-0000-0000-00000000000a' where id = an_conn('a1');
+delete from analytics_connections where id = an_conn('a1');
+select expect_count('select count(*) from analytics_connections', 2, 'analytics: not even an owner can delete a connection directly (no DELETE policy)');
+select as_user('00000000-0000-0000-0000-0000000000a3');
+select expect_count('select count(*) from analytics_connections', 2, 'analytics: a viewer reads the connections');
+delete from analytics_connections where id = an_conn('a1');
+select expect_count('select count(*) from analytics_connections', 2, 'analytics: a viewer can not delete a connection');
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select expect_count('select count(*) from analytics_connections', 0, 'analytics: another workspace sees no connection of A');
+insert into analytics_connections (id, workspace_id, blog_id, grant_id, provider, external_ref, scopes, connected_by)
+  values (an_conn('b1'), ws_b(), '20000000-0000-0000-0000-00000000000b', :'g_b', 'gsc', 'https://b.example/',
+          array['https://www.googleapis.com/auth/webmasters.readonly'], '00000000-0000-0000-0000-0000000000b1');
+
+-- ---- cross-workspace and role refusals of every connection RPC ----
+select expect_error($$select * from read_credential(an_conn('a1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerB can not read_credential of a connection of A');
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-10-01', date '2026-10-10')$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerB can not begin a run on a connection of A');
+select expect_error($$select replace_synced_range(an_conn('a1'), gen_random_uuid(), date '2026-10-01', date '2026-10-10', '[]')$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerB can not replace rows of a connection of A');
+select expect_error($$select purge_synced_rows(an_conn('a1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerB can not purge a connection of A');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_error($$select * from read_credential(an_conn('b1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerA can not read_credential of a connection of B');
+select expect_error($$select begin_sync_run(an_conn('b1'), date '2026-10-01', date '2026-10-10')$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerA can not begin a run on a connection of B');
+select expect_error($$select purge_synced_rows(an_conn('b1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: ownerA can not purge a connection of B');
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_error($$select * from read_credential(an_conn('a1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not read_credential');
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-10-01', date '2026-10-10')$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not begin a run');
+select expect_error($$select purge_synced_rows(an_conn('a1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: editor can not purge');
+select as_user('00000000-0000-0000-0000-0000000000a3');
+select expect_error($$select * from read_credential(an_conn('a1'))$$, 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not read_credential');
+select expect_error($$select replace_synced_range(an_conn('a1'), gen_random_uuid(), date '2026-10-01', date '2026-10-10', '[]')$$, 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not replace rows');
+select expect_error(format($$select delete_credential(%L)$$, :'g_a'), 'ANALYTICS_FORBIDDEN', 'analytics: viewer can not delete a credential');
+
+-- ---- read, rotate, delete ----
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from read_credential(an_conn('a1')) where ciphertext = 'ct1' and key_version = 1$$, 1, 'analytics: owner reads the ciphertext of its connection');
+select expect_count(format($$select count(*) from rotate_credential(%L, 1, 'ct2', 2) where rotate_credential$$, :'g_a'), 1, 'analytics: rotate_credential swaps at the expected version');
+select expect_count(format($$select count(*) from rotate_credential(%L, 1, 'ct3', 3) where rotate_credential$$, :'g_a'), 0, 'analytics: rotate_credential does nothing at a stale version');
+select expect_count($$select count(*) from list_credential_versions(ws_a()) where key_version = 2$$, 1, 'analytics: list_credential_versions shows the rotated version');
+select expect_error(format($$select delete_credential(%L)$$, :'g_a'), 'GRANT_IN_USE', 'analytics: a grant in use can not be deleted');
+select store_credential(ws_a(), 'sub-unused', 'client-1', 'ctu', 1) as g_u \gset
+select delete_credential(:'g_u');
+select expect_count('select count(*) from list_credential_versions(ws_a())', 1, 'analytics: an unused grant can be deleted');
+
+-- ---- row key rule (same vectors as the revenue.ts rowKey test in blog-metrics.test.ts) ----
+reset role; -- the helper functions are not callable by clients
+select expect_count($$select count(*) where cf_revenue_row_key('AdSense-API', 'estimated', 'KRW', date '2026-10-09', 'https://Blog.Example/Post/?x=1#f', 'Asia/Seoul') = 'adsense-api|estimated|KRW|2026-10-09|blog.example/post|Asia/Seoul'$$, 1, 'row key: URL page');
+select expect_count($$select count(*) where cf_normalize_page('https://a.example/') = 'a.example' and cf_normalize_page('https://a.example/?p=1') = 'a.example?p=1'
+  and cf_normalize_page('/Rel/Path/?x') = '/rel/path' and cf_normalize_page('?x') = '/' and cf_normalize_page('  ') = ''
+  and cf_normalize_page('https://a.example/a/b///') = 'a.example/a/b' and cf_revenue_row_key('adsense-api', 'estimated', 'KRW', date '2026-10-09', '', null) = 'adsense-api|estimated|KRW|2026-10-09|'$$, 1, 'row key: normalizePage vectors');
+
+-- (the next block starts as superuser)
+-- ---- sync: GSC replacement keeps CSV / manual rows and other connections' rows ----
+reset role;
+insert into blog_metric_snapshots (workspace_id, blog_id, tool, metric, scope, dimension, value, measured_on, created_by) values
+  (ws_a(), '20000000-0000-0000-0000-00000000000a', 'gsc', 'clicks', 'page', 'https://a.example/p1', 7, date '2026-10-08', '00000000-0000-0000-0000-0000000000a1'),
+  (ws_a(), '20000000-0000-0000-0000-00000000000a', 'bseupi', 'idx', 'site', '', 1, date '2026-10-08', '00000000-0000-0000-0000-0000000000a1');
+insert into revenue_rows (workspace_id, row_key, source, status, currency, report_date, page, revenue, created_by, timezone, period_start, period_end) values
+  (ws_a(), 'adsense|estimated|KRW|2026-10-09||Asia/Seoul', 'adsense', 'estimated', 'KRW', date '2026-10-09', '', 50, '00000000-0000-0000-0000-0000000000a1', 'Asia/Seoul', date '2026-10-01', date '2026-10-31');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a1'), date '2026-10-01', date '2026-10-10') as run1 \gset
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-10-01', date '2026-10-10')$$, 'SYNC_RUNNING', 'sync: one running run per connection');
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-10-01', date '2026-10-10',
+  '[{"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":5,"measured_on":"2026-10-12"}]')$$, :'run1'), 'SYNC_ROWS_INVALID', 'sync: a row outside the run range is refused');
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-10-01', date '2026-10-09', '[]')$$, :'run1'), 'SYNC_RUN_INVALID', 'sync: the range must be the one of the run');
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-10-01', date '2026-10-10', '[]')$$, gen_random_uuid()), 'SYNC_RUN_INVALID', 'sync: an unknown run is refused');
+select as_user('00000000-0000-0000-0000-0000000000c3');
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-10-01', date '2026-10-10', '[]')$$, :'run1'), 'SYNC_RUN_INVALID', 'sync: another admin can not finish a run of someone else');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select replace_synced_range(an_conn('a1'), :'run1', date '2026-10-01', date '2026-10-10', '[
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":5,"measured_on":"2026-10-03"},
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":6,"measured_on":"2026-10-08"},
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":0,"measured_on":"2026-10-10"}]') as written \gset
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and connection_id = an_conn('a1') and created_by = auth.uid()$$, 3, 'sync: 3 gsc-api rows written with created_by = session user');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and value = 0$$, 1, 'sync: a real 0 is stored as 0');
+select expect_count($$select count(*) from blog_metric_snapshots where connection_id is null and ((tool = 'gsc' and dimension = 'https://a.example/p1' and measured_on = date '2026-10-08') or (tool = 'bseupi' and metric = 'idx'))$$, 2, 'sync: CSV / manual rows are untouched');
+select expect_count(format($$select count(*) from analytics_sync_runs where id = %L and status = 'succeeded' and rows_written = 3 and finished_at is not null$$, :'run1'), 1, 'sync: the run is recorded as succeeded with its row count');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'active' and last_success_at is not null and last_error_code is null$$, 1, 'sync: the connection becomes active after the first success');
+select expect_error($$update analytics_connections set blog_id = null where id = an_conn('a1')$$, 'CONNECTION_HAS_DATA', 'analytics: a connection with synced rows can not be remapped to another blog');
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-10-08', date '2026-10-15')$$, 'SYNC_COOLDOWN', 'sync: a new run within 15 minutes is refused');
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+-- a bad batch (duplicate row) rolls back as a whole: old rows stay
+select begin_sync_run(an_conn('a1'), date '2026-10-08', date '2026-10-15') as run2 \gset
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-10-08', date '2026-10-15', '[
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":9,"measured_on":"2026-10-08"},
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":9,"measured_on":"2026-10-08"}]')$$, :'run2'), 'SYNC_ROWS_DUPLICATE', 'sync: a measurement twice in one batch is refused with a clear code');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and connection_id = an_conn('a1') and measured_on = date '2026-10-10'$$, 1, 'sync: nothing changed after the failed replacement (single transaction)');
+select replace_synced_range(an_conn('a1'), :'run2', date '2026-10-08', date '2026-10-15', '[
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":9,"measured_on":"2026-10-08"},
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":1,"measured_on":"2026-10-15"}]') as written \gset
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and connection_id = an_conn('a1')$$, 3, 'sync: only the overlapping days were replaced (10-03 kept, 10-08 and 10-10 replaced, 10-15 new)');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and measured_on = date '2026-10-08' and value = 9$$, 1, 'sync: the overlapping day has the new value');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and measured_on = date '2026-10-10'$$, 0, 'sync: an overlapping day missing from the new range is gone');
+select expect_count($$select count(*) from blog_metric_snapshots where connection_id is null and ((tool = 'gsc' and dimension = 'https://a.example/p1' and measured_on = date '2026-10-08') or (tool = 'bseupi' and metric = 'idx'))$$, 2, 'sync: CSV / manual rows still untouched after a replacement');
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a1'), date '2026-10-08', date '2026-10-15') as run3 \gset
+select replace_synced_range(an_conn('a1'), :'run3', date '2026-10-08', date '2026-10-15', '[
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":9,"measured_on":"2026-10-08"},
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":1,"measured_on":"2026-10-15"}]') as written \gset
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and connection_id = an_conn('a1')$$, 3, 'sync: importing the same range again creates no duplicates');
+-- a partial run replaces only the days it brings
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a1'), date '2026-10-01', date '2026-10-15') as run3p \gset
+select replace_synced_range(an_conn('a1'), :'run3p', date '2026-10-01', date '2026-10-15', '[
+  {"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":11,"measured_on":"2026-10-08"}]', 'partial') as written \gset
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and connection_id = an_conn('a1')$$, 3, 'partial: the days the run did not bring are kept (10-03, 10-15)');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and measured_on in (date '2026-10-03', date '2026-10-15') and coverage = 'complete'$$, 2, 'partial: the kept days stay complete');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api' and measured_on = date '2026-10-08' and value = 11 and coverage = 'partial'$$, 1, 'partial: the brought day is replaced and stored as partial');
+select expect_count(format($$select count(*) from analytics_sync_runs where id = %L and status = 'partial'$$, :'run3p'), 1, 'partial: the run is recorded as partial');
+
+-- clients can not forge synced rows or their provenance
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_fail($$insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, created_by) values
+  (ws_a(), 'gsc-api', 'clicks', 1, date '2026-10-20', auth.uid())$$, 'sync: an editor can not insert a gsc-api row directly');
+select expect_fail($$insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, created_by, connection_id) values
+  (ws_a(), 'gsc', 'clicks', 1, date '2026-10-20', auth.uid(), an_conn('a1'))$$, 'sync: an editor can not attach a connection to a hand row');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_fail($$insert into revenue_rows (workspace_id, row_key, source, status, currency, report_date, page, revenue, created_by, timezone, period_start, period_end)
+  values (ws_a(), 'k-forged', 'AdSense-API', 'estimated', 'KRW', date '2026-10-20', '', 1, auth.uid(), 'Asia/Seoul', date '2026-10-20', date '2026-10-20')$$, 'sync: an owner can not insert an adsense-api revenue row directly');
+insert into revenue_rows (workspace_id, row_key, source, status, currency, report_date, page, revenue, created_by, timezone, period_start, period_end)
+  values (ws_a(), 'adsense-x|estimated|KRW|2026-10-20||Asia/Seoul', 'adsense-x', 'estimated', 'KRW', date '2026-10-20', '', 1, auth.uid(), 'Asia/Seoul', date '2026-10-20', date '2026-10-20');
+
+-- ---- sync: AdSense replacement cuts the period of earlier rows ----
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a2'), date '2026-10-01', date '2026-10-10') as ra1 \gset
+select replace_synced_range(an_conn('a2'), :'ra1', date '2026-10-01', date '2026-10-10', '[
+  {"report_date":"2026-10-02","status":"estimated","currency":"KRW","page":"","timezone":"Asia/Seoul","revenue":100,"clicks":3},
+  {"report_date":"2026-10-09","status":"estimated","currency":"KRW","page":"","timezone":"Asia/Seoul","revenue":200,"clicks":4}]') as written \gset
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and period_start = date '2026-10-01' and period_end = date '2026-10-10'$$, 2, 'adsense: two rows with the requested period');
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a2'), date '2026-10-08', date '2026-10-15') as ra2 \gset
+select replace_synced_range(an_conn('a2'), :'ra2', date '2026-10-08', date '2026-10-15', '[
+  {"report_date":"2026-10-09","status":"estimated","currency":"KRW","page":"","timezone":"Asia/Seoul","revenue":210,"clicks":5},
+  {"report_date":"2026-10-12","status":"estimated","currency":"KRW","page":"","timezone":"Asia/Seoul","revenue":300,"clicks":6}]') as written \gset
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and connection_id = an_conn('a2')$$, 3, 'adsense: 10-02 kept, 10-09 replaced, 10-12 new');
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and report_date = date '2026-10-02' and period_start = date '2026-10-01' and period_end = date '2026-10-07'$$, 1, 'adsense: the earlier row keeps its day but its period_end is cut to the day before the new range');
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and report_date = date '2026-10-09' and revenue = 210 and period_start = date '2026-10-08' and period_end = date '2026-10-15'$$, 1, 'adsense: the overlapping day has the new value and the new period');
+reset role;
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a2'), date '2026-10-01', date '2026-10-15') as ra3 \gset
+select replace_synced_range(an_conn('a2'), :'ra3', date '2026-10-01', date '2026-10-15', '[
+  {"report_date":"2026-10-12","status":"estimated","currency":"KRW","page":"","timezone":"Asia/Seoul","revenue":310,"clicks":7}]', 'partial') as written \gset
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and connection_id = an_conn('a2')$$, 3, 'adsense partial: the days the run did not bring are kept');
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and report_date = date '2026-10-12' and revenue = 310 and coverage = 'partial' and period_start = date '2026-10-12' and period_end = date '2026-10-12'$$, 1, 'adsense partial: the brought day is partial and claims only its own day');
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and coverage = 'complete' and period_start = report_date and period_end = report_date$$, 2, 'adsense partial: kept rows are narrowed to their own day');
+reset role;
+select expect_count($$select count(*) from revenue_rows where source = 'adsense-api' and row_key = cf_revenue_row_key(source, status, currency, report_date, page, timezone)$$, 3, 'adsense: row_key is computed by the database');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from revenue_rows where source in ('adsense', 'adsense-x') and connection_id is null$$, 2, 'adsense: CSV / hand rows are untouched');
+select expect_count($$select purge_synced_rows(an_conn('a2'))$$, 3, 'purge: owner deletes the synced rows of the connection');
+select expect_count($$select count(*) from revenue_rows where source in ('adsense', 'adsense-x')$$, 2, 'purge: CSV / hand revenue rows survive a purge');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api'$$, 3, 'purge: another connection''s rows survive a purge');
+
+-- ---- row caps still apply to the API path (client role) ----
+reset role;
+alter table blog_metric_snapshots disable trigger blog_metric_snapshots_cap;
+insert into blog_metric_snapshots (workspace_id, tool, metric, value, measured_on, created_by)
+  select ws_a(), 'other', 'f', 1, date '2001-01-01' + i, '00000000-0000-0000-0000-0000000000a1'
+  from generate_series(0, 29999 - (select count(*)::int from blog_metric_snapshots where workspace_id = ws_a())) i;
+alter table blog_metric_snapshots enable trigger blog_metric_snapshots_cap;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select count(*) from blog_metric_snapshots where workspace_id = ws_a()$$, 30000, 'cap: the workspace is at its 30000 metric rows');
+select begin_sync_run(an_conn('a1'), date '2026-11-01', date '2026-11-02') as run4 \gset
+select expect_error(format($$select replace_synced_range(an_conn('a1'), %L, date '2026-11-01', date '2026-11-02',
+  '[{"metric":"clicks","scope":"page","dimension":"https://a.example/p1","value":1,"measured_on":"2026-11-01"}]')$$, :'run4'), 'SYNC_CAP_EXCEEDED', 'cap: the 0017 row cap applies to the API path and is refused before inserting');
+select expect_count($$select count(*) from blog_metric_snapshots where workspace_id = ws_a()$$, 30000, 'cap: nothing was written past the cap');
+-- a failure never creates rows and never turns a connection active; invalid_grant moves it to needs_reauth
+select finish_sync_run(:'run4', 'failed', 'CAP', 'needs_reauth');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'needs_reauth' and last_error_code = 'CAP'$$, 1, 'sync: finish_sync_run records the failure and needs_reauth');
+select expect_error($$select * from read_credential(an_conn('a1'))$$, 'CONNECTION_NOT_ACTIVE', 'sync: a needs_reauth connection can not read its credential');
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-11-01', date '2026-11-02')$$, 'CONNECTION_NOT_ACTIVE', 'sync: a needs_reauth connection can not start a run');
+select expect_fail($$update analytics_connections set status = 'active' where id = an_conn('a1')$$, 'sync: needs_reauth can not be set back by a direct update');
+reset role;
+delete from blog_metric_snapshots where metric = 'f';
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select store_credential(ws_a(), 'sub-1', 'client-1', 'ct-renewed', 3) as g_a2 \gset
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'pending'$$, 1, 'sync: a new consent puts needs_reauth back to pending');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a2') and status = 'active'$$, 1, 'sync: other connections of the grant are not reset when they were fine');
+
+-- ---- a stale running run is closed before the cooldown is judged ----
+reset role;
+update analytics_sync_runs set requested_at = now() - interval '1 hour';
+insert into analytics_sync_runs (connection_id, workspace_id, requested_by, range_start, range_end, requested_at, started_at, status)
+  values (an_conn('a2'), ws_a(), '00000000-0000-0000-0000-0000000000a1', date '2026-10-01', date '2026-10-02', now() - interval '11 minutes', now() - interval '11 minutes', 'running');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select begin_sync_run(an_conn('a2'), date '2026-10-01', date '2026-10-15') as rstale \gset
+select expect_count($$select count(*) from analytics_sync_runs where connection_id = an_conn('a2') and status = 'failed' and error_code = 'STALE'$$, 1, 'stale: a run running for 11 minutes is closed as failed (STALE) and does not block or start a cooldown');
+select finish_sync_run(:'rstale', 'delayed', 'QUOTA');
+select expect_count(format($$select count(*) from analytics_sync_runs where id = %L and status = 'delayed'$$, :'rstale'), 1, 'stale: finish_sync_run records a delayed run');
+select expect_count($$select count(*) from analytics_sync_runs where connection_id = an_conn('a2') and status = 'running'$$, 0, 'stale: nothing is left running');
+
+-- ---- member removal / demotion (trigger) ----
+select as_user('00000000-0000-0000-0000-0000000000c3');
+select store_credential(ws_a(), 'sub-c3', 'client-1', 'ctc3', 1) as g_c3 \gset
+insert into analytics_connections (id, workspace_id, blog_id, grant_id, provider, external_ref, scopes, connected_by)
+  values (an_conn('a3'), ws_a(), '20000000-0000-0000-0000-00000000000a', :'g_c3', 'ga4', 'properties/1',
+          array['https://www.googleapis.com/auth/analytics.readonly'], '00000000-0000-0000-0000-0000000000c3');
+reset role;
+update analytics_connections set status = 'active' where id = an_conn('a3');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select change_member_role(ws_a(), '00000000-0000-0000-0000-0000000000c3', 'editor');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'needs_reauth'$$, 1, 'member: demoting the consenting admin sets the connection to needs_reauth');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a2') and status = 'active'$$, 1, 'member: connections of other grants are untouched');
+select change_member_role(ws_a(), '00000000-0000-0000-0000-0000000000c3', 'admin');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'needs_reauth'$$, 1, 'member: promoting back does not restore the connection');
+select as_user('00000000-0000-0000-0000-0000000000c3');
+select store_credential(ws_a(), 'sub-c3', 'client-1', 'ctc3b', 1);
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'pending'$$, 1, 'member: only a new consent brings it back');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select remove_member(ws_a(), '00000000-0000-0000-0000-0000000000c3');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a3') and status = 'needs_reauth'$$, 1, 'member: removing the consenting admin sets the connection to needs_reauth');
+reset role;
+insert into memberships values (ws_a(), '00000000-0000-0000-0000-0000000000c3', 'admin');
+
+-- ---- a grant of someone who lost owner/admin can not be reused (even if the trigger did not run) ----
+alter table memberships disable trigger memberships_analytics_changed;
+update memberships set role = 'editor' where workspace_id = ws_a() and user_id = '00000000-0000-0000-0000-0000000000c3';
+alter table memberships enable trigger memberships_analytics_changed;
+update analytics_connections set status = 'pending' where id = an_conn('a3');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_error($$select * from read_credential(an_conn('a3'))$$, 'GRANT_OWNER_INACTIVE', 'grant owner: read_credential refuses the grant of a demoted admin');
+select expect_error($$select begin_sync_run(an_conn('a3'), date '2026-10-01', date '2026-10-02')$$, 'GRANT_OWNER_INACTIVE', 'grant owner: begin_sync_run refuses the grant of a demoted admin');
+select expect_error(format($$insert into analytics_connections (workspace_id, grant_id, provider, external_ref, scopes, connected_by)
+  values (ws_a(), %L, 'ga4', 'properties/2', array['https://www.googleapis.com/auth/analytics.readonly'], '00000000-0000-0000-0000-0000000000a1')$$, :'g_c3'), 'GRANT_OWNER_INACTIVE', 'grant owner: a new connection can not use the grant of a demoted admin');
+reset role;
+update memberships set role = 'admin' where workspace_id = ws_a() and user_id = '00000000-0000-0000-0000-0000000000c3';
+update analytics_connections set status = 'needs_reauth' where id = an_conn('a3');
+
+-- ---- run log retention ----
+insert into analytics_sync_runs (connection_id, workspace_id, requested_by, range_start, range_end, requested_at, status, started_at)
+  select an_conn('a2'), ws_a(), '00000000-0000-0000-0000-0000000000a1', date '2026-09-01', date '2026-09-02', now() - (i || ' minutes')::interval, 'failed', now()
+  from generate_series(20, 79) i;
+select expect_count($$select count(*) from analytics_sync_runs where connection_id = an_conn('a2')$$, 50, 'runs: at most the newest 50 runs per connection are kept');
+select as_user('00000000-0000-0000-0000-0000000000a3');
+select expect_count($$select (count(*) > 0)::int from analytics_sync_runs where workspace_id = ws_a()$$, 1, 'runs: members read the run log');
+select expect_fail($$insert into analytics_sync_runs (connection_id, workspace_id, requested_by, range_start, range_end) values (an_conn('a1'), ws_a(), auth.uid(), date '2026-10-01', date '2026-10-02')$$, 'runs: a client can not insert a run directly');
+reset role;
+
+-- ---- disconnect: keep (D4 default) or purge; no orphan rows ----
+select as_user('00000000-0000-0000-0000-0000000000a2');
+select expect_error($$select disconnect_connection(an_conn('a1'), false)$$, 'ANALYTICS_FORBIDDEN', 'disconnect: editor can not disconnect');
+select as_user('00000000-0000-0000-0000-0000000000b1');
+select expect_error($$select disconnect_connection(an_conn('a1'), true)$$, 'ANALYTICS_FORBIDDEN', 'disconnect: another workspace can not disconnect');
+select expect_error($$select reconnect_connection(an_conn('a1'), gen_random_uuid())$$, 'ANALYTICS_FORBIDDEN', 'disconnect: another workspace can not reconnect');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_count($$select disconnect_connection(an_conn('a1'), false)$$, 1, 'disconnect: keep returns the connections still using the grant (the AdSense one)');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'revoked' and grant_id is null$$, 1, 'disconnect: without purge the connection stays as revoked with its grant released');
+select expect_count($$select count(*) from blog_metric_snapshots where connection_id = an_conn('a1')$$, 3, 'disconnect: the imported rows are kept and still point at their connection');
+select expect_error($$select * from read_credential(an_conn('a1'))$$, 'CONNECTION_NOT_ACTIVE', 'disconnect: a revoked connection has no credential');
+select expect_error($$select begin_sync_run(an_conn('a1'), date '2026-11-01', date '2026-11-02')$$, 'CONNECTION_NOT_ACTIVE', 'disconnect: a revoked connection can not sync');
+reset role;
+select expect_fail($$delete from analytics_connections where id = an_conn('a1')$$, 'disconnect: even a system role can not delete a connection that still has rows (no orphans)');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+select expect_error(format($$select reconnect_connection(an_conn('a1'), %L)$$, :'g_b'), 'GRANT_OWNER_INACTIVE', 'disconnect: reconnect refuses a grant that is not an active admin grant of this workspace');
+select reconnect_connection(an_conn('a1'), :'g_a');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1') and status = 'pending' and grant_id is not null$$, 1, 'disconnect: reconnect brings the revoked connection back as pending with its rows');
+select expect_count($$select disconnect_connection(an_conn('a1'), true)$$, 1, 'disconnect: purge returns the remaining connections of the grant');
+select expect_count($$select count(*) from analytics_connections where id = an_conn('a1')$$, 0, 'disconnect: purge deletes the connection');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api'$$, 0, 'disconnect: purge deletes its synced rows');
+select expect_count($$select count(*) from blog_metric_snapshots where tool = 'bseupi' and connection_id is null and metric = 'idx'$$, 1, 'disconnect: hand rows survive');
 reset role;
 
 select 'ALL RLS CHECKS PASSED' as result;

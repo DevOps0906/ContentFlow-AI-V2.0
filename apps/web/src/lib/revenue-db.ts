@@ -2,7 +2,7 @@
 import { isRevenueRow, normalizeTimezone, rowKey, type RevenueRow } from "./revenue";
 
 export const REVENUE_COLUMNS =
-  "source,status,currency,report_date,page,revenue,pageviews,impressions,clicks,created_at,timezone,period_start,period_end";
+  "source,status,currency,report_date,page,revenue,pageviews,impressions,clicks,created_at,timezone,period_start,period_end,coverage";
 export const MAX_ROWS_PER_REQUEST = 1000;
 
 export type RevenueDbRow = {
@@ -19,6 +19,7 @@ export type RevenueDbRow = {
   timezone: string | null;
   period_start: string | null;
   period_end: string | null;
+  coverage?: "complete" | "partial";
 };
 // numeric/bigint columns may come back as strings
 const num = (v: number | string | null) => (v === null ? null : Number(v));
@@ -36,6 +37,7 @@ export const dbToRevenue = (r: RevenueDbRow): RevenueRow => ({
   timezone: r.timezone,
   periodStart: r.period_start,
   periodEnd: r.period_end,
+  coverage: r.coverage ?? "complete",
 });
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;

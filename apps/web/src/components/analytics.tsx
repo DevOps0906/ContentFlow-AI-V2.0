@@ -335,6 +335,7 @@ export function Analytics() {
                       <td>{formatMoney(s.rpm, s.currency)}</td>
                       <td>
                         사이트 합계 {s.siteDays}일 · 페이지 합 {s.pageDays}일
+                        {s.partialDays > 0 && <small> · 부분 데이터 {s.partialDays}일은 제외</small>}
                       </td>
                     </tr>
                   ))}

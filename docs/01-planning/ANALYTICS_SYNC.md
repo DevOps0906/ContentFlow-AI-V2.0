@@ -36,7 +36,7 @@
 - **통화·보고 시간대 규칙은 AdSense에만 적용**한다: 응답에서 받아 저장하고 없으면 가져오기를 실패 처리, 추정하지 않는다. 해당 요청 파라미터·응답 필드명은 `미확인`(공식 확인 필요). GSC에는 통화가 없고 시간대 규칙을 적용하지 않는다(날짜 기준·시간대 표기는 `미확인`).
 - **API 행과 CSV 행은 source(tool) 값으로 분리**한다(`gsc-api`·`adsense-api`·`ga4-api`). provenance 컬럼은 추가하지 않는다. 기존 키가 그대로 출처별로 갈린다: 0012 기간 트리거·`revenue_rows` 유니크·`rowKey`(`revenue.ts:81`, source 소문자 포함)·0017 `measurement_key`·`summarize`(`revenue.ts:255`, source별 그룹). PRD#8의 값 상태(api/csv/manual/model)와는 source 접미사 `-api`로 대응하고, value_status·granularity는 기존 `status`·`page=''`가 대신한다.
 - **화면 요약은 CSV와 API를 합산하지 않는다.** 같은 사이트·기간에 둘 다 있으면 나란히 표시하고 안내 문구를 붙인다.
-- 새 필드(§5): `coverage(complete/partial/unknown)`, `sync_run_id`. 원본 파일 해시에 해당하는 값으로 API 행은 `sync_run_id` + 요청 범위·요청 시각(`analytics_sync_runs`)을 저장한다.
+- 새 필드(§5): `coverage(complete/partial)` — partial 행은 완전 합계·RPM에 넣지 않고 "부분 데이터"로 표시, `sync_run_id`. 원본 파일 해시에 해당하는 값으로 API 행은 `sync_run_id` + 요청 범위·요청 시각(`analytics_sync_runs`)을 저장한다.
 
 ## 3. OAuth 흐름
 | 항목 | 결정 |
@@ -51,14 +51,14 @@
 | 폐기 | **해제는 연결만 끊는다.** 같은 grant를 쓰는 연결이 0개가 될 때만 Google revoke 호출 후 토큰 삭제. **revoke 실패 시 토큰을 보관하고 재시도**하며 사용자에게 Google 계정 권한 페이지에서 직접 철회하도록 안내한다(로컬 삭제 금지). 이미 가져온 데이터는 §8 D4. Google 쪽 철회는 다음 동기화의 `invalid_grant`로 감지해 `needs_reauth` |
 | 멤버 변경 | 멤버 제거·owner/admin 아님으로 강등 시, 그 사람이 만든 grant에 매달린 연결은 `needs_reauth`. 실행은 `memberships` update/delete 트리거(같은 트랜잭션, 지연 확인 없음) |
 | 상태 | `pending → active → needs_reauth / revoked / error`. 재동의 없이는 `active`로 못 돌아간다 |
-| 한도·개발 단계 | 사용자·클라이언트당 refresh token 개수 상한 `미확인`(공식 확인 필요). 테스트 모드의 refresh token 수명 단축·민감 scope 앱 검증 요건 `미확인`(공식 확인 필요, D7) |
+| 한도·개발 단계 | Google 계정×클라이언트당 refresh token 100개(D9), Testing 상태 refresh token 7일 만료·민감 scope는 공개 전 앱 검증(D7). 2026-11-15 공식 문서 확인 |
 
 ## 4. 동기화
 | 항목 | 규칙 |
 |---|---|
 | 실행 | **세션 기반만.** "지금 동기화" 버튼(연결당 쿨다운) + 연결/기록 화면이 열려 있을 때 폴링(발행 큐 `publish-queue.tsx:94-101` 패턴). 화면이 닫혀 있으면 동기화되지 않는다 — 화면에 "열려 있을 때만 갱신" 명시. 브라우저가 Google을 직접 호출하지 않는다(앱 서버 경유). 무인 cron은 비범위 |
-| 범위 | 최초: 과거 N일(가설 90일, GSC 보존 기간 한도 `미확인`). 이후: 마지막 성공 범위 끝 − 재조회 창 ~ 어제 |
-| 재조회 창 | 최근 며칠은 값이 늦게 확정될 수 있어 겹쳐 다시 가져온다(일수 가설 3일 `미확인`) |
+| 범위 | 최초: 과거 90일(D3). 이후: 마지막 성공 범위 끝 − 재조회 창 ~ 어제 |
+| 재조회 창 | 최근 며칠은 값이 늦게 확정될 수 있어 겹쳐 다시 가져온다(3일, D3) |
 | 재조회 교체 | 연결별로 이전 API 실행의 **겹치는 날짜 행만** 지우고, 그 실행 행들의 `period_end`를 새 범위 시작 전날로 줄인 뒤 새 범위를 삽입한다(앞 구간 재조회 없음, 각 행의 기간은 실제 조회 범위와 일치 — 0012 기간 의미 유지). 삭제 대상은 `source/tool = *-api AND connection_id`로 한정, CSV·수동 행은 절대 대상 아님. **단일 트랜잭션 RPC**(부분 삽입 상태 없음) |
 | CSV와 충돌 | source가 달라 별도 행. 덮어쓰지 않고 합산하지 않으며 화면에 나란히 표시(§2, D5) |
 | GSC 수집 범위 | 차원은 **page × 일**만. query는 비범위. 최초 90일 × 페이지 수가 워크스페이스 행 상한(0017: **30,000행**, `blog_metric_snapshots` 트리거)을 넘을 것으로 **사전 계산되면 실행 전에 차단**하고 사유·줄이는 방법(기간·페이지 수)을 안내한다. 부분 삽입 후 실패 금지 |
@@ -82,7 +82,7 @@
 | 0026 교체 RPC | `replace_synced_range(connection, range, rows)` security definer, search_path 고정 | EXECUTE authenticated만. 내부에서 세션 사용자 owner/admin·workspace·connection 일치 검증. `created_by = auth.uid()`(security definer는 RLS를 우회하므로 정책 대신 함수 안에서 owner/admin·`created_by = auth.uid()`를 검증, 임의 값을 받지 않음). `revenue_rows.row_key`는 RPC 안에서 `revenue.ts` `rowKey`와 같은 규칙으로 계산하고 일치 테스트를 둔다. 삭제는 해당 connection의 `*-api` 행만 |
 
 - **service role 금지는 고정 규칙**이다. 세션 기반이므로 `auth.uid()`가 있어 0019 `cf_caller_is_client()`는 호출자를 client로 판정하고, **상한 검사(0017 행 상한·0019 권한 규칙)가 API 경로에도 그대로 적용된다**.
-- **키 회전 절차(재암호화 순서)**: ① 새 키·`key_version+1`을 서버 환경에 추가(구 키 유지) ② 앱이 신·구 키 모두 복호화 가능하게 배포 ③ 모든 grant를 구 키로 복호화 → AAD(`connection_id·workspace_id·provider·key_version` 신버전)로 재암호화해 `key_version` 갱신 ④ 구 버전 행 0건 확인 후 구 키 제거. 어느 단계에서 실패해도 구 키로 읽을 수 있게 유지한다.
+- **키 회전 절차(재암호화 순서)**: ① 새 키·`key_version+1`을 서버 환경에 추가(구 키 유지) ② 앱이 신·구 키 모두 복호화 가능하게 배포 ③ 모든 grant를 구 키로 복호화 → AAD(`grant_id·workspace_id·google_sub·key_version` 신버전)로 재암호화해 `key_version` 갱신 ④ 구 버전 행 0건 확인 후 구 키 제거. 어느 단계에서 실패해도 구 키로 읽을 수 있게 유지한다.
 - 마이그레이션 번호·분할은 가안이며 `0022~`에서 조정한다. 적용된 파일은 수정하지 않는다(0017 코멘트 갱신은 새 마이그레이션의 `comment on`).
 - 새 테이블은 RLS·정책 컬럼 인덱스·코멘트 한 줄. `supabase/tests/run.ps1`에 교차 워크스페이스·토큰 비노출·**anon 호출 불가·타 워크스페이스 불가** 시험을 추가한다.
 - 다이어그램 요청은 §9 참고.
@@ -107,7 +107,7 @@
 | 노출 면 | OAuth 시작·콜백 엔드포인트(인터넷 접근), 동기화 트리거 엔드포인트, 연결 관리 화면, credential RPC |
 | 인증·인가 | 연결·해제·동기화 owner·admin, 조회 멤버. 콜백은 state(쿠키 바인딩)·시작 사용자=세션 사용자·owner/admin 재확인. 같은 워크스페이스 블로그만 매핑. RPC는 security definer + 세션 `is_member` 확인, authenticated만 |
 | 데이터 | refresh token(고민감), 외부 지표, 계정/속성 식별자, 수익 수치 |
-| 키·권한 | Google client secret·토큰 암호화 키(서버 환경 변수, 버전 관리, AAD = connection_id·workspace_id·provider·key_version). **service role 키는 앱에 넣지 않는다(고정 규칙).** 세션 기반이라 `cf_caller_is_client()`=client, 상한 검사 적용. scope는 읽기 전용만 — 단 `webmasters.readonly`는 계정 전체 사이트 읽기(§3) |
+| 키·권한 | Google client secret·토큰 암호화 키(서버 환경 변수, 버전 관리, AAD = grant_id·workspace_id·google_sub·key_version(grant를 여러 연결이 공유하므로 grant 단위)). **service role 키는 앱에 넣지 않는다(고정 규칙).** 세션 기반이라 `cf_caller_is_client()`=client, 상한 검사 적용. scope는 읽기 전용만 — 단 `webmasters.readonly`는 계정 전체 사이트 읽기(§3) |
 | 입력 | 콜백 `code`·`state`(1회용·만료), Google 응답(스키마 검증·크기 상한), 속성·계정 ID(앱 내부 허용 목록, Google 범위 제한 아님) |
 | 체인 | ① state 검증 약함 → 다른 Google 계정이 내 블로그에 연결(CSRF). ② **공격자가 자기 계정 콜백을 피해자 세션에 주입 → 공격자 속성 수치가 내 장부에 섞임(수치 오염)** → 쿠키 바인딩·시작 사용자=세션 사용자·source `-api` 분리·화면 출처 배지로 방어. ③ 토큰 로그 노출 → 계정 전체 읽기. ④ 교체 RPC 권한 느슨 → 타 워크스페이스·CSV 행 삭제 ⑤ revoke 실패 방치 → 해제했다고 믿는 유효 토큰 잔존(보관·재시도·안내) |
 | 피해 범위 | 토큰 유출 시 해당 Google 계정의 읽기 범위(검색·수익·분석). 쓰기 불가이나 수익 정보는 민감 |
@@ -120,25 +120,25 @@
 |---|---|---|---|
 | D0 | **실행 주체** | 세션 기반만: "지금 동기화" + 화면이 열려 있을 때 폴링. 무인 cron·새 비밀 주체는 비범위(후속, 별도 challenger) | **결정됨**(사용자) |
 | D1 | 출처 순서 | **GSC → AdSense → GA4**, 작업 분해도 이 순서 | **결정됨**(사용자) |
-| D2 | 토큰 저장·읽기 | 앱 서버 AES-GCM, 키는 서버 환경 변수, AAD = connection_id·workspace_id·provider·key_version, DB엔 암호문만. security definer RPC + 세션 owner/admin 확인, authenticated만 EXECUTE, 권한 시험을 완료 조건에. service role 금지(고정). 키 회전은 §5 | **결정됨**(팀장) |
+| D2 | 토큰 저장·읽기 | 앱 서버 AES-GCM, 키는 서버 환경 변수, AAD = grant_id·workspace_id·google_sub·key_version(grant를 여러 연결이 공유하므로 grant 단위), DB엔 암호문만. security definer RPC + 세션 owner/admin 확인, authenticated만 EXECUTE, 권한 시험을 완료 조건에. service role 금지(고정). 키 회전은 §5 | **결정됨**(팀장) |
 | D2a | credential 단위·해제 | grant 단위 공유, 연결 0개일 때만 revoke, 실패 시 보관·재시도·안내(§3) | **결정됨**(팀장) |
 | D2b | API·CSV 행 분리 | source 값 분리(`*-api`), provenance 컬럼 없음, 화면 합산 없음(§2) | **결정됨**(팀장) |
 | D2c | 재조회 교체·created_by | 연결별 겹치는 `*-api` 행 삭제 후 재삽입(단일 트랜잭션 RPC), created_by=세션 사용자, 강등·제거 시 `needs_reauth`(§3·§4) | **결정됨**(팀장) |
 | D2d | OAuth state·PKCE | httpOnly 쿠키 + 시작 사용자=세션 사용자 + owner/admin 재확인(§3) | **결정됨**(팀장) |
-| D3 | 주기·재조회 창·최초 과거 일수 | 폴링 쿨다운(값 미정)·3일·90일(모두 가설). 일 1회 예약은 폐기 | 미결: 쿼터·GSC 지연 확인 후 확정 |
-| D4 | 연결 해제 시 가져온 데이터 | 유지(`*-api` source 보존) 권고, 삭제 선택 제공 | 미결: 개인정보·정책 확인 필요 |
-| D5 | API·CSV 겹침 표시 | 둘 다 보존·나란히 표시·합산 없음(D2b로 구조는 결정됨). 안내 문구만 | 미결: 문구 |
-| D6 | AdSense `PAGE_URL` 사용 | 연결 후 실제 계정에서 조합 확인 뒤 결정(`미확인`). 불가 시 사이트·일 수준만, 글별 ROI는 N/A | 미결 |
-| D7 | OAuth 동의 화면 게시 상태·앱 검증 | 개인 파일럿은 테스트 모드. **테스트 모드 refresh token 수명 단축 여부 `미확인`(공식 확인 필요)**, 검증 요건 `미확인` | 미결 |
-| D8 | Google 클라이언트 발급 주체·프로젝트 | 사용자 | 미결: 구현 착수 조건 |
-| D9 | refresh token 개수 상한 대응 | 상한 `미확인`(공식 확인 필요). 확인 후 grant 재사용 정책 보정 | 미결 |
+| D3 | 주기·재조회 창·최초 과거 일수 | 연결당 수동·폴링 실행 최소 간격 **15분**(서버 강제), 화면 폴링은 마지막 성공 후 24시간 지났을 때만 자동 실행, 재조회 창 **3일**, 최초 과거 **90일**(GSC 보존 범위 안). 값은 서버 상수 한 곳 | **결정됨**(팀장, 2026-11-15) |
+| D4 | 연결 해제 시 가져온 데이터 | 기본 **유지**(`*-api` source 보존, 화면에 "연결 해제됨" 표시). 해제 대화상자에 "가져온 데이터도 삭제" 선택(owner/admin, 해당 connection의 `*-api` 행만) | **결정됨**(팀장) |
+| D5 | API·CSV 겹침 표시 | 둘 다 보존·나란히 표시·합산 없음. 문구: "같은 기간에 CSV와 API 데이터가 모두 있습니다. 두 값은 합치지 않고 출처별로 보여줍니다." | **결정됨**(팀장) |
+| D6 | AdSense `PAGE_URL` 사용 | 조건부로 결정: 실제 계정에서 조합이 확인되면 글별, 아니면 사이트·일 수준만(글별 ROI N/A). 확인은 A6 착수 시 | **결정됨**(조건부) |
+| D7 | OAuth 동의 화면 게시 상태·앱 검증 | 파일럿은 **Testing** 상태로 운영하고 7일마다 재연결을 감수한다(Testing·외부 사용자의 refresh token은 7일 만료 — [Google OAuth 2.0](https://developers.google.com/identity/protocols/oauth2), 2026-11-15 확인). `webmasters.readonly`는 민감 scope라 공개 출시 전 Production 전환·앱 검증 필요([앱 상태 개요](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview)). 화면에 만료 예정 안내 | **결정됨**(팀장) |
+| D8 | Google 클라이언트 발급 주체·프로젝트 | 사용자가 Google Cloud에서 발급(웹 애플리케이션, 리디렉션 `/{origin}/api/integrations/google/callback`). 앱은 `GOOGLE_OAUTH_CLIENT_ID/SECRET` 환경 변수, 미설정 시 연결 버튼 비활성·"연결 안 됨"(가짜 연결 표시 금지). 구현·시험은 가짜 Google 서버로 먼저 진행 | **결정됨**(실키 검증은 발급 후) |
+| D9 | refresh token 개수 상한 대응 | Google 계정×클라이언트당 **100개**, 초과 시 가장 오래된 것이 조용히 무효([Google OAuth 2.0](https://developers.google.com/identity/protocols/oauth2), 2026-11-15 확인). (워크스페이스, Google sub)당 grant 1개 재사용으로 발급 수를 줄이고, `invalid_grant`는 `needs_reauth` | **결정됨**(팀장) |
 
 ## 9. 작업 분해
 출처 순서 GSC → AdSense → GA4. 근거는 이 문서의 장.
 
 | ID | 작업 | 담당 | 근거 | 위험 | 완료 조건 |
 |---|---|---|---|---|---|
-| A0 | 미결 D3~D9 확정, 다이어그램 | 팀장·diagrammer | §8 | 낮음 | 미결 0 |
+| A0 | 미결 D3~D9 확정, 다이어그램 | 팀장·diagrammer | §8 | 낮음 | 완료(2026-11-15) |
 | A1 | 0022~0024 연결·grant·기록 테이블 + credential RPC + RLS | builder | §5, D2 | **높음**(RLS·키) | `supabase/tests/run.ps1`: 토큰 직접 조회 불가, **anon 호출 불가, 타 워크스페이스 불가**, 멤버(비 admin) 불가 |
 | A2 | OAuth 시작·콜백·해제(GSC 먼저): 쿠키 state·PKCE, 사용자 일치, revoke 실패 보관·재시도 | builder | §3, §7 | **높음**(인증·토큰) | 단위+e2e(공격자 콜백 주입 거부 시험 포함), challenger+보안 리뷰 |
 | A3 | 0025·0026 저장 계약 확장 + 교체 RPC, 0017 헤더 코멘트 갱신, **tool `ga4-api` 추가 시 0017 체크·`blog-metrics.ts` 미러 테스트** 동시 수정 | builder | §2, §4, §5 | **높음**(마이그레이션) | 재수입 중복 없음, CSV·수동 행 삭제 불가, 교차 워크스페이스 거부, 상한 검사 적용(client), 미러 테스트 통과 |

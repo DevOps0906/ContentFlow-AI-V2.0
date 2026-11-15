@@ -4,7 +4,7 @@
 |---|---|
 | 최근 완료 | CF-07b 기획 r2(`docs/01-planning/ANALYTICS_SYNC.md`, 세션 기반·GSC→AdSense→GA4·토큰 AES-GCM, 다이어그램 2종). 그 전: CF-24 e2e 17/17 통과(로컬 Supabase 60321·WordPress 8081, 결과 `.nomad/logs/publish-queue/results.md`). e2e 스크립트 `E2E_WP_URL` 지원 커밋. 그 전: CF-07c 분리·문서 정정 |
 | 검증 | 단위(웹) 355, typecheck·build, `supabase/tests/run.ps1` ALL PASSED, W8 e2e 67(11-12), 발행 큐 e2e 17(11-15) |
-| 진행 중 | 없음 |
+| 진행 중 | CF-07b — A1·A3 DB(0022~0026) 완료·커밋. 다음 A2 OAuth 연결(GSC, 가짜 Google 서버 시험). `reconnect_connection` RPC는 A2에서 사용 |
 | 대기(입력 필요) | CF-23 실결제(결제사 결정, 위험 높음) · CF-07b 구현(미결 D3~D9: 동기화 주기·과거 일수, 해제 시 데이터, 겹침 안내, PAGE_URL, 동의 화면·검증, Google 클라이언트 발급 주체, 토큰 상한) · CF-06 부 모델 ID |
 | 미검증 | CF-12 실제 OpenAI 키 호출 |
 | CF-22 남은 것 | 다중 Free 워크스페이스 남용 기준 미결정(§11) |
