@@ -1,0 +1,28 @@
+stateDiagram-v2
+    state "연결 상태" as conn {
+        state "대기 pending" as pending
+        state "활성 active" as active
+        state "재동의 필요 needs_reauth" as needs_reauth
+        state "해제 revoked" as revoked
+        state "오류 error" as error
+
+        [*] --> pending: 연결 시작
+        pending --> active: 콜백 검증과 grant 저장 성공
+        active --> needs_reauth: invalid_grant 감지 또는 멤버 권한 강등
+        needs_reauth --> active: 재동의 완료
+        active --> revoked: 연결 해제
+        active --> error: 연속 실패 N회
+        revoked --> [*]
+    }
+
+    state "동기화 실행 상태" as run {
+        state "성공 succeeded" as succeeded
+        state "부분 성공 partial" as partial
+        state "실패 failed" as failed
+        state "지연 delayed" as delayed
+
+        [*] --> succeeded: 요청 범위 전부 수집
+        [*] --> partial: 일부만 수집 (coverage=partial)
+        [*] --> failed: 오류 코드 기록 (토큰·응답 본문 제외)
+        [*] --> delayed: 쿼터 상한 도달
+    }

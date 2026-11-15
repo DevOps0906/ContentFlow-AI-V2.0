@@ -1,0 +1,39 @@
+sequenceDiagram
+    participant u as 사용자(세션 브라우저)
+    participant api as 앱 서버
+    participant g as Google OAuth
+    participant db as DB
+
+    u->>api: 연결 시작 요청
+    api->>db: owner/admin 재확인
+    api-->>u: Google 동의 화면으로 이동 (httpOnly 쿠키에 state·PKCE verifier, 짧은 만료)
+    u->>g: 동의 (읽기 전용 scope)
+    g-->>u: 콜백 (code, state)
+    u->>api: 콜백 (code, state)
+
+    alt state 불일치 또는 1회용 state 소진
+        api-->>u: 거부 (코드 교환 없음)
+    else 시작한 사용자와 현재 세션 사용자가 다름 또는 owner/admin 아님
+        api-->>u: 거부 (코드 교환 없음)
+    else 세 검사 모두 통과
+        api->>g: code 교환 (PKCE verifier)
+        g-->>api: refresh token
+        api->>api: AES-GCM 암호화
+        api->>db: 암호문 저장 (security definer RPC)
+        db-->>api: grant 저장 완료
+        api-->>u: 연결 완료 (상태 active)
+    end
+
+    u->>api: 연결 해제 요청 (owner/admin)
+    api->>db: 연결 끊기 후 같은 grant 연결 수 조회
+    alt 같은 grant 연결 0개
+        api->>g: revoke 호출
+        alt revoke 성공
+            api->>db: 토큰 삭제
+        else revoke 실패
+            api->>db: 토큰 보관, 재시도 예약
+            api-->>u: Google 계정 권한 페이지에서 직접 철회 안내
+        end
+    else 같은 grant 연결 남음
+        api-->>u: 연결만 해제 (토큰 유지)
+    end

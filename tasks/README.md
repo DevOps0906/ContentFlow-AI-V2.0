@@ -27,7 +27,7 @@
 | CF-23 | 초과 슬롯 실결제 연동(결제사 미정) | 대기(승인 필요) | 위험 높음: challenger·보안 리뷰 필수, 사용자 승인 후 착수 |
 | CF-24 | 발행 큐(블로그별 동시 1건·워크스페이스 상한·백오프·Retry-After·idempotency) | 완료 | 0020·0021·rls 시험·단위 355·build. reviewer security·contract 반영. e2e `publish-queue.mjs` 17건 통과(2026-11-15: 중복·취소·WP 중단/복구 재시도·동시 전송·viewer 403·키보드·3구간 넘침 0) |
 | CF-07c | 팀 초대·역할 변경·제거(설정 화면 팀 패널), 비밀번호 재설정·이메일 확인 콜백 | 완료 | 0004 RPC·RLS, `/api/team/*`·`/api/auth/{reset,password}`·`/auth/callback`. W8 e2e(초대·수락, 재설정 메일→새 비밀번호 로그인) 통과. 초대 메일은 보내지 않음(가입·로그인 시 표시) |
-| CF-07b | 광고·분석 연동 | 대기 | 광고 API 자격·설계 필요 |
+| CF-07b | 광고·분석 API 동기화(GSC → AdSense → GA4, 세션 기반) | 기획 완료·구현 대기 | [명세 r2](../docs/01-planning/ANALYTICS_SYNC.md) reviewer ACCEPT, challenger 반영, 다이어그램 2종. 구현(A1~A8)은 미결 D3~D9 확정과 Google OAuth 클라이언트 발급 후. A1~A3·A6 위험 높음 |
 | CF-08 | 브라우저/3구간 시각 검증 | 완료 | W8 e2e 67건(2026-11-12): 500/768/1000/1440px 넘침 0, 키보드·저장 실패·인증 복구·WordPress slug. 스크립트 `apps/web/tests/e2e/` |
 
 현재 작업: [NOW](NOW.md).
