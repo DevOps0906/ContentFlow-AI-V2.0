@@ -43,11 +43,11 @@ export async function GET(req: NextRequest) {
   let unstored: string | null = null;
   try {
     const redirectUri = `${appOrigin(req)}${CALLBACK_PATH}`;
-    const tokens = await exchangeCode(cfg, code, check.flow.v, redirectUri);
+    const tokens = await exchangeCode(cfg, code, check.flow.v, redirectUri, fetch, check.flow.p);
     unstored = tokens.refreshToken;
     const grantId = await storeGrant(account, cfg.ring, cfg.clientId, tokens.sub, tokens.refreshToken);
     // The access token is not kept; the refresh token is stored encrypted.
-    return done({ google: "connected", grant: grantId });
+    return done({ google: "connected", grant: grantId, provider: check.flow.p });
   } catch (e) {
     // A token Google issued but we could not store is not left alive.
     if (unstored) await revokeToken(cfg, unstored);

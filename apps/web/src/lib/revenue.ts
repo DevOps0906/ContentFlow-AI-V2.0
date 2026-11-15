@@ -49,6 +49,9 @@ const aliases: Record<string, string> = {
   currency: "currency", 통화: "currency",
 };
 
+/** Page value that holds the metrics of URLs too long to store (AdSense sync). Not a URL, so both normalizers keep it as is. */
+export const UNATTRIBUTED_PAGE = "(unattributed)";
+
 export function normalizePage(page: string): string {
   const p = page.trim();
   if (!p) return "";

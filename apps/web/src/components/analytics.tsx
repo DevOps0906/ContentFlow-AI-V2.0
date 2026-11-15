@@ -10,6 +10,7 @@ import {
   sendRevenueChunks,
   unallocatedRevenue,
   pageSummaries,
+  UNATTRIBUTED_PAGE,
   parseRevenue,
   REVENUE_STORAGE_KEY,
   statusLabel,
@@ -401,7 +402,7 @@ export function Analytics() {
                   <tbody>
                     {pages.map((p) => (
                       <tr key={`${p.page}${p.source}${p.status}${p.currency}${p.timezone}`}>
-                        <td>{p.page}</td>
+                        <td>{p.page === UNATTRIBUTED_PAGE ? "미귀속(긴 URL)" : p.page}</td>
                         <td>{p.source}</td>
                         <td>
                           {p.article ? (

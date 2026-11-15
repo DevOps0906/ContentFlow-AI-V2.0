@@ -176,12 +176,12 @@ test("disconnect: other connections left -> no revoke; none left + revoke fails 
   });
   const deleted: string[] = [];
   const shared = fakeAccount(handlers(1, deleted), { connection: { grant_id: aad.grantId } });
-  assert.deepEqual(await disconnect(shared.account, cfg, "c1", false), { revoke: "kept", grantId: aad.grantId });
+  assert.deepEqual(await disconnect(shared.account, cfg, "c1", false), { revoke: "kept", grantId: aad.grantId, remaining: 1 });
   assert.equal(shared.calls.some((c) => c.fn === "read_grant_credential"), false);
 
   const failing = { ...cfg, revokeUrl: "http://127.0.0.1:1/revoke" };
   const last = fakeAccount(handlers(0, deleted), { connection: { grant_id: aad.grantId } });
-  assert.deepEqual(await disconnect(last.account, failing, "c1", false), { revoke: "failed", grantId: aad.grantId });
+  assert.deepEqual(await disconnect(last.account, failing, "c1", false), { revoke: "failed", grantId: aad.grantId, remaining: 0 });
   assert.deepEqual(deleted, []);
   const unconfigured = await disconnect(fakeAccount(handlers(0, deleted), { connection: { grant_id: aad.grantId } }).account, null, "c1", false);
   assert.equal(unconfigured.revoke, "failed");

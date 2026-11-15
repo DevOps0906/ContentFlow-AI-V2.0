@@ -32,7 +32,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   }
   try {
     const r = await disconnect(account, googleConfig(), id, purge);
-    return json({ ok: true, revoke: r.revoke, grantId: r.revoke === "failed" ? r.grantId : null, ...(r.revoke === "failed" ? { notice: NOTICE } : {}) });
+    return json({ ok: true, revoke: r.revoke, remaining: r.remaining, grantId: r.revoke === "failed" ? r.grantId : null, ...(r.revoke === "failed" ? { notice: NOTICE } : {}) });
   } catch (e) {
     if (e instanceof AnalyticsError) return json({ error: e.message, code: e.code }, e.status);
     return json({ error: "연결을 해제하지 못했습니다." }, 500);

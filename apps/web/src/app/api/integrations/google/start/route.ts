@@ -8,7 +8,7 @@ import { canManageTeam } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
 
-/** Begins the Search Console consent: returns the Google URL and sets the sealed state/PKCE cookie. */
+/** Begins the Search Console (default) or AdSense (body { provider: "adsense" }) consent: returns the Google URL and sets the sealed state/PKCE cookie. */
 export async function POST(req: Request) {
   const account = await requireAccount(req);
   if (account instanceof Response) return account;
@@ -17,7 +17,19 @@ export async function POST(req: Request) {
   if (!cfg) return json({ error: "Google 연결이 설정되지 않았습니다.", code: "not_configured" }, 503);
   if (await sharedLimited(account.supabase, `goog-start:${account.user.id}`, 10, 60_000))
     return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
-  const flow = startFlow(cfg, `${appOrigin(req)}${CALLBACK_PATH}`, account.user.id, account.workspaceId);
+  let provider: "gsc" | "adsense" = "gsc";
+  try {
+    const text = await req.text();
+    if (text.length > 1_000) throw new Error("too large");
+    if (text.trim()) {
+      const p = (JSON.parse(text) as { provider?: unknown } | null)?.provider;
+      if (p === "adsense") provider = "adsense";
+      else if (p !== undefined && p !== "gsc") throw new Error("provider");
+    }
+  } catch {
+    return json({ error: "잘못된 요청입니다." }, 400);
+  }
+  const flow = startFlow(cfg, `${appOrigin(req)}${CALLBACK_PATH}`, account.user.id, account.workspaceId, Date.now(), provider);
   const res = NextResponse.json({ url: flow.url }, { headers: { "Cache-Control": "no-store" } });
   res.cookies.set(OAUTH_COOKIE, flow.cookie, { ...sessionCookieOptions(), path: OAUTH_COOKIE_PATH, maxAge: flow.maxAgeSeconds });
   return res;

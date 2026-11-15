@@ -3,7 +3,7 @@
 // The token is decrypted only inside these functions and never returned or logged.
 import { randomUUID } from "node:crypto";
 import type { Authed } from "./api";
-import { GSC_SCOPE, listGscSites, refreshAccessToken, revokeToken, GoogleError, type GoogleConfig, type GscSite } from "./google-oauth";
+import { ADSENSE_SCOPE, GSC_SCOPE, listAdsenseAccounts, listGscSites, refreshAccessToken, revokeToken, GoogleError, type AdsenseAccount, type GoogleConfig, type GscSite } from "./google-oauth";
 import { decryptToken, encryptToken, reencryptToken, TokenCryptoError, type KeyRing } from "./token-crypto";
 
 export class AnalyticsError extends Error {
@@ -125,7 +125,19 @@ export async function sitesOfGrant(account: Authed, cfg: GoogleConfig, grantId: 
   }
 }
 
+export async function adsenseAccountsOfGrant(account: Authed, cfg: GoogleConfig, grantId: string): Promise<AdsenseAccount[]> {
+  const access = await accessFor(account, cfg, grantId);
+  try {
+    return await listAdsenseAccounts(cfg, access);
+  } catch (e) {
+    if (e instanceof GoogleError) throw new AnalyticsError(e.message, 502, e.code);
+    throw e;
+  }
+}
+
 const COLUMNS = "id, blog_id, grant_id, provider, external_ref, status, last_attempt_at, last_success_at, last_error_code, created_at";
+/** What the stored AdSense rows of a connection say: currency, time zone, and whether pages are available. */
+export type AdsenseInfo = { currency: string | null; timezone: string | null; pageLevel: boolean | null };
 export type ConnectionRow = {
   id: string;
   blog_id: string | null;
@@ -137,7 +149,31 @@ export type ConnectionRow = {
   last_success_at: string | null;
   last_error_code: string | null;
   created_at: string;
+  adsense?: AdsenseInfo;
 };
+
+/** Newest stored day of each AdSense connection: pageLevel false = Google refused PAGE_URL (per-article ROI is N/A). */
+export async function adsenseInfos(account: Authed, connectionIds: string[]): Promise<Map<string, AdsenseInfo>> {
+  const map = new Map<string, AdsenseInfo>();
+  for (const id of connectionIds) {
+    const { data } = await account.supabase
+      .from("revenue_rows")
+      .select("report_date, page, currency, timezone")
+      .eq("workspace_id", account.workspaceId)
+      .eq("connection_id", id)
+      .eq("source", "adsense-api")
+      .order("report_date", { ascending: false })
+      .limit(500);
+    const rows = (data ?? []) as { report_date: string; page: string; currency: string; timezone: string | null }[];
+    if (!rows.length) {
+      map.set(id, { currency: null, timezone: null, pageLevel: null });
+      continue;
+    }
+    const day = rows.filter((r) => r.report_date === rows[0].report_date);
+    map.set(id, { currency: rows[0].currency, timezone: rows[0].timezone, pageLevel: day.some((r) => r.page !== "") });
+  }
+  return map;
+}
 
 /** Connections (no token field) and the grants no connection uses: after a failed revoke those need a retry. */
 export async function listConnections(account: Authed): Promise<{ connections: ConnectionRow[]; unusedGrants: string[] }> {
@@ -151,6 +187,32 @@ export async function listConnections(account: Authed): Promise<{ connections: C
     unusedGrants = grants.map((g) => g.grant_id).filter((g) => !used.has(g));
   }
   return { connections, unusedGrants };
+}
+
+export async function createAdsenseConnection(account: Authed, cfg: GoogleConfig, input: { grantId: string; accountName: string }): Promise<ConnectionRow> {
+  const accounts = await adsenseAccountsOfGrant(account, cfg, input.grantId);
+  if (!accounts.some((a) => a.name === input.accountName)) throw new AnalyticsError("이 Google 계정에서 볼 수 없는 AdSense 계정입니다.", 400, "site_not_allowed");
+  const { data: prior, error: priorError } = await account.supabase
+    .from("analytics_connections")
+    .select(COLUMNS)
+    .eq("workspace_id", account.workspaceId)
+    .eq("provider", "adsense")
+    .eq("external_ref", input.accountName)
+    .maybeSingle();
+  if (priorError) throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  if ((prior as ConnectionRow | null)?.status === "revoked") return reconnectRevoked(account, prior as ConnectionRow, input.grantId, null);
+  const { data, error } = await account.supabase
+    .from("analytics_connections")
+    .insert({ workspace_id: account.workspaceId, blog_id: null, grant_id: input.grantId, provider: "adsense", external_ref: input.accountName, scopes: [ADSENSE_SCOPE], connected_by: account.user.id })
+    .select(COLUMNS)
+    .single();
+  if (error) {
+    if (error.code === "23505") throw new AnalyticsError("이미 연결된 AdSense 계정이 있습니다. 워크스페이스당 AdSense 계정은 1개만 연결할 수 있습니다.", 409, "duplicate");
+    if ((error.message ?? "").includes("GRANT_OWNER_INACTIVE")) throw rpcFail(error);
+    if (error.code === "42501" || error.code === "PGRST116") throw new AnalyticsError("연결 관리는 소유자·관리자만 할 수 있습니다.", 403, "forbidden");
+    throw new AnalyticsError("연결을 저장하지 못했습니다.", 500, "insert_failed");
+  }
+  return data as ConnectionRow;
 }
 
 export async function createGscConnection(account: Authed, cfg: GoogleConfig, input: { grantId: string; siteUrl: string; blogId: string | null }): Promise<ConnectionRow> {
@@ -232,13 +294,13 @@ export async function revokeGrant(account: Authed, cfg: GoogleConfig | null, gra
   return "done";
 }
 
-export async function disconnect(account: Authed, cfg: GoogleConfig | null, connectionId: string, purge: boolean): Promise<{ revoke: RevokeOutcome; grantId: string | null }> {
+export async function disconnect(account: Authed, cfg: GoogleConfig | null, connectionId: string, purge: boolean): Promise<{ revoke: RevokeOutcome; grantId: string | null; remaining: number }> {
   // disconnect_connection releases grant_id on a kept connection, so read it first.
   const { data, error } = await account.supabase.from("analytics_connections").select("grant_id").eq("id", connectionId).eq("workspace_id", account.workspaceId).maybeSingle();
   if (error) throw new AnalyticsError("연결을 찾지 못했습니다.", 500, "read_failed");
   if (!data) throw new AnalyticsError("연결을 찾을 수 없습니다.", 404, "not_found");
   const grantId = (data as { grant_id: string | null }).grant_id;
   const left = await call<number>(account.supabase, "disconnect_connection", { p_connection: connectionId, p_purge: purge });
-  if (!grantId || left > 0) return { revoke: "kept", grantId };
-  return { revoke: await revokeGrant(account, cfg, grantId), grantId };
+  if (!grantId || left > 0) return { revoke: "kept", grantId, remaining: left ?? 0 };
+  return { revoke: await revokeGrant(account, cfg, grantId), grantId, remaining: 0 };
 }

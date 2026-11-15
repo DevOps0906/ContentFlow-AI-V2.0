@@ -5,7 +5,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { openValue, parseKeyRing, sealValue, type KeyRing } from "./token-crypto";
 
 export const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
+export const ADSENSE_SCOPE = "https://www.googleapis.com/auth/adsense.readonly";
 export const START_SCOPES = ["openid", "email", GSC_SCOPE] as const;
+export type GoogleProvider = "gsc" | "adsense";
+/** Scopes asked per source (incremental consent: each source is its own consent, never a bundle). */
+export const PROVIDER_SCOPES: Record<GoogleProvider, string> = { gsc: GSC_SCOPE, adsense: ADSENSE_SCOPE };
 export const OAUTH_COOKIE = "cf_goog_oauth";
 export const OAUTH_COOKIE_PATH = "/api/integrations/google";
 export const OAUTH_TTL_MS = 10 * 60_000;
@@ -18,6 +22,8 @@ export type GoogleConfig = {
   tokenUrl: string;
   revokeUrl: string;
   apiBase: string;
+  /** AdSense Management API root (v2 paths hang below it). GOOGLE_API_BASE overrides it, so tests use a fake. */
+  adsenseBase: string;
   ring: KeyRing;
 };
 
@@ -35,6 +41,7 @@ export function googleConfig(env = process.env): GoogleConfig | null {
     tokenUrl: base ? `${base}/token` : "https://oauth2.googleapis.com/token",
     revokeUrl: base ? `${base}/revoke` : "https://oauth2.googleapis.com/revoke",
     apiBase: (env.GOOGLE_API_BASE?.trim() || "https://www.googleapis.com").replace(/\/+$/, ""),
+    adsenseBase: (env.GOOGLE_API_BASE?.trim() || "https://adsense.googleapis.com").replace(/\/+$/, ""),
     ring,
   };
 }
@@ -46,26 +53,28 @@ export class GoogleError extends Error {
 }
 
 // ---------- state cookie ----------
-export type OAuthFlow = { s: string; v: string; u: string; w: string; p: "gsc"; x: number };
+export type OAuthFlow = { s: string; v: string; u: string; w: string; p: GoogleProvider; x: number };
 const b64u = (b: Buffer) => b.toString("base64url");
 
-export function startFlow(cfg: GoogleConfig, redirectUri: string, userId: string, workspaceId: string, now = Date.now()) {
+export function startFlow(cfg: GoogleConfig, redirectUri: string, userId: string, workspaceId: string, now = Date.now(), provider: GoogleProvider = "gsc") {
   const state = b64u(randomBytes(24));
   const verifier = b64u(randomBytes(48));
   const challenge = b64u(createHash("sha256").update(verifier).digest());
-  const flow: OAuthFlow = { s: state, v: verifier, u: userId, w: workspaceId, p: "gsc", x: now + OAUTH_TTL_MS };
+  const flow: OAuthFlow = { s: state, v: verifier, u: userId, w: workspaceId, p: provider, x: now + OAUTH_TTL_MS };
   const url = new URL(cfg.authUrl);
   const q = url.searchParams;
   q.set("response_type", "code");
   q.set("client_id", cfg.clientId);
   q.set("redirect_uri", redirectUri);
-  q.set("scope", START_SCOPES.join(" "));
+  q.set("scope", ["openid", "email", PROVIDER_SCOPES[provider]].join(" "));
   q.set("state", state);
   q.set("code_challenge", challenge);
   q.set("code_challenge_method", "S256");
   q.set("access_type", "offline");
   q.set("prompt", "consent");
-  q.set("include_granted_scopes", "false");
+  // true: the refresh token of a grant that already holds another source keeps that scope too (the grant is
+  // shared per Google account; a token with only the new scope would replace it and break the other source).
+  q.set("include_granted_scopes", "true");
   return { url: url.toString(), cookie: sealValue(cfg.ring, flow), maxAgeSeconds: OAUTH_TTL_MS / 1000 };
 }
 
@@ -81,7 +90,7 @@ export function checkFlow(ring: KeyRing, cookie: string | undefined, stateParam:
     return { ok: false, code: "bad_cookie" };
   }
   const f = raw as Partial<OAuthFlow> | null;
-  if (!f || typeof f.s !== "string" || typeof f.v !== "string" || typeof f.u !== "string" || typeof f.w !== "string" || typeof f.x !== "number" || f.p !== "gsc")
+  if (!f || typeof f.s !== "string" || typeof f.v !== "string" || typeof f.u !== "string" || typeof f.w !== "string" || typeof f.x !== "number" || (f.p !== "gsc" && f.p !== "adsense"))
     return { ok: false, code: "bad_cookie" };
   if (now > f.x) return { ok: false, code: "expired" };
   const a = Buffer.from(f.s);
@@ -128,7 +137,7 @@ function idTokenClaims(idToken: unknown): { sub: string; email: string } {
   throw new GoogleError("bad_response", "Google 응답을 확인하지 못했습니다.");
 }
 
-export async function exchangeCode(cfg: GoogleConfig, code: string, verifier: string, redirectUri: string, fetchImpl: typeof fetch = fetch) {
+export async function exchangeCode(cfg: GoogleConfig, code: string, verifier: string, redirectUri: string, fetchImpl: typeof fetch = fetch, provider: GoogleProvider = "gsc") {
   const { status, body } = await post(
     cfg.tokenUrl,
     { grant_type: "authorization_code", code, code_verifier: verifier, redirect_uri: redirectUri, client_id: cfg.clientId, client_secret: cfg.clientSecret },
@@ -136,7 +145,8 @@ export async function exchangeCode(cfg: GoogleConfig, code: string, verifier: st
   );
   if (status !== 200 || typeof body.access_token !== "string") throw new GoogleError("upstream", "Google이 인가 코드를 받아들이지 않았습니다.");
   const scopes = typeof body.scope === "string" ? body.scope.split(" ") : [];
-  if (!scopes.includes(GSC_SCOPE)) throw new GoogleError("scope_missing", "Search Console 읽기 권한이 허용되지 않았습니다.");
+  if (!scopes.includes(PROVIDER_SCOPES[provider]))
+    throw new GoogleError("scope_missing", provider === "adsense" ? "AdSense 읽기 권한이 허용되지 않았습니다." : "Search Console 읽기 권한이 허용되지 않았습니다.");
   if (typeof body.refresh_token !== "string" || !body.refresh_token) throw new GoogleError("no_refresh_token", "Google이 갱신 토큰을 주지 않았습니다.");
   const { sub, email } = idTokenClaims(body.id_token);
   return { refreshToken: body.refresh_token, accessToken: body.access_token, sub, email };
@@ -188,3 +198,33 @@ export async function listGscSites(cfg: GoogleConfig, accessToken: string, fetch
     .filter((e) => e.permissionLevel !== "siteUnverifiedUser")
     .slice(0, 500);
 }
+
+export type AdsenseAccount = { name: string; displayName: string; timeZone: string | null };
+/** AdSense accounts the Google account can read (accounts.list). `name` is "accounts/pub-…". */
+export async function listAdsenseAccounts(cfg: GoogleConfig, accessToken: string, fetchImpl: typeof fetch = fetch): Promise<AdsenseAccount[]> {
+  let res: Response;
+  try {
+    res = await fetchImpl(`${cfg.adsenseBase}/v2/accounts?pageSize=100`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+      redirect: "error",
+    });
+  } catch {
+    throw new GoogleError("upstream", "AdSense 계정 목록을 가져오지 못했습니다.");
+  }
+  if (res.status !== 200) throw new GoogleError("upstream", "AdSense 계정 목록을 가져오지 못했습니다.");
+  let body: { accounts?: unknown };
+  try {
+    body = JSON.parse((await res.text()).slice(0, 500_000));
+  } catch {
+    throw new GoogleError("bad_response", "Google 응답을 확인하지 못했습니다.");
+  }
+  const out: AdsenseAccount[] = [];
+  for (const raw of Array.isArray(body.accounts) ? body.accounts : []) {
+    const a = raw as { name?: unknown; displayName?: unknown; timeZone?: { id?: unknown } | null } | null;
+    if (!a || typeof a.name !== "string" || !ADSENSE_ACCOUNT_RE.test(a.name)) continue;
+    out.push({ name: a.name, displayName: typeof a.displayName === "string" ? a.displayName.slice(0, 200) : "", timeZone: typeof a.timeZone?.id === "string" ? a.timeZone.id : null });
+  }
+  return out.slice(0, 100);
+}
+export const ADSENSE_ACCOUNT_RE = /^accounts\/[A-Za-z0-9_-]{1,100}$/;

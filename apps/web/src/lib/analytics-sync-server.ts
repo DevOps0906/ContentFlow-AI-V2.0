@@ -4,6 +4,8 @@
 // Any failure closes the run with finish_sync_run and writes no rows (a failure is never stored as 0).
 import type { Authed } from "./api";
 import { AnalyticsError, readRefreshToken } from "./analytics-connections-server";
+import { ADSENSE_ACCOUNT_RE } from "./google-oauth";
+import { AdsenseSyncError, fetchAccountTimeZone, fetchAdsenseReport } from "./adsense-sync";
 import { fetchGscPairs, GscSyncError, syncRange, toSyncRows } from "./gsc-sync";
 import { GoogleError, refreshAccessToken, type GoogleConfig } from "./google-oauth";
 
@@ -13,7 +15,7 @@ export class SyncError extends Error {
   }
 }
 
-export type SyncOutcome = { status: "succeeded" | "partial"; rows: number; range: { start: string; end: string }; runId: string };
+export type SyncOutcome = { status: "succeeded" | "partial"; rows: number; range: { start: string; end: string }; runId: string; pageLevel?: boolean };
 export type LastRun = { status: string; finishedAt: string | null; rows: number; errorCode: string | null };
 type Deps = { fetchImpl?: typeof fetch; now?: Date };
 type RpcError = { message?: string } | null;
@@ -33,7 +35,7 @@ function mapRpc(error: RpcError): SyncError {
   return hit ? new SyncError(hit[3], hit[1], hit[2]) : new SyncError("동기화를 처리하지 못했습니다.", 500, "sync_failed");
 }
 
-export async function runGscSync(account: Authed, cfg: GoogleConfig, connectionId: string, deps: Deps = {}): Promise<SyncOutcome> {
+export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: string, deps: Deps = {}): Promise<SyncOutcome> {
   const db = account.supabase;
   const { data: con, error } = await db
     .from("analytics_connections")
@@ -43,7 +45,8 @@ export async function runGscSync(account: Authed, cfg: GoogleConfig, connectionI
     .maybeSingle();
   if (error) throw new SyncError("연결을 불러오지 못했습니다.", 500, "read_failed");
   if (!con) throw new SyncError("연결을 찾을 수 없습니다.", 404, "not_found");
-  if (con.provider !== "gsc") throw new SyncError("이 연결은 아직 동기화를 지원하지 않습니다.", 400, "provider_unsupported");
+  if (con.provider !== "gsc" && con.provider !== "adsense") throw new SyncError("이 연결은 아직 동기화를 지원하지 않습니다.", 400, "provider_unsupported");
+  if (con.provider === "adsense" && !ADSENSE_ACCOUNT_RE.test(con.external_ref)) throw new SyncError("저장된 AdSense 계정 값이 올바르지 않습니다. 연결을 해제하고 다시 연결해주세요.", 409, "CONNECTION_INVALID");
   if (!["pending", "active", "error"].includes(con.status) || !con.grant_id) throw mapRpc({ message: "CONNECTION_NOT_ACTIVE" });
 
   const { data: last } = await db
@@ -71,8 +74,20 @@ export async function runGscSync(account: Authed, cfg: GoogleConfig, connectionI
       if (e instanceof GoogleError) throw new GscSyncError("failed", e.message);
       throw e;
     }
-    const pairs = await fetchGscPairs(cfg.apiBase, access, con.external_ref, range, deps.fetchImpl);
-    const { rows, skipped } = toSyncRows(pairs);
+    let rows: unknown[];
+    let skipped: number;
+    let pageLevel: boolean | undefined;
+    if (con.provider === "adsense") {
+      // Time zone first (accounts.get), then one report whose header carries the currency.
+      const timezone = await fetchAccountTimeZone(cfg.adsenseBase, access, con.external_ref, deps.fetchImpl);
+      const report = await fetchAdsenseReport(cfg.adsenseBase, access, con.external_ref, timezone, range, deps.fetchImpl);
+      rows = report.rows;
+      skipped = report.skipped;
+      pageLevel = report.pageLevel;
+    } else {
+      const pairs = await fetchGscPairs(cfg.apiBase, access, con.external_ref, range, deps.fetchImpl);
+      ({ rows, skipped } = toSyncRows(pairs));
+    }
     const coverage = skipped > 0 ? "partial" : "complete";
     const done = await db.rpc("replace_synced_range", {
       p_connection: connectionId,
@@ -83,21 +98,27 @@ export async function runGscSync(account: Authed, cfg: GoogleConfig, connectionI
       p_coverage: coverage,
     });
     if (done.error) throw mapRpc(done.error);
-    return { status: coverage === "partial" ? "partial" : "succeeded", rows: done.data as number, range, runId };
+    return { status: coverage === "partial" ? "partial" : "succeeded", rows: done.data as number, range, runId, ...(pageLevel === undefined ? {} : { pageLevel }) };
   } catch (e) {
     let out: SyncError;
     let status: "failed" | "delayed" = "failed";
     let conn: "needs_reauth" | null = null;
-    if (e instanceof GscSyncError && e.kind === "auth") {
+    const prov = e instanceof AdsenseSyncError ? "AdSense" : "Search Console";
+    const kind = e instanceof GscSyncError || e instanceof AdsenseSyncError ? e.kind : null;
+    if (kind === "auth") {
       out = new SyncError("Google 권한이 만료되었거나 철회되었습니다. 다시 연결해주세요.", 409, "NEEDS_REAUTH");
       conn = "needs_reauth";
-    } else if (e instanceof GscSyncError && e.kind === "quota") {
-      out = new SyncError("Search Console 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.", 502, "PROVIDER_QUOTA", "delayed");
+    } else if (kind === "quota") {
+      out = new SyncError(`${prov} 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.`, 502, "PROVIDER_QUOTA", "delayed");
       status = "delayed";
-    } else if (e instanceof GscSyncError && e.kind === "cap") {
+    } else if (kind === "cap") {
       out = mapRpc({ message: "SYNC_CAP_EXCEEDED" });
-    } else if (e instanceof GscSyncError) {
-      out = new SyncError("Search Console에서 데이터를 가져오지 못했습니다.", 502, "PROVIDER_ERROR", "failed");
+    } else if (kind === "currency") {
+      out = new SyncError("AdSense 보고서에서 통화를 확인하지 못해 가져오지 않았습니다.", 502, "CURRENCY_MISSING", "failed");
+    } else if (kind === "timezone") {
+      out = new SyncError("AdSense 계정의 시간대를 확인하지 못해 가져오지 않았습니다.", 502, "TIMEZONE_MISSING", "failed");
+    } else if (kind) {
+      out = new SyncError(`${prov}에서 데이터를 가져오지 못했습니다.`, 502, "PROVIDER_ERROR", "failed");
     } else if (e instanceof SyncError) {
       out = e;
     } else if (e instanceof AnalyticsError) {
@@ -129,3 +150,6 @@ export async function lastRuns(account: Authed): Promise<Map<string, LastRun>> {
     if (!map.has(r.connection_id)) map.set(r.connection_id, { status: r.status, finishedAt: r.finished_at, rows: r.rows_written, errorCode: r.error_code });
   return map;
 }
+
+/** Kept for callers of the Search Console era. */
+export const runGscSync = runSync;

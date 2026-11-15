@@ -1,5 +1,5 @@
 import { requireAccount } from "@/lib/api";
-import { runGscSync, SyncError } from "@/lib/analytics-sync-server";
+import { runSync, SyncError } from "@/lib/analytics-sync-server";
 import { isUuid } from "@/lib/articles-db";
 import { googleConfig } from "@/lib/google-oauth";
 import { json, sharedLimited } from "@/lib/server";
@@ -23,7 +23,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (!isUuid(id)) return json({ error: "잘못된 연결 ID입니다." }, 400);
   if (await sharedLimited(account.supabase, `an-sync:${account.user.id}`, 30, 60_000)) return json({ error: "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요." }, 429);
   try {
-    return json(await runGscSync(account, cfg, id));
+    return json(await runSync(account, cfg, id));
   } catch (e) {
     if (e instanceof SyncError) return json({ error: e.message, code: e.code, ...(e.runStatus ? { status: e.runStatus } : {}) }, e.status);
     return json({ error: "동기화를 처리하지 못했습니다." }, 500);

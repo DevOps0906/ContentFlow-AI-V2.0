@@ -25,9 +25,10 @@ const PW = "goog-Passw0rd-A!";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const KEY = randomBytes(32).toString("base64");
 const GSC = "https://www.googleapis.com/auth/webmasters.readonly";
+const ADS = "https://www.googleapis.com/auth/adsense.readonly";
 
 // ---- fake Google ----------------------------------------------------------------------------
-const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0, gscMode: "ok", gscSeed: 1, queries: [] };
+const g = { codes: new Map(), live: new Set(), tokenHits: 0, revokeHits: [], revokeFail: false, pkceOk: 0, n: 0, gscMode: "ok", gscSeed: 1, queries: [], adsPage: "ok", adsCurrency: "USD", adsTz: "Asia/Seoul", adsSeed: 1, adsQueries: [], grantScope: null };
 const b64u = (b) => Buffer.from(b).toString("base64url");
 const googleServer = createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -52,7 +53,7 @@ const googleServer = createServer(async (req, res) => {
       const refresh = `rt-${randomBytes(9).toString("hex")}`;
       g.live.add(refresh);
       const idt = ["h", b64u(JSON.stringify({ sub: c.sub, email: c.email })), "s"].join(".");
-      return send(200, { access_token: "at-first", refresh_token: refresh, id_token: idt, scope: `openid email ${GSC}`, expires_in: 3600, token_type: "Bearer" });
+      return send(200, { access_token: "at-first", refresh_token: refresh, id_token: idt, scope: g.grantScope ?? c.scope, expires_in: 3600, token_type: "Bearer" });
     }
     if (form.get("grant_type") === "refresh_token") {
       if (!g.live.has(form.get("refresh_token"))) return send(400, { error: "invalid_grant" });
@@ -100,6 +101,44 @@ const googleServer = createServer(async (req, res) => {
         rows.push({ keys: [new Date(d).toISOString().slice(0, 10), page], clicks: g.gscSeed * 10, impressions: g.gscSeed * 100, ctr: 0.1, position: 2.5 });
     return send(200, { rows: body.startRow ? [] : rows });
   }
+  // AdSense Management API v2 (fake): accounts, account (time zone), reports:generate
+  if (url.pathname.startsWith("/api/v2/accounts")) {
+    if (!/^Bearer at-/.test(req.headers.authorization ?? "")) return send(401, { error: "unauthorized" });
+    if (url.pathname === "/api/v2/accounts")
+      return send(200, {
+        accounts: [
+          { name: "accounts/pub-1111", displayName: "E2E AdSense", state: "READY", timeZone: { id: "Asia/Seoul" } },
+          { name: "accounts/pub-2222", displayName: "Other", state: "READY", timeZone: { id: "UTC" } },
+        ],
+      });
+    if (/^\/api\/v2\/accounts\/pub-\d+$/.test(url.pathname)) return send(200, { name: url.pathname.slice(8), ...(g.adsTz ? { timeZone: { id: g.adsTz } } : {}) });
+    if (/^\/api\/v2\/accounts\/pub-\d+\/reports:generate$/.test(url.pathname)) {
+      const q = url.searchParams;
+      g.adsQueries.push({ account: url.pathname.split("/")[4], dims: q.getAll("dimensions"), metrics: q.getAll("metrics"), tz: q.get("reportingTimeZone"), currencyCode: q.get("currencyCode"), start: `${q.get("startDate.year")}-${String(q.get("startDate.month")).padStart(2, "0")}-${String(q.get("startDate.day")).padStart(2, "0")}`, end: `${q.get("endDate.year")}-${String(q.get("endDate.month")).padStart(2, "0")}-${String(q.get("endDate.day")).padStart(2, "0")}` });
+      const dims = q.getAll("dimensions");
+      const pageLevel = dims.includes("PAGE_URL");
+      if (pageLevel && g.adsPage === "reject") return send(400, { error: { code: 400, status: "INVALID_ARGUMENT", message: "dimension combination" } });
+      const last = g.adsQueries.at(-1);
+      const headers = [
+        { name: "DATE", type: "DIMENSION" },
+        ...(pageLevel ? [{ name: "PAGE_URL", type: "DIMENSION" }] : []),
+        g.adsCurrency ? { name: "ESTIMATED_EARNINGS", type: "METRIC_CURRENCY", currencyCode: g.adsCurrency } : { name: "ESTIMATED_EARNINGS", type: "METRIC_TALLY" },
+        { name: "PAGE_VIEWS", type: "METRIC_TALLY" },
+        { name: "IMPRESSIONS", type: "METRIC_TALLY" },
+        { name: "CLICKS", type: "METRIC_TALLY" },
+      ];
+      const rows = [];
+      for (let d = Date.parse(`${last.start}T00:00:00Z`); d <= Date.parse(`${last.end}T00:00:00Z`); d += 86400000) {
+        const date = new Date(d).toISOString().slice(0, 10);
+        for (const page of pageLevel ? ["https://blog.example.com/a", "https://blog.example.com/b"] : [null]) {
+          const k = pageLevel ? 1 : 2;
+          const v = [String(0.5 * k * g.adsSeed), String(100 * k), String(200 * k), String(3 * k)];
+          rows.push({ cells: [date, ...(page ? [page] : []), ...v].map((value) => ({ value })) });
+        }
+      }
+      return send(200, { headers, rows });
+    }
+  }
   send(404, {});
 });
 googleServer.listen(GOOGLE_PORT, "127.0.0.1");
@@ -107,7 +146,7 @@ googleServer.listen(GOOGLE_PORT, "127.0.0.1");
 function consent(authUrl, sub, email) {
   const q = new URL(authUrl).searchParams;
   const code = `code-${randomBytes(8).toString("hex")}`;
-  g.codes.set(code, { challenge: q.get("code_challenge"), sub, email });
+  g.codes.set(code, { challenge: q.get("code_challenge"), sub, email, scope: q.get("scope") });
   return { code, state: q.get("state") };
 }
 
@@ -504,6 +543,136 @@ try {
     backdate();
     const again = await A.api("POST", `/api/analytics/connections/${ctx.c1}/sync`);
     ok(again.status === 409 && again.data.code === "CONNECTION_NOT_ACTIVE", `again ${again.status} ${JSON.stringify(again.data)}`);
+  });
+
+
+  // ===== AdSense (A6): incremental consent, account pick, report, currency / time zone, PAGE_URL fallback =====
+  const adsCount = () => Number(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}'`));
+  const adsBackdate = () => sql(`update analytics_sync_runs set requested_at = now() - interval '1 hour' where connection_id = '${ctx.ads}'`);
+
+  await step("AdSense 동의: 알 수 없는 provider 400, adsense.readonly만 + include_granted_scopes=true, 콜백 provider=adsense, 암호문 저장", async () => {
+    const bad = await A.api("POST", "/api/integrations/google/start", { provider: "ga4" });
+    ok(bad.status === 400, `bad provider ${bad.status}`);
+    const s = await A.api("POST", "/api/integrations/google/start", { provider: "adsense" });
+    ok(s.status === 200, `start ${s.status}`);
+    const u = new URL(s.data.url);
+    ok(u.searchParams.get("scope") === `openid email ${ADS}` && u.searchParams.get("include_granted_scopes") === "true", u.search);
+    const { code, state } = consent(s.data.url, "sub-AS", "as@google.test");
+    const cb = await A.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
+    const loc = new URL(cb.location, APP);
+    ok(cb.status === 303 && loc.searchParams.get("google") === "connected" && loc.searchParams.get("provider") === "adsense", cb.location);
+    ctx.adsGrant = loc.searchParams.get("grant");
+    ok(/^[0-9a-f-]{36}$/.test(ctx.adsGrant) && ctx.adsGrant !== ctx.grant, "grant");
+    ok(sql(`select count(*) from analytics_credentials where grant_id = '${ctx.adsGrant}' and ciphertext like 'v1.%'`) === "1", "credential");
+  });
+
+  await step("AdSense 동의 거부: 허용된 scope에 adsense.readonly가 없으면 scope_missing, grant 저장 안 됨", async () => {
+    const before = sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`);
+    const s = await A.api("POST", "/api/integrations/google/start", { provider: "adsense" });
+    const { code, state } = consent(s.data.url, "sub-AS-denied", "asd@google.test");
+    g.grantScope = `openid email ${GSC}`;
+    const cb = await A.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
+    g.grantScope = null;
+    ok(reason(cb.location) === "scope_missing", cb.location);
+    ok(sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`) === before, "grant가 저장됨");
+  });
+
+  await step("AdSense 계정 목록·연결: editor 거부, 허용 밖 계정 400, 연결 201(blog 없음), 두 번째 계정은 409, 타 워크스페이스는 grant를 못 읽음", async () => {
+    const ed = await E.api("GET", `/api/integrations/google/sites?grant=${ctx.adsGrant}&provider=adsense`);
+    ok(ed.status === 403, `editor ${ed.status}`);
+    const l = await A.api("GET", `/api/integrations/google/sites?grant=${ctx.adsGrant}&provider=adsense`);
+    ok(l.status === 200 && l.data.accounts.map((a) => a.name).join() === "accounts/pub-1111,accounts/pub-2222", JSON.stringify(l.data));
+    const other = await B.api("GET", `/api/integrations/google/sites?grant=${ctx.adsGrant}&provider=adsense`);
+    ok(other.status !== 200, `B ${other.status}`);
+    const notAllowed = await A.api("POST", "/api/analytics/connections", { provider: "adsense", grantId: ctx.adsGrant, accountName: "accounts/pub-9999" });
+    ok(notAllowed.status === 400 && notAllowed.data.code === "site_not_allowed", `not allowed ${notAllowed.status}`);
+    const badName = await A.api("POST", "/api/analytics/connections", { provider: "adsense", grantId: ctx.adsGrant, accountName: "../x" });
+    ok(badName.status === 400, `bad name ${badName.status}`);
+    const c = await A.api("POST", "/api/analytics/connections", { provider: "adsense", grantId: ctx.adsGrant, accountName: "accounts/pub-1111" });
+    ok(c.status === 201 && c.data.connection.provider === "adsense" && c.data.connection.blog_id === null && c.data.connection.status === "pending", `connect ${c.status} ${JSON.stringify(c.data)}`);
+    ctx.ads = c.data.connection.id;
+    const second = await A.api("POST", "/api/analytics/connections", { provider: "adsense", grantId: ctx.adsGrant, accountName: "accounts/pub-2222" });
+    ok(second.status === 409 && second.data.code === "duplicate", `second ${second.status}`);
+  });
+
+  await step("AdSense 동기화: 최초 90일 × 2페이지, status 전부 estimated, 통화=헤더 USD, 시간대=계정 Asia/Seoul, 요청에 ACCOUNT_TIME_ZONE·currencyCode 없음", async () => {
+    const e = await E.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    ok(e.status === 403, `editor ${e.status}`);
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    ok(r.status === 200 && r.data.status === "succeeded" && r.data.pageLevel === true && r.data.rows === 180, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    const q = g.adsQueries.at(-1);
+    ok(q.account === "pub-1111" && q.dims.join() === "DATE,PAGE_URL" && q.metrics.join() === "ESTIMATED_EARNINGS,PAGE_VIEWS,IMPRESSIONS,CLICKS", JSON.stringify(q));
+    ok(q.tz === "ACCOUNT_TIME_ZONE" && q.currencyCode === null && q.start === daysBack(89) && q.end === yesterday, JSON.stringify(q));
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and source = 'adsense-api' and status = 'estimated' and currency = 'USD' and timezone = 'Asia/Seoul' and page <> ''`) === "180", "행 속성");
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and status <> 'estimated'`) === "0", "estimated 아닌 행");
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and coverage = 'complete' and sync_run_id = '${r.data.runId}'`) === "180", "coverage·run");
+    ok(sql(`select status from analytics_connections where id = '${ctx.ads}'`) === "active", "연결 상태");
+    const l = await A.api("GET", "/api/analytics/connections");
+    const c = l.data.connections.find((x) => x.id === ctx.ads);
+    ok(c.adsense?.currency === "USD" && c.adsense.timezone === "Asia/Seoul" && c.adsense.pageLevel === true && c.lastRun?.status === "succeeded", JSON.stringify(c));
+    ok(!JSON.stringify(l.data.connections.filter((x) => x.provider !== "adsense")).includes("adsense\":"), "GSC 연결에 adsense 정보");
+  });
+
+  await step("AdSense 쿨다운: 바로 다시 누르면 409 SYNC_COOLDOWN, Google 호출 없음", async () => {
+    const hits = g.adsQueries.length;
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    ok(r.status === 409 && r.data.code === "SYNC_COOLDOWN" && g.adsQueries.length === hits, `${r.status} ${JSON.stringify(r.data)}`);
+  });
+
+  await step("PAGE_URL 거부(400 INVALID_ARGUMENT) → 사이트·일 수준 재요청(page=''), 같은 범위에 페이지 행과 사이트 행이 섞이지 않고 연결은 글별 미지원", async () => {
+    g.adsPage = "reject";
+    adsBackdate();
+    const before = g.adsQueries.length;
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    g.adsPage = "ok";
+    ok(r.status === 200 && r.data.pageLevel === false, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    const qs = g.adsQueries.slice(before);
+    ok(qs.length === 2 && qs[0].dims.join() === "DATE,PAGE_URL" && qs[1].dims.join() === "DATE", JSON.stringify(qs));
+    ok(r.data.range.start === daysBack(3), JSON.stringify(r.data.range));
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and report_date >= '${r.data.range.start}' and page = ''`) === "4", "사이트 수준 행");
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and report_date >= '${r.data.range.start}' and page <> ''`) === "0", "재조회 범위에 페이지 행이 남음");
+    ok(sql(`select count(*) from (select report_date from revenue_rows where connection_id = '${ctx.ads}' group by report_date having bool_or(page = '') and bool_or(page <> '')) t`) === "0", "같은 날 사이트·페이지 행 혼합");
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and status <> 'estimated'`) === "0", "estimated 아님");
+    const l = await A.api("GET", "/api/analytics/connections");
+    ok(l.data.connections.find((x) => x.id === ctx.ads).adsense.pageLevel === false, "pageLevel false 아님");
+    ctx.adsRows = adsCount();
+  });
+
+  await step("통화 헤더 없음 → 502 CURRENCY_MISSING(failed), 시간대 없음 → 502 TIMEZONE_MISSING, 행 변화 없음·0 저장 없음", async () => {
+    g.adsCurrency = null;
+    adsBackdate();
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    g.adsCurrency = "USD";
+    ok(r.status === 502 && r.data.code === "CURRENCY_MISSING" && r.data.status === "failed", `currency ${r.status} ${JSON.stringify(r.data)}`);
+    ok(adsCount() === ctx.adsRows, "행이 바뀜");
+    ok(sql(`select status || ':' || error_code from analytics_sync_runs where connection_id = '${ctx.ads}' order by requested_at desc limit 1`) === "failed:CURRENCY_MISSING", "run 기록");
+    g.adsTz = null;
+    adsBackdate();
+    const t = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    g.adsTz = "Asia/Seoul";
+    ok(t.status === 502 && t.data.code === "TIMEZONE_MISSING", `tz ${t.status} ${JSON.stringify(t.data)}`);
+    ok(adsCount() === ctx.adsRows, "행이 바뀜(tz)");
+    const l = await A.api("GET", "/api/analytics/connections");
+    ok(l.data.connections.find((x) => x.id === ctx.ads).lastRun?.status === "failed", "목록 lastRun");
+  });
+
+  await step("AdSense 다시 성공: PAGE_URL 허용으로 돌아오면 재조회 범위가 페이지 행으로 교체(사이트 행 제거), CSV 행과 합산 없음", async () => {
+    adsBackdate();
+    const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
+    ok(r.status === 200 && r.data.pageLevel === true, `sync ${r.status} ${JSON.stringify(r.data)}`);
+    ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and report_date >= '${r.data.range.start}' and page = ''`) === "0", "사이트 행이 남음");
+    ok(sql(`select count(*) from revenue_rows where workspace_id = '${ctx.wsA}' and source <> 'adsense-api'`) === "0", "다른 source 행이 생김");
+  });
+
+  await step("AdSense 해제: 마지막 연결이라 Google revoke 후 grant 삭제, 가져온 행은 유지(D4), 목록에서 연결 해제됨", async () => {
+    const rows = adsCount();
+    const r = await A.api("DELETE", `/api/analytics/connections/${ctx.ads}`);
+    ok(r.status === 200 && r.data.revoke === "done", JSON.stringify(r.data));
+    ok(g.revokeHits.length === 1, `revoke ${g.revokeHits.length}`);
+    ok(sql(`select count(*) from analytics_credentials where grant_id = '${ctx.adsGrant}'`) === "0", "grant가 남음");
+    ok(adsCount() === rows && rows > 0, "행이 바뀜");
+    ok(sql(`select status from analytics_connections where id = '${ctx.ads}'`) === "revoked", "상태");
+    g.revokeHits.length = 0;
   });
 
   await step("해제 1: grant를 쓰는 연결이 남아 있으면 revoke 호출 없음", async () => {

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Unplug } from "lucide-react";
 import { blogName, type Blog } from "@/lib/blogs";
 import {
+  adsenseLines,
   connectionStatusClass,
   connectionStatusLabels,
   googleErrorMessage,
@@ -16,7 +17,9 @@ import { useBlogs } from "./blog-filter";
 import { useFeedback } from "./feedback";
 
 type Listing = { configured: boolean; canManage: boolean; connections: ConnectionView[]; unusedGrants: string[] };
-type Site = { siteUrl: string; permissionLevel?: string };
+type Site = { siteUrl: string; permissionLevel?: string; label?: string };
+type Provider = "gsc" | "adsense";
+const providerName = (p: string) => (p === "adsense" ? "AdSense" : "Search Console");
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, { ...init, headers: init?.body ? { "Content-Type": "application/json" } : undefined });
@@ -28,7 +31,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
 const when = (iso: string | null) => (iso && !Number.isNaN(Date.parse(iso)) ? new Date(iso).toLocaleString("ko-KR") : "없음");
 
 /** Disconnect dialog: the imported rows stay by default (D4); deleting them is an explicit choice. */
-function DisconnectDialog({ target, busy, onCancel, onConfirm }: { target: ConnectionView; busy: boolean; onCancel: () => void; onConfirm: (purge: boolean) => void }) {
+function DisconnectDialog({ target, shared, busy, onCancel, onConfirm }: { target: ConnectionView; shared: boolean; busy: boolean; onCancel: () => void; onConfirm: (purge: boolean) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [purge, setPurge] = useState(false);
@@ -62,11 +65,16 @@ function DisconnectDialog({ target, busy, onCancel, onConfirm }: { target: Conne
           }
         }}
       >
-        <h2 id="disconnect-title">Search Console 연결을 해제할까요?</h2>
+        <h2 id="disconnect-title">{providerName(target.provider)} 연결을 해제할까요?</h2>
         <p id="disconnect-desc">
-          {target.external_ref} 연결만 끊습니다. 이 Google 계정으로 연결된 마지막 속성이면 Google 권한 철회까지 함께 진행합니다. 이미 가져온 데이터는 기본적으로 남고 &quot;연결 해제됨&quot;으로
+          {target.external_ref} 연결만 끊습니다. 이 Google 계정으로 연결된 마지막 연결이면 Google 권한 철회까지 함께 진행합니다. 이미 가져온 데이터는 기본적으로 남고 &quot;연결 해제됨&quot;으로
           표시됩니다.
         </p>
+        {shared && target.provider === "adsense" && (
+          <p className="metric-note">
+            Google 쪽 AdSense 읽기 권한은 같은 Google 계정의 다른 연결이 남아 있어 철회되지 않습니다. 완전히 철회하려면 Google 계정 권한 페이지에서 제거하세요.
+          </p>
+        )}
         <label className="conn-check">
           <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} />
           가져온 데이터도 삭제(이 연결의 API 데이터만, CSV·수동 입력은 유지)
@@ -93,7 +101,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
   const [busy, setBusy] = useState(false);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState<Record<string, boolean>>({});
-  const [picker, setPicker] = useState<{ grant: string; sites: Site[] | null; site: string; blog: string } | null>(null);
+  const [picker, setPicker] = useState<{ provider: Provider; grant: string; sites: Site[] | null; site: string; blog: string } | null>(null);
   const [removing, setRemoving] = useState<ConnectionView | null>(null);
   const [visible, setVisible] = useState(true);
   const tried = useRef(new Set<string>());
@@ -117,11 +125,14 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
     if (account) load();
   }, [account, load]);
 
-  const openPicker = useCallback(async (grant: string) => {
-    setPicker({ grant, sites: null, site: "", blog: "" });
+  const openPicker = useCallback(async (grant: string, provider: Provider) => {
+    setPicker({ provider, grant, sites: null, site: "", blog: "" });
     try {
-      const r = await call<{ sites: Site[] }>(`/api/integrations/google/sites?grant=${encodeURIComponent(grant)}`);
-      setPicker({ grant, sites: r.sites, site: r.sites[0]?.siteUrl ?? "", blog: "" });
+      const q = `grant=${encodeURIComponent(grant)}${provider === "adsense" ? "&provider=adsense" : ""}`;
+      const r = await call<{ sites?: Site[]; accounts?: { name: string; displayName: string }[] }>(`/api/integrations/google/sites?${q}`);
+      const sites: Site[] =
+        provider === "adsense" ? (r.accounts ?? []).map((a) => ({ siteUrl: a.name, label: a.displayName ? `${a.displayName} (${a.name})` : a.name })) : (r.sites ?? []);
+      setPicker({ provider, grant, sites, site: sites[0]?.siteUrl ?? "", blog: "" });
     } catch (e) {
       setPicker(null);
       setError(e instanceof Error ? e.message : "속성 목록을 불러오지 못했습니다.");
@@ -136,10 +147,11 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
     if (!g) return;
     const grant = q.get("grant");
     const reason = q.get("reason");
-    for (const k of ["google", "grant", "reason"]) q.delete(k);
+    const provider: Provider = q.get("provider") === "adsense" ? "adsense" : "gsc";
+    for (const k of ["google", "grant", "reason", "provider"]) q.delete(k);
     const rest = q.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`);
-    if (g === "connected" && grant) void openPicker(grant);
+    if (g === "connected" && grant) void openPicker(grant, provider);
     else setError(googleErrorMessage(reason));
   }, [account, openPicker]);
   useEffect(() => {
@@ -200,16 +212,16 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
       setBusy(false);
     }
   }
-  const startConsent = () =>
+  const startConsent = (provider: Provider) =>
     act(async () => {
-      const r = await call<{ url: string }>("/api/integrations/google/start", { method: "POST" });
+      const r = await call<{ url: string }>("/api/integrations/google/start", { method: "POST", body: JSON.stringify({ provider }) });
       window.location.assign(r.url);
     });
 
   if (!account)
     return (
       <p className="metric-note">
-        로컬 모드에서는 Google 연결을 사용할 수 없습니다. 계정 모드(로그인)에서 Search Console을 연결할 수 있습니다. 연결 전까지 광고·검색 성과는 N/A입니다.
+        로컬 모드에서는 Google 연결을 사용할 수 없습니다. 계정 모드(로그인)에서 Search Console·AdSense를 연결할 수 있습니다. 연결 전까지 광고·검색 성과는 N/A입니다.
       </p>
     );
   if (!data && !error) return <p className="metric-note">연결 정보를 불러오고 있어요.</p>;
@@ -218,6 +230,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
   const connections = data?.connections ?? [];
   const blogById = (id: string | null): Blog | undefined => (id ? blogs.find((b) => b.id === id) : undefined);
   const blogLabel = (id: string | null) => (id ? (blogById(id) ? blogName(blogById(id)!) : "알 수 없는 블로그") : "블로그 미지정");
+  const adsenseConns = connections.filter((c) => c.provider === "adsense" && c.status !== "revoked");
   const usedBlogs = new Set(connections.filter((c) => c.provider === "gsc" && c.status !== "revoked").map((c) => c.blog_id));
 
   return (
@@ -239,15 +252,15 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
         <section className="conn-card" aria-label="Google Search Console">
           <div className="conn-head">
             <b>Google Search Console</b>
-            <span className={`status ${data?.configured && connections.length ? "approve" : "write"}`}>
-              {data?.configured && connections.length ? "연결됨" : "연결 안 됨"}
+            <span className={`status ${data?.configured && connections.some((c) => c.provider === "gsc") ? "approve" : "write"}`}>
+              {data?.configured && connections.some((c) => c.provider === "gsc") ? "연결됨" : "연결 안 됨"}
             </span>
           </div>
           {!data?.configured && <p className="metric-note">서버에 Google 연결이 설정되지 않았습니다(GOOGLE_OAUTH_CLIENT_ID/SECRET 필요). 설정 전까지 성과는 N/A입니다.</p>}
-          {data?.configured && connections.length === 0 && !picker && <p className="metric-note">연결된 속성이 없습니다. 연결하면 페이지별 일 단위 성과를 가져옵니다.</p>}
+          {data?.configured && !connections.some((c) => c.provider === "gsc") && !picker && <p className="metric-note">연결된 속성이 없습니다. 연결하면 페이지별 일 단위 성과를 가져옵니다.</p>}
           {manage ? (
             <div className="editor-actions">
-              <button className="button primary" onClick={startConsent} disabled={busy || !data?.configured}>
+              <button className="button primary" onClick={() => startConsent("gsc")} disabled={busy || !data?.configured}>
                 Google 계정 연결
               </button>
             </div>
@@ -255,12 +268,23 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
             <p className="metric-note">연결과 해제는 소유자·관리자만 할 수 있습니다.</p>
           )}
         </section>
-        <section className="conn-card conn-card-off" aria-label="Google AdSense">
+        <section className="conn-card" aria-label="Google AdSense">
           <div className="conn-head">
             <b>Google AdSense</b>
-            <span className="status write">연결되지 않음</span>
+            <span className={`status ${data?.configured && adsenseConns.length ? "approve" : "write"}`}>{data?.configured && adsenseConns.length ? "연결됨" : "연결 안 됨"}</span>
           </div>
-          <p className="metric-note">후속 단계입니다. 수익은 N/A로 표시됩니다.</p>
+          <p className="metric-note">
+            AdSense 읽기 권한만 따로 동의합니다(Search Console 연결과 별개). 가져온 수익은 추정치이며 확정 수익으로 표시하지 않습니다. 연결 전까지 수익은 N/A입니다.
+          </p>
+          {manage ? (
+            <div className="editor-actions">
+              <button className="button primary" onClick={() => startConsent("adsense")} disabled={busy || !data?.configured || adsenseConns.length > 0}>
+                AdSense 연결
+              </button>
+            </div>
+          ) : (
+            <p className="metric-note">연결과 해제는 소유자·관리자만 할 수 있습니다.</p>
+          )}
         </section>
         <section className="conn-card conn-card-off" aria-label="Google Analytics 4">
           <div className="conn-head">
@@ -274,17 +298,21 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
       {picker && manage && (
         <form
           className="conn-picker"
-          aria-label="Search Console 속성 선택"
+          aria-label={picker.provider === "adsense" ? "AdSense 계정 선택" : "Search Console 속성 선택"}
           onSubmit={(e) => {
             e.preventDefault();
             if (!picker.site) return;
             act(async () => {
               await call("/api/analytics/connections", {
                 method: "POST",
-                body: JSON.stringify({ grantId: picker.grant, siteUrl: picker.site, blogId: picker.blog || null }),
+                body: JSON.stringify(
+                  picker.provider === "adsense"
+                    ? { provider: "adsense", grantId: picker.grant, accountName: picker.site }
+                    : { grantId: picker.grant, siteUrl: picker.site, blogId: picker.blog || null },
+                ),
               });
               setPicker(null);
-              toast("Search Console 속성을 연결했어요.");
+              toast(`${providerName(picker.provider)} 연결을 저장했어요.`);
               await load();
             });
           }}
@@ -295,7 +323,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
             </p>
           ) : picker.sites.length === 0 ? (
             <>
-              <p className="metric-note">이 Google 계정에서 볼 수 있는 Search Console 속성이 없습니다.</p>
+              <p className="metric-note">이 Google 계정에서 볼 수 있는 {providerName(picker.provider)} {picker.provider === "adsense" ? "계정" : "속성"}이 없습니다.</p>
               <div className="editor-actions">
                 <button type="button" className="button secondary" onClick={() => setPicker(null)}>
                   닫기
@@ -305,15 +333,16 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
           ) : (
             <>
               <div className="field">
-                <label htmlFor="conn-site">연결할 속성</label>
+                <label htmlFor="conn-site">{picker.provider === "adsense" ? "연결할 AdSense 계정" : "연결할 속성"}</label>
                 <select id="conn-site" ref={pickerRef} value={picker.site} disabled={busy} onChange={(e) => setPicker({ ...picker, site: e.target.value })}>
                   {picker.sites.map((s) => (
                     <option key={s.siteUrl} value={s.siteUrl}>
-                      {s.siteUrl}
+                      {s.label ?? s.siteUrl}
                     </option>
                   ))}
                 </select>
               </div>
+              {picker.provider === "gsc" && (
               <div className="field">
                 <label htmlFor="conn-blog">블로그 계정(선택)</label>
                 <select id="conn-blog" value={picker.blog} disabled={busy} onChange={(e) => setPicker({ ...picker, blog: e.target.value })}>
@@ -327,9 +356,10 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                     ))}
                 </select>
               </div>
+              )}
               <div className="editor-actions">
                 <button type="submit" className="button primary" disabled={busy || !picker.site}>
-                  {busy ? "연결 중…" : "속성 연결"}
+                  {busy ? "연결 중…" : picker.provider === "adsense" ? "계정 연결" : "속성 연결"}
                 </button>
                 <button type="button" className="button secondary" disabled={busy} onClick={() => setPicker(null)}>
                   취소
@@ -377,7 +407,9 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
             return (
               <li key={c.id} className="conn-item">
                 <div className="conn-head">
-                  <b className="conn-site">{c.external_ref}</b>
+                  <b className="conn-site">
+                    {providerName(c.provider)} · {c.external_ref}
+                  </b>
                   <span className={`status ${connectionStatusClass(c.status)}`}>{connectionStatusLabels[c.status] ?? c.status}</span>
                 </div>
                 <dl className="detail-list conn-detail">
@@ -392,6 +424,12 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                     {last.failed && c.lastRun?.errorCode ? ` · ${c.lastRun.errorCode}` : ""}
                   </dd>
                 </dl>
+                {c.provider === "adsense" &&
+                  adsenseLines(c.adsense).map((line) => (
+                    <p key={line} className="metric-note">
+                      {line}
+                    </p>
+                  ))}
                 {last.partial && <p className="metric-note">일부 데이터만 가져왔습니다. 합계에서 완전한 데이터로 취급하지 않습니다.</p>}
                 {c.status === "revoked" && <p className="metric-note">연결이 해제되었습니다. 이전에 가져온 데이터는 남아 있을 수 있습니다.</p>}
                 {c.status === "error" && <p className="metric-note">마지막 동기화가 실패했습니다. 15분 뒤에 다시 동기화할 수 있습니다.</p>}
@@ -404,7 +442,7 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
                 {manage && c.status !== "revoked" && (
                   <div className="editor-actions">
                     {needsReauth ? (
-                      <button className="button primary" onClick={startConsent} disabled={busy || !data?.configured}>
+                      <button className="button primary" onClick={() => startConsent(c.provider === "adsense" ? "adsense" : "gsc")} disabled={busy || !data?.configured}>
                         다시 연결
                       </button>
                     ) : (
@@ -427,16 +465,19 @@ export function AnalyticsConnections({ account }: { account: boolean }) {
       {removing && (
         <DisconnectDialog
           target={removing}
+          shared={connections.some((o) => o.id !== removing.id && o.grant_id && o.grant_id === removing.grant_id && o.status !== "revoked")}
           busy={busy}
           onCancel={() => setRemoving(null)}
           onConfirm={(purge) =>
             act(async () => {
-              const r = await call<{ revoke: string; notice?: string }>(`/api/analytics/connections/${removing.id}`, {
+              const r = await call<{ revoke: string; remaining?: number; notice?: string }>(`/api/analytics/connections/${removing.id}`, {
                 method: "DELETE",
                 body: JSON.stringify({ purge }),
               });
               setRemoving(null);
               if (r.revoke === "failed") setError(r.notice ?? "연결은 해제했지만 Google 권한 철회에 실패했습니다. 다시 시도해주세요.");
+              else if (r.revoke === "kept" && (r.remaining ?? 0) > 0 && removing.provider === "adsense")
+                toast("연결을 해제했어요. Google 쪽 AdSense 읽기 권한은 다른 연결이 남아 있어 철회되지 않았습니다. Google 계정 권한 페이지에서 제거하세요.");
               else toast("연결을 해제했어요.");
               await load();
             })

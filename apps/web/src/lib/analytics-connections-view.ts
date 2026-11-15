@@ -12,6 +12,8 @@ export type ConnectionView = {
   last_error_code: string | null;
   created_at: string;
   lastRun?: LastRun | null;
+  /** AdSense only: what the stored rows say (null fields = nothing synced yet). */
+  adsense?: { currency: string | null; timezone: string | null; pageLevel: boolean | null };
 };
 
 export const AUTO_SYNC_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -37,8 +39,11 @@ export const syncErrorMessages: Record<string, string> = {
   CONNECTION_NOT_ACTIVE: "연결이 활성 상태가 아닙니다. 해제되었거나 재연결이 필요하면 다시 연결해주세요.",
   GRANT_OWNER_INACTIVE: "연결한 사용자가 더 이상 관리자가 아니어서 동기화할 수 없습니다. 다시 연결해주세요.",
   NEEDS_REAUTH: "Google 재연결이 필요합니다.",
+  CONNECTION_INVALID: "저장된 연결 정보가 올바르지 않습니다. 연결을 해제하고 다시 연결해주세요.",
   SYNC_CAP_EXCEEDED: "가져올 데이터가 워크스페이스 행 상한(30,000행)을 넘을 것으로 예상되어 실행하지 않았습니다. 기간이나 페이지 수를 줄여주세요.",
   PROVIDER_ERROR: "Google에서 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해주세요.",
+  CURRENCY_MISSING: "AdSense 보고서에서 통화를 확인하지 못해 가져오지 않았습니다. 수익은 N/A로 유지됩니다.",
+  TIMEZONE_MISSING: "AdSense 계정의 시간대를 확인하지 못해 가져오지 않았습니다. 수익은 N/A로 유지됩니다.",
   PROVIDER_QUOTA: "Google 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.",
 };
 export function syncErrorMessage(code: unknown, status: number): string {
@@ -50,6 +55,7 @@ const reasonMessages: Record<string, string> = {
   denied: "Google 동의를 취소했습니다.",
   forbidden: "연결은 소유자·관리자만 할 수 있습니다.",
   workspace_changed: "워크스페이스가 바뀌어 연결을 중단했습니다. 다시 시도해주세요.",
+  scope_missing: "필요한 읽기 권한이 허용되지 않았습니다. 동의 화면에서 권한을 모두 허용해주세요.",
   invalid_grant: "Google 권한이 만료되었습니다. 다시 연결해주세요.",
 };
 export function googleErrorMessage(reason: string | null): string {
@@ -79,4 +85,12 @@ export function runSummary(run: LastRun | null | undefined): { label: string; ro
 export function parseConnections(raw: unknown): ConnectionView[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter((c): c is ConnectionView => !!c && typeof c === "object" && typeof (c as ConnectionView).id === "string" && typeof (c as ConnectionView).status === "string");
+}
+
+/** Text lines of an AdSense connection: estimated only, account currency and time zone, page level or not (D6). */
+export function adsenseLines(info: ConnectionView["adsense"]): string[] {
+  const lines = ["수익은 AdSense 추정치입니다(확정 아님)."];
+  if (info?.currency) lines.push(`통화 ${info.currency} · 보고 시간대 ${info.timezone ?? "N/A"}`);
+  if (info?.pageLevel === false) lines.push("글별 미지원: 이 계정은 페이지별 보고서를 허용하지 않아 사이트·일 단위로만 가져옵니다. 글별 ROI는 N/A입니다.");
+  return lines;
 }
