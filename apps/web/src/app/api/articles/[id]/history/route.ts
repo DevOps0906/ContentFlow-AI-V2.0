@@ -29,14 +29,14 @@ export async function GET(req: Request, ctx: Ctx) {
     supabase
       .from("article_state_events")
       .select("from_state,to_state,created_at")
-      .eq("workspace_id", workspaceId)
+      .eq("organization_id", workspaceId)
       .eq("article_id", id)
       .order("created_at", { ascending: true })
       .limit(500),
     supabase
       .from("delivery_attempts")
       .select("channel,attempt,failure_type,url,duration_ms,created_at")
-      .eq("workspace_id", workspaceId)
+      .eq("organization_id", workspaceId)
       .eq("article_id", id)
       .order("created_at", { ascending: false })
       .limit(50),

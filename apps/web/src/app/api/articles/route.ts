@@ -14,7 +14,7 @@ export async function GET(req: Request) {
       account.supabase
         .from("articles")
         .select(ARTICLE_COLUMNS)
-        .eq("workspace_id", account.workspaceId)
+        .eq("organization_id", account.workspaceId)
         .order("updated_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),

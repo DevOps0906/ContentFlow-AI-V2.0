@@ -8,21 +8,19 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const account = await requireAccount(req);
   if (account instanceof Response) return account;
-  const [ent, count, snap] = await Promise.all([
-    account.supabase
-      .from("workspace_entitlements")
-      .select("included_blogs,max_blogs,overage_allowed,grace_until,grace_active_cap")
-      .eq("workspace_id", account.workspaceId)
-      .maybeSingle(),
+  // Blog limits moved to nomad_core.plan_limits (keys included_blogs · max_blogs · overage_allowed),
+  // which has no Data API read RPC yet: until one exists the usage answers 404 like a missing row.
+  const ent = { data: null as EntitlementRow | null, error: null };
+  const [count, snap] = await Promise.all([
     account.supabase
       .from("blogs")
       .select("id", { count: "exact", head: true })
-      .eq("workspace_id", account.workspaceId)
+      .eq("organization_id", account.workspaceId)
       .eq("status", "active"),
     account.supabase
       .from("blog_usage_snapshots")
       .select("period_start,peak_active")
-      .eq("workspace_id", account.workspaceId)
+      .eq("organization_id", account.workspaceId)
       .order("period_start", { ascending: false })
       .limit(1)
       .maybeSingle(),

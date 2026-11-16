@@ -31,7 +31,7 @@ export async function GET(req: Request) {
         supabase
           .from("improvement_tasks")
           .select(IMPROVEMENT_COLUMNS)
-          .eq("workspace_id", workspaceId)
+          .eq("organization_id", workspaceId)
           .order("review_at", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to),
@@ -88,7 +88,7 @@ export async function PATCH(req: Request) {
     .from("improvement_tasks")
     .update({ state: input.state, result_version: input.resultVersion, assignee_id: input.assigneeId })
     .eq("id", input.id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select(IMPROVEMENT_COLUMNS)
     .maybeSingle();
   if (error) return failed(error);

@@ -16,7 +16,7 @@ export async function GET(req: Request) {
       account.supabase
         .from("keyword_trends")
         .select(TREND_COLUMNS)
-        .eq("workspace_id", account.workspaceId)
+        .eq("organization_id", account.workspaceId)
         .order("measured_on", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -77,7 +77,7 @@ export async function DELETE(req: Request) {
     .from("keyword_trends")
     .delete()
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select("id");
   if (error) return json({ error: "삭제하지 못했습니다." }, 500);
   if (!data?.length) return json({ error: "삭제할 수 없거나 이미 삭제된 행입니다." }, 404);

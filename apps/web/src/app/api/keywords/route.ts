@@ -1,5 +1,6 @@
 import { dbError } from "@/lib/articles-db";
 import { KEYWORD_COLUMNS, parseNewKeywords, rowToKeyword, type KeywordRow } from "@/lib/keywords-db";
+import { normalizePhrase } from "@/lib/keywords";
 import { json, readJson, sameOrigin, sharedLimited } from "@/lib/server";
 import { fetchAll } from "@/lib/paging";
 import { getAccount } from "@/lib/supabase";
@@ -16,7 +17,7 @@ export async function GET() {
       account.supabase
         .from("keywords")
         .select(KEYWORD_COLUMNS)
-        .eq("workspace_id", account.workspaceId)
+        .eq("organization_id", account.workspaceId)
         .order("priority", { ascending: true })
         .order("created_at", { ascending: true })
         .order("id", { ascending: true })
@@ -44,13 +45,35 @@ export async function POST(req: Request) {
   }
   const rows = items.map((k) => ({
     ...k,
-    workspace_id: account.workspaceId,
+    organization_id: account.workspaceId,
     created_by: account.user.id,
   }));
-  const { data, error } = await account.supabase
-    .from("keywords")
-    .upsert(rows, { onConflict: "workspace_id,phrase_key", ignoreDuplicates: true })
-    .select("id");
+  // The duplicate key is a partial unique index (deleted_at is null), which PostgREST on_conflict
+  // can not target: read the stored keys first and insert only the new phrases.
+  let stored: { phrase_key: string }[];
+  try {
+    stored = await fetchAll<{ phrase_key: string }>((from, to) =>
+      account.supabase
+        .from("keywords")
+        .select("phrase_key")
+        .eq("organization_id", account.workspaceId)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+  } catch {
+    return json({ error: "키워드를 불러오지 못했습니다." }, 500);
+  }
+  const seen = new Set(stored.map((r) => r.phrase_key));
+  const fresh = rows.filter((r) => {
+    const key = normalizePhrase(r.phrase);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const { data, error } = fresh.length
+    ? await account.supabase.from("keywords").insert(fresh).select("id")
+    : { data: [], error: null };
   if (error) {
     const e = dbError(error);
     const limit = /limit reached/.test(error.message ?? "");

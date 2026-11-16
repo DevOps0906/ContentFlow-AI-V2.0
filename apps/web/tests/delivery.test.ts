@@ -160,7 +160,7 @@ test("a successful attempt is recorded once, with its URL and no attempt number 
   const { duration_ms, ...rest } = rows[0];
   assert.equal(typeof duration_ms, "number");
   assert.deepEqual(rest, {
-    workspace_id: "ws",
+    organization_id: "ws",
     article_id: "a1",
     created_by: "u",
     channel: "wordpress",
@@ -225,7 +225,7 @@ test("durations read N/A when unknown", () => {
 
 test("failure types match the database check", () => {
   const sql = readFileSync(
-    new URL("../../../supabase/migrations/0008_state_events_and_delivery_attempts.sql", import.meta.url),
+    new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url),
     "utf8",
   );
   const list = sql.match(/failure_type text check \(failure_type in \(([^)]*)\)/)?.[1];

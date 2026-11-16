@@ -14,7 +14,7 @@ test("the dedupe key is computed on the server from the row, not taken from the 
   const [db] = toDbRows(parseRevenueBatch({ rows: [{ ...row, row_key: "forged" }] }), "ws", "user");
   assert.equal(db.row_key, rowKey(row));
   assert.ok(!JSON.stringify(db).includes("forged"));
-  assert.equal(db.workspace_id, "ws");
+  assert.equal(db.organization_id, "ws");
   assert.equal(db.created_by, "user");
   // same report row spelled differently gets the same key (so the DB skips it)
   assert.equal(toDbRows([{ ...row, page: "https://blog.example/a" }], "ws", "u")[0].row_key, db.row_key);

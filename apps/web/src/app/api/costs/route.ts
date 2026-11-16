@@ -28,7 +28,7 @@ export async function GET(req: Request) {
         supabase
           .from("cost_entries")
           .select(COST_COLUMNS)
-          .eq("workspace_id", workspaceId)
+          .eq("organization_id", workspaceId)
           .order("occurred_on", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to),
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
         supabase
           .from("agent_runs")
           .select(AGENT_RUN_COST_COLUMNS)
-          .eq("workspace_id", workspaceId)
+          .eq("organization_id", workspaceId)
           .order("id", { ascending: true })
           .range(from, to),
       ),
@@ -90,7 +90,7 @@ export async function DELETE(req: Request) {
     .from("cost_entries")
     .delete()
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select("id");
   if (error) return json({ error: "삭제하지 못했습니다." }, 500);
   if (!data?.length) return json({ error: "원가 기록을 찾을 수 없습니다." }, 404);

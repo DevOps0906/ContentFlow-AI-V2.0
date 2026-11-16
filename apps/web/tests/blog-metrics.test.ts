@@ -29,8 +29,9 @@ import { chunkList, rowKey } from "../src/lib/revenue";
 import { BlogMetrics, IndexTrend, MetricTable, ToolBundles } from "../src/components/blog-metrics";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
-const migration = read("../../../supabase/migrations/0017_blog_metric_snapshots.sql");
-const synced = read("../../../supabase/migrations/0025_synced_storage_contract.sql");
+const migration = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql");
+// 0020~0027(발행 큐·분석 연동)은 nomad 이식본에 아직 없다: 팀장 확인 전까지 옛 계약을 본다.
+const synced = read("../../../supabase/legacy-migrations/0025_synced_storage_contract.sql");
 const NOW = new Date("2026-11-11T12:00:00Z");
 const B1 = "11111111-1111-4111-8111-111111111111";
 const B2 = "22222222-2222-4222-8222-222222222222";

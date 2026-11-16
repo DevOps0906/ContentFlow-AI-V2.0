@@ -62,7 +62,7 @@ async function loadArticle(account: Authed, id: string, workspaceId: string): Pr
     .from("articles")
     .select(ARTICLE_COLUMNS)
     .eq("id", id)
-    .eq("workspace_id", workspaceId)
+    .eq("organization_id", workspaceId)
     .maybeSingle();
   if (error) throw new QueueError("콘텐츠를 불러오지 못했습니다.", 500);
   return data ? rowToArticle(data as ArticleRow) : null;
@@ -112,14 +112,14 @@ export async function listJobs(account: Authed, limit = 100): Promise<PublishJob
   const { data, error } = await supabase
     .from(PUBLISH_TABLE)
     .select(PUBLISH_COLUMNS)
-    .eq("workspace_id", workspaceId)
+    .eq("organization_id", workspaceId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw queueError(error, "발행 큐를 불러오지 못했습니다.");
   const jobs = ((data ?? []) as unknown as JobRow[]).map(rowToJob);
   const ids = [...new Set(jobs.map((j) => j.articleId))];
   if (!ids.length) return jobs;
-  const titles = await supabase.from("articles").select("id,title").eq("workspace_id", workspaceId).in("id", ids);
+  const titles = await supabase.from("articles").select("id,title").eq("organization_id", workspaceId).in("id", ids);
   const byId = new Map(((titles.data ?? []) as { id: string; title: string }[]).map((a) => [a.id, a.title]));
   return jobs.map((j) => ({ ...j, title: byId.get(j.articleId) }));
 }
@@ -185,7 +185,7 @@ export async function drainOne(account: Authed, config: WpConfig): Promise<Drain
       .from("articles")
       .update({ remote })
       .eq("id", article.id)
-      .eq("workspace_id", job.workspaceId)
+      .eq("organization_id", job.workspaceId)
       .select("id")
       .maybeSingle();
     // The draft exists remotely; a person must look if it could not be recorded.

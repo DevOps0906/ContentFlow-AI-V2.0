@@ -11,6 +11,11 @@ import { cookieSecure, supabaseTarget } from "./supabase-target";
 
 export type SupabaseEnv = { url: string; key: string };
 
+/** Product tables and RPCs live in this schema (nomad DB); shared account RPCs stay in `public`. */
+export const DB_SCHEMA = "nomad_contentflow";
+// The app has no generated Database types, so the schema name only matters at runtime.
+type AnySchemaClient = SupabaseClient<any, any, any, any, any>;
+
 export function supabaseEnv(env = process.env): SupabaseEnv | null {
   const url = env.SUPABASE_URL?.trim();
   const key = env.SUPABASE_PUBLISHABLE_KEY?.trim();
@@ -40,6 +45,7 @@ export async function serverClient(): Promise<SupabaseClient | null> {
   if (!env) return null;
   const store = await cookies();
   return createServerClient(env.url, env.key, {
+    db: { schema: DB_SCHEMA },
     cookies: {
       getAll: () => store.getAll(),
       setAll: (list) => {
@@ -51,7 +57,7 @@ export async function serverClient(): Promise<SupabaseClient | null> {
         }
       },
     },
-  });
+  }) as AnySchemaClient;
 }
 
 
@@ -92,9 +98,10 @@ export async function getAccount(opts: { bearer?: boolean } = {}): Promise<Accou
 /** Stateless client without a cookie adapter: RLS sees the caller through the Authorization header. */
 export function bearerClient(env: SupabaseEnv, token?: string): SupabaseClient {
   return createClient(env.url, env.key, {
+    db: { schema: DB_SCHEMA },
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
-  });
+  }) as AnySchemaClient;
 }
 
 /** Bearer workspace problem with the HTTP status to answer (409 none yet, 403 not a member). */
@@ -107,33 +114,30 @@ export class WorkspaceError extends Error {
   }
 }
 
-export type MembershipRow = { workspace_id: string; role: Role };
+/** Row of `public.nomad_my_organizations()` (nomad_core is not exposed to the Data API). */
+export type OrganizationRow = { id: string; name: string; kind: string; role: Role };
+
+export async function myOrganizations(supabase: SupabaseClient): Promise<OrganizationRow[]> {
+  const found = await supabase.schema("public").rpc("nomad_my_organizations");
+  if (found.error) throw new Error("워크스페이스를 확인하지 못했습니다.");
+  return (found.data ?? []) as OrganizationRow[];
+}
 
 export async function activeWorkspace(supabase: SupabaseClient, user: User, bearer?: { wanted: string | null }): Promise<{ id: string; role: Role }> {
-  const found = await supabase
-    .from("memberships")
-    .select("workspace_id, role")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: true });
-  if (found.error) throw new Error("워크스페이스를 확인하지 못했습니다.");
-  const list = (found.data ?? []) as MembershipRow[];
+  const list = await myOrganizations(supabase);
   if (bearer) {
     // Mobile: the cookie is never read, a workspace is never created, and a named workspace the
     // caller is not a member of is refused instead of silently replaced.
     if (!list.length) throw new WorkspaceError(409, "웹에서 먼저 로그인해 워크스페이스를 만드세요");
-    const hit = bearer.wanted ? list.find((m) => m.workspace_id === bearer.wanted) : list[0];
+    const hit = bearer.wanted ? list.find((m) => m.id === bearer.wanted) : list[0];
     if (!hit) throw new WorkspaceError(403, "접근할 수 없는 워크스페이스입니다.");
-    return { id: hit.workspace_id, role: hit.role };
+    return { id: hit.id, role: hit.role };
   }
   const wanted = (await cookies()).get(WORKSPACE_COOKIE_NAME)?.value;
-  const hit = list.find((m) => m.workspace_id === wanted) ?? list[0];
-  if (hit) return { id: hit.workspace_id, role: hit.role };
-  // First login: the id is generated here because INSERT ... RETURNING would be filtered by
-  // the SELECT policy before the membership trigger has made the user a member.
-  const id = crypto.randomUUID();
-  const created = await supabase
-    .from("workspaces")
-    .insert({ id, name: "나의 워크스페이스", owner_id: user.id });
-  if (created.error) throw new Error("워크스페이스를 만들지 못했습니다.");
-  return { id, role: "owner" };
+  const hit = list.find((m) => m.id === wanted) ?? list[0];
+  if (hit) return { id: hit.id, role: hit.role };
+  // Signup normally creates a personal organization; this covers accounts made before that trigger.
+  const created = await supabase.schema("public").rpc("nomad_create_team_organization", { name: "나의 워크스페이스" });
+  if (created.error || typeof created.data !== "string") throw new Error("워크스페이스를 만들지 못했습니다.");
+  return { id: created.data, role: "owner" };
 }

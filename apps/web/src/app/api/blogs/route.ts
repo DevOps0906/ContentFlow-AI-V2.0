@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   const { data, error } = await account.supabase
     .from("blogs")
     .select(BLOG_COLUMNS)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
   if (error) return json({ error: "블로그 계정을 불러오지 못했습니다." }, 500);
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   const { data, error } = await account.supabase
     .from("blogs")
     // overage_ack lives only in this statement: the trigger records the audit row and resets it.
-    .insert({ ...fields, workspace_id: account.workspaceId, ...(ack ? { overage_ack: true } : {}) })
+    .insert({ ...fields, organization_id: account.workspaceId, ...(ack ? { overage_ack: true } : {}) })
     .select(BLOG_COLUMNS)
     .single();
   if (error) {
@@ -73,7 +73,7 @@ export async function PATCH(req: Request) {
     // The acknowledgement only matters when the account becomes active again (restore).
     .update("status" in update.fields && update.fields.status === "active" && ack ? { ...update.fields, overage_ack: true } : update.fields)
     .eq("id", update.id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select(BLOG_COLUMNS)
     .maybeSingle();
   if (error) {

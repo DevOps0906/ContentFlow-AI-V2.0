@@ -54,7 +54,7 @@ async function saveRun(log: RunLog, task: RunTask, run: RunInfo) {
   if (!log) return;
   try {
     const { error } = await log.client.from("agent_runs").insert({
-      workspace_id: log.workspaceId,
+      organization_id: log.workspaceId,
       created_by: log.userId,
       task,
       model: run.model,

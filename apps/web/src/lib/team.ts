@@ -59,6 +59,14 @@ const messages: [RegExp, number, string][] = [
   [/already a member/, 409, "이미 이 워크스페이스의 멤버입니다."],
   [/invitation not found/, 404, "초대를 찾을 수 없습니다. 이미 처리됐거나 이메일이 확인되지 않았을 수 있어요."],
   [/not allowed/, 403, "이 작업을 할 권한이 없습니다."],
+  // nomad_core 계정 RPC 오류
+  [/forbidden/, 403, "이 작업을 할 권한이 없습니다."],
+  [/last owner/, 400, "마지막 소유자는 내보내거나 역할을 바꿀 수 없습니다."],
+  [/member not found/, 404, "멤버를 찾을 수 없습니다."],
+  [/invalid role/, 400, "부여할 수 없는 역할입니다."],
+  [/seat limit reached/, 409, "좌석 한도에 도달했습니다."],
+  [/upgrade required/, 403, "개인 워크스페이스에서는 팀원을 초대할 수 없습니다."],
+  [/invalid invitation|invitation expired|email mismatch|email not confirmed/, 404, "초대를 찾을 수 없습니다. 이미 처리됐거나 이메일이 확인되지 않았을 수 있어요."],
 ];
 /** Maps a database error from the team functions to a safe, translated response. */
 export function teamError(error: { message?: string } | null | undefined): { status: number; message: string } {

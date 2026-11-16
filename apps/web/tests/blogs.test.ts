@@ -33,9 +33,9 @@ const ID = "11111111-1111-4111-8111-111111111111";
 const ID2 = "22222222-2222-4222-8222-222222222222";
 
 test("platforms and statuses match the database", () => {
-  const enumSql = read("../../../supabase/migrations/0001_core_tenancy.sql").match(/blog_platform as enum \(([^)]*)\)/)![1];
+  const enumSql = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql").match(/blog_platform as enum \(([^)]*)\)/)![1];
   assert.deepEqual(quoted(enumSql), [...BLOG_PLATFORMS].sort());
-  const statusSql = read("../../../supabase/migrations/0015_blog_accounts.sql").match(/status in \(([^)]*)\)/)![1];
+  const statusSql = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql").match(/status in \(([^)]*)\)/)![1];
   assert.deepEqual(quoted(statusSql), [...BLOG_STATUSES].sort());
 });
 
@@ -68,7 +68,7 @@ test("a blog needs a platform, an address and a display name", () => {
 
 test("an update is an edit or a status change, and never moves the workspace", () => {
   assert.deepEqual(parseBlogUpdate({ id: ID, status: "archived", displayName: "ignored" }), { id: ID, fields: { status: "archived" } });
-  const edit = parseBlogUpdate({ id: ID, platform: "blogger", domain: "a.example", displayName: "a", workspace_id: ID2 });
+  const edit = parseBlogUpdate({ id: ID, platform: "blogger", domain: "a.example", displayName: "a", organization_id: ID2 });
   assert.deepEqual(edit.fields, { platform: "blogger", domain: "a.example", display_name: "a" });
   assert.throws(() => parseBlogUpdate({ id: "x", status: "active" }));
   assert.throws(() => parseBlogUpdate({ id: ID, status: "deleted" }));

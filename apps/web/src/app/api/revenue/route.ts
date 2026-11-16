@@ -15,7 +15,7 @@ export async function GET(req: Request) {
       account.supabase
         .from("revenue_rows")
         .select(REVENUE_COLUMNS)
-        .eq("workspace_id", account.workspaceId)
+        .eq("organization_id", account.workspaceId)
         .order("report_date", { ascending: true })
         .order("row_key", { ascending: true })
         .range(from, to),
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   const { data, error } = await account.supabase
     .from("revenue_rows")
     .upsert(toDbRows(rows, account.workspaceId, account.user.id), {
-      onConflict: "workspace_id,row_key",
+      onConflict: "organization_id,row_key",
       ignoreDuplicates: true,
     })
     .select("row_key");
@@ -73,7 +73,7 @@ export async function DELETE(req: Request) {
   const { error } = await account.supabase
     .from("revenue_rows")
     .delete()
-    .eq("workspace_id", account.workspaceId);
+    .eq("organization_id", account.workspaceId);
   if (error) return json({ error: "삭제하지 못했습니다." }, 500);
   return json({ ok: true });
 }

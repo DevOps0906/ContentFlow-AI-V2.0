@@ -53,7 +53,7 @@ export async function POST(req: Request) {
       .from("articles")
       .select(ARTICLE_COLUMNS)
       .eq("id", id)
-      .eq("workspace_id", account.workspaceId)
+      .eq("organization_id", account.workspaceId)
       .maybeSingle();
     if (found.error) return json({ error: "콘텐츠를 불러오지 못했습니다." }, 500);
     if (!found.data) return json({ error: "콘텐츠를 찾을 수 없습니다." }, 404);

@@ -97,7 +97,7 @@ export function parseSiteCheck(input: unknown): SiteCheckInput {
 }
 
 export const toDbSiteCheck = (c: SiteCheckInput, workspaceId: string) => ({
-  workspace_id: workspaceId,
+  organization_id: workspaceId,
   check_key: c.key,
   status: c.status,
   evidence_url: c.evidenceUrl,

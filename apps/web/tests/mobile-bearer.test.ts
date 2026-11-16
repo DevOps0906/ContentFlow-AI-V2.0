@@ -137,28 +137,24 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-function fakeClient(rows: { workspace_id: string; role: string }[]) {
+function fakeClient(rows: { id: string; role: string }[]) {
   const calls: string[] = [];
-  const q = {
-    select: () => q,
-    eq: () => q,
-    order: () => Promise.resolve({ data: rows, error: null }),
-    insert: () => {
-      calls.push("insert");
-      return Promise.resolve({ error: null });
-    },
+  const rpc = (name: string) => {
+    calls.push(name);
+    return Promise.resolve(name === "nomad_my_organizations" ? { data: rows, error: null } : { data: null, error: null });
   };
-  return { calls, client: { from: () => q } as never };
+  const client = { schema: () => ({ rpc: (name: string) => rpc(name) }) };
+  return { calls, client: client as never };
 }
 const USER = { id: "u1" } as never;
 
 test("Bearer workspace: none -> 409 and nothing is created", async () => {
   const f = fakeClient([]);
   await assert.rejects(activeWorkspace(f.client, USER, { wanted: null }), (e: unknown) => e instanceof WorkspaceError && e.status === 409);
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.calls, ["nomad_my_organizations"]);
 });
 test("Bearer workspace: named non-member -> 403, member ok, none named -> first", async () => {
-  const f = fakeClient([{ workspace_id: "w1", role: "owner" }, { workspace_id: "w2", role: "viewer" }]);
+  const f = fakeClient([{ id: "w1", role: "owner" }, { id: "w2", role: "viewer" }]);
   await assert.rejects(activeWorkspace(f.client, USER, { wanted: "w9" }), (e: unknown) => e instanceof WorkspaceError && e.status === 403);
   assert.deepEqual(await activeWorkspace(f.client, USER, { wanted: "w2" }), { id: "w2", role: "viewer" });
   assert.deepEqual(await activeWorkspace(f.client, USER, { wanted: null }), { id: "w1", role: "owner" });

@@ -42,7 +42,7 @@ export async function runSync(account: Authed, cfg: GoogleConfig, connectionId: 
     .from("analytics_connections")
     .select("id, provider, external_ref, status, grant_id")
     .eq("id", connectionId)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .maybeSingle();
   if (error) throw new SyncError("연결을 불러오지 못했습니다.", 500, "read_failed");
   if (!con) throw new SyncError("연결을 찾을 수 없습니다.", 404, "not_found");
@@ -149,7 +149,7 @@ export async function lastRuns(account: Authed): Promise<Map<string, LastRun>> {
   const { data } = await account.supabase
     .from("analytics_sync_runs")
     .select("connection_id, status, finished_at, rows_written, error_code")
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .order("requested_at", { ascending: false })
     .limit(200);
   const map = new Map<string, LastRun>();
