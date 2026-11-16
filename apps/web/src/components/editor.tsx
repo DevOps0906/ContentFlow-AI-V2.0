@@ -169,6 +169,10 @@ function EditorForm({
   // Local mode has one user who can do everything; in an account the role decides.
   const editable = role === null || canEdit(role);
   const decider = role === null || canDecide(role);
+  // Affiliate mark (AFFILIATE_COMMERCE.md §4.4 r2): editors and reviewers turn it on, only owner and admin turn it
+  // off. The database trigger (0029) enforces the same; local mode has one user.
+  const canMark = editable || decider;
+  const canUnmark = role === null || role === "owner" || role === "admin";
   const [form, setForm] = useState<Article>(
     () =>
       initial ?? {
@@ -454,6 +458,31 @@ function EditorForm({
     const stored = await save({ ...saved, titleEvaluation: entries, updatedAt: new Date().toISOString() });
     setSaved(stored);
     setForm((f) => ({ ...f, titleEvaluation: stored.titleEvaluation, updatedAt: stored.updatedAt }));
+  }
+  /** Stored on the saved copy like the blog account: the mark is not part of the approved content (0029 r2). */
+  async function markAffiliate(affiliate: boolean) {
+    if (!saved) {
+      setForm((f) => ({ ...f, affiliate }));
+      return;
+    }
+    if (busy) return;
+    setBusy("save");
+    setErrors([]);
+    try {
+      const stored = await save({ ...saved, affiliate, updatedAt: new Date().toISOString() });
+      setSaved(stored);
+      setForm((f) => ({ ...f, affiliate: stored.affiliate, updatedAt: stored.updatedAt }));
+      toast(affiliate ? "제휴·광고 글로 표시했어요. 승인하려면 고지 문구가 필요해요." : "제휴·광고 표시를 해제했어요.");
+    } catch (e) {
+      fail(e, "제휴·광고 표시를 바꾸지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  /** A link panel inserted an affiliate link: the article is marked too, and saved with the manuscript. */
+  function insertAffiliateLink(body: string) {
+    update("body", body);
+    setForm((f) => ({ ...f, affiliate: true }));
   }
   /** Stored on the saved copy like the title ratings: the account is not part of the approved content. */
   async function chooseBlog(value: string) {
@@ -802,8 +831,29 @@ function EditorForm({
                   </button>
                 </p>
               )}
+              {editable && form.affiliate && !hasAffiliateLink(form) && !hasDisclosure(form) && (
+                <p role="status" className="metric-note">
+                  제휴·광고 글로 표시되어 있어요. 승인하려면 대가를 받는다는 고지 문구가 글 앞부분(제목 포함 300자 안)에 있어야 해요.
+                </p>
+              )}
             </div>
           )}
+          <div className="field">
+            <label className="approval-label">
+              <input
+                type="checkbox"
+                aria-describedby="affiliate-note"
+                checked={!!form.affiliate}
+                disabled={busy !== null || (form.affiliate ? !canUnmark : !canMark)}
+                onChange={(e) => markAffiliate(e.target.checked)}
+              />
+              <span>제휴·광고 글(대가 고지 필요)</span>
+            </label>
+            <small id="affiliate-note">
+              표시하면 승인 전에 대가 고지 문구가 필요해요. 링크 넣기 패널을 쓰면 자동으로 켜져요.
+              {form.affiliate && !canUnmark ? " 표시 해제는 소유자·관리자만 할 수 있어요." : ""}
+            </small>
+          </div>
           <div className="field">
             <label htmlFor="source">근거 자료 URL</label>
             <input
@@ -907,8 +957,8 @@ function EditorForm({
             </ol>
             <p className="evidence-note">필수 근거: {template.evidence}</p>
           </section>
-          {editable && <CoupangPanel form={form} onBody={(body) => update("body", body)} />}
-          {editable && <BrandConnectPanel form={form} onBody={(body) => update("body", body)} />}
+          {editable && <CoupangPanel form={form} onBody={insertAffiliateLink} />}
+          {editable && <BrandConnectPanel form={form} onBody={insertAffiliateLink} />}
           <section className="panel lifecycle-panel">
             <h2>진행 상태</h2>
             <div className="lifecycle-current">

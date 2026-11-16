@@ -1,5 +1,6 @@
 // C4 브랜드커넥트 링크 입력과 C6 제휴 저품질 경고 (AFFILIATE_COMMERCE.md §4.3). Pure functions only:
-// no external call, and nothing here marks a link as "connected". BC links do not block approval (C1 is Coupang only).
+// no external call, and nothing here marks a link as "connected". A BC link blocks approval only through the
+// article-level affiliate mark (§4.4, migration 0029), which the editor turns on when a link is inserted.
 import { AFFILIATE_HOST, disclosureWindow, hasDisclosure, NAVER_SHORT_HOST, type Article } from "./content";
 
 export const BRAND_CONNECT_DISCLOSURE = "이 글은 네이버 쇼핑 커넥트 활동으로, 구매 시 판매 수수료를 받습니다.";

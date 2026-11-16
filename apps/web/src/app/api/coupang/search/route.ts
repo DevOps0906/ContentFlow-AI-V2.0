@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /** C2: products for a keyword (name, price, rocket, affiliate link). Nothing is stored. */
 export async function POST(req: Request) {
-  const guard = await coupangGuard(req);
+  const guard = await coupangGuard(req, "search");
   if (!guard.ok) return guard.res;
   let keyword;
   try {

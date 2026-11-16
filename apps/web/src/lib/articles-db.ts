@@ -8,7 +8,7 @@ import { templateVersion } from "./templates";
 import type { TitleEvaluationEntry } from "./titles";
 
 export const ARTICLE_COLUMNS =
-  "id,title,keyword,template_id,platform,body,source_url,state,updated_at,remote,keyword_id,published_url,layout_profile,ad_profile,renderer_version,brief_purpose,brief_audience,evidence_status,rights_status,title_evaluation,template_version,blog_id";
+  "id,title,keyword,template_id,platform,body,source_url,state,updated_at,remote,keyword_id,published_url,layout_profile,ad_profile,renderer_version,brief_purpose,brief_audience,evidence_status,rights_status,title_evaluation,template_version,blog_id,affiliate";
 
 export type ArticleRow = {
   id: string;
@@ -33,6 +33,7 @@ export type ArticleRow = {
   title_evaluation: TitleEvaluationEntry[] | null;
   template_version: string | null;
   blog_id: string | null;
+  affiliate: boolean;
 };
 
 export function rowToArticle(r: ArticleRow): Article {
@@ -60,6 +61,7 @@ export function rowToArticle(r: ArticleRow): Article {
   if (r.title_evaluation) a.titleEvaluation = r.title_evaluation;
   if (r.template_version) a.templateVersion = r.template_version;
   if (r.blog_id) a.blogId = r.blog_id;
+  if (r.affiliate) a.affiliate = true;
   return a;
 }
 
@@ -73,6 +75,8 @@ export function rowToArticle(r: ArticleRow): Article {
  * `renderer_version` is deliberately absent: see `approvalFields`.
  * `evidence_status` and `rights_status` are deliberately absent: only the review route writes them.
  * `template_version` is deliberately absent: see `templateVersionFields`.
+ * `affiliate` is written only when present (0029 r2): an older client can not clear it by omission, and the
+ * trigger lets only owner and admin turn it off.
  */
 export function articleToFields(a: Article) {
   return {
@@ -84,6 +88,7 @@ export function articleToFields(a: Article) {
     ...(a.status === "published" && a.publishedUrl !== undefined ? { published_url: a.publishedUrl } : {}),
     ...(a.layoutProfile !== undefined ? { layout_profile: a.layoutProfile } : {}),
     ...(a.adProfile !== undefined ? { ad_profile: a.adProfile } : {}),
+    ...(a.affiliate !== undefined ? { affiliate: a.affiliate } : {}),
     title: a.title,
     keyword: a.keyword,
     template_id: a.templateId,
@@ -109,8 +114,13 @@ export function approvalFields(requested: LifecycleState, stored: LifecycleState
 const REVIEWED_STATES: LifecycleState[] = ["qa_pending", "approval_pending", "approved"];
 export function approvalRejection(article: Article, stored: LifecycleState | undefined): string | undefined {
   if (!REVIEWED_STATES.includes(article.status) || stored === article.status) return undefined;
-  // Disclosure: approved entry only, same as migration 0028 (a presence guardrail, AFFILIATE_COMMERCE.md §4.1 r4).
+  // Disclosure: approved entry only, same as migrations 0028 and 0029 (a presence guardrail, AFFILIATE_COMMERCE.md §4.1 r4).
   return [...reviewErrors(article), ...(article.status === "approved" ? disclosureErrors(article) : [])][0];
+}
+
+/** The article as the trigger will see it: a request without `affiliate` keeps the stored mark (0029 r2 ⑤). */
+export function withStoredAffiliate(article: Article, stored?: { affiliate?: boolean | null } | null): Article {
+  return article.affiliate === undefined && stored?.affiliate ? { ...article, affiliate: true } : article;
 }
 
 /**

@@ -8,7 +8,6 @@ import {
   coupangSignature,
   deeplink,
   parseSearch,
-  resetCoupangCache,
   searchProducts,
   signedDate,
   validateKeyword,
@@ -77,7 +76,6 @@ test("단일 소유자: 로컬·소유 워크스페이스만 ready", () => {
 });
 
 test("COUPANG_ENABLED 미설정·키 없음·다른 워크스페이스: 외부 호출 없음", async () => {
-  resetCoupangCache();
   const calls: Call[] = [];
   const f = mockFetch(() => ok(searchJson), calls);
   const off = await searchProducts("노트북", opts({ fetchImpl: f, env: { ...ENV, COUPANG_ENABLED: "" } as NodeJS.ProcessEnv }));
@@ -89,8 +87,7 @@ test("COUPANG_ENABLED 미설정·키 없음·다른 워크스페이스: 외부 �
   assert.equal(calls.length, 0);
 });
 
-test("검색: 요청 형식, 허용 호스트만, 30분 캐시", async () => {
-  resetCoupangCache();
+test("검색: 요청 형식, 허용 호스트만, 캐시 없음", async () => {
   const calls: Call[] = [];
   const r = await searchProducts("노트북", opts({ fetchImpl: mockFetch(() => ok(searchJson), calls) }));
   assert.ok(r.ok);
@@ -103,14 +100,11 @@ test("검색: 요청 형식, 허용 호스트만, 30분 캐시", async () => {
   assert.equal(calls[0].method, "GET");
   assert.ok(calls[0].headers.Authorization.endsWith("signature=015e270765fbb0e68497bfa444b91c2e6c0dfde21041ae16d876362b0c5ba74b"));
 
-  await searchProducts("노트북", opts({ now: NOW + 29 * 60_000, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
-  assert.equal(calls.length, 1, "30분 안에는 캐시");
-  await searchProducts("노트북", opts({ now: NOW + COUPANG_LIMITS.cacheMs, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
-  assert.equal(calls.length, 2, "30분 뒤 다시 호출");
+  await searchProducts("노트북", opts({ fetchImpl: mockFetch(() => ok(searchJson), calls) }));
+  assert.equal(calls.length, 2, "같은 검색어도 매번 조회");
 });
 
-test("오류: 상태 코드만 매핑하고 외부 본문은 비노출, 실패는 캐시하지 않음", async () => {
-  resetCoupangCache();
+test("오류: 상태 코드만 매핑하고 외부 본문은 비노출, 실패 뒤에도 매번 조회", async () => {
   const secret = "SECRET-BODY access-key=test-access";
   for (const [status, message] of [
     [401, "키·서명 확인이 필요합니다(401)."],
@@ -133,7 +127,7 @@ test("오류: 상태 코드만 매핑하고 외부 본문은 비노출, 실패�
   assert.deepEqual(timeout, { ok: false, status: 502, error: "응답 시간이 초과되었습니다(8초)." });
   const calls: Call[] = [];
   assert.ok((await searchProducts("노트북", opts({ fetchImpl: mockFetch(() => ok(searchJson), calls) }))).ok);
-  assert.equal(calls.length, 1, "실패 결과는 캐시되지 않음");
+  assert.equal(calls.length, 1, "실패 뒤 재조회");
 });
 
 test("딥링크: 요청 본문과 단축 링크 호스트 허용 목록", async () => {
@@ -158,21 +152,29 @@ test("딥링크: 요청 본문과 단축 링크 호스트 허용 목록", async 
   assert.deepEqual(parseSearch({ rCode: "0", data: { productData: [] } }), []);
 });
 
-test("전역 한도(시간당 10)와 사용자 한도(분당 5): 한도를 넘으면 호출 없음", async () => {
+test("전역 한도 분리(검색 분당 40·딥링크 시간당 10)와 사용자 한도(분당 5)", async () => {
   resetRateLimits();
-  resetCoupangCache();
+  assert.equal(COUPANG_LIMITS.searchGlobalPerMinute, 40);
+  assert.equal(COUPANG_LIMITS.deeplinkGlobalPerHour, 10);
   const calls: Call[] = [];
-  const global = () => sharedLimited(null, "coupang:global", COUPANG_LIMITS.globalPerHour, 3_600_000);
-  for (let i = 0; i < 10; i++) {
-    const r = await searchProducts(`검색어${i}`, opts({ globalLimited: global, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
+  const search = () => sharedLimited(null, "coupang:global:search", COUPANG_LIMITS.searchGlobalPerMinute, 60_000);
+  const link = () => sharedLimited(null, "coupang:global:deeplink", COUPANG_LIMITS.deeplinkGlobalPerHour, 3_600_000);
+  for (let i = 0; i < 40; i++) {
+    const r = await searchProducts("노트북", opts({ globalLimited: search, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
     assert.ok(r.ok);
   }
-  const over = await searchProducts("검색어10", opts({ globalLimited: global, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
-  assert.deepEqual(over, { ok: false, status: 429, error: "쿠팡 호출이 이번 시간 한도에 도달했습니다. 잠시 후 다시 시도해주세요." });
-  assert.equal(calls.length, 10);
-  // A cached keyword is answered without using the hourly budget.
-  assert.ok((await searchProducts("검색어0", opts({ globalLimited: global, fetchImpl: mockFetch(() => ok(searchJson), calls) }))).ok);
-  assert.equal(calls.length, 10);
+  const over = await searchProducts("노트북", opts({ globalLimited: search, fetchImpl: mockFetch(() => ok(searchJson), calls) }));
+  assert.deepEqual(over, { ok: false, status: 429, error: "쿠팡 호출이 한도에 도달했습니다. 잠시 후 다시 시도해주세요." });
+  assert.equal(calls.length, 40, "같은 검색어 40회 모두 외부 호출(캐시 없음)");
+  // The search budget does not consume the deeplink budget.
+  const dl = JSON.stringify({ rCode: "0", data: [{ shortenUrl: "https://link.coupang.com/a/abc" }] });
+  for (let i = 0; i < 10; i++) {
+    const r = await deeplink("https://www.coupang.com/vp/products/1", opts({ globalLimited: link, fetchImpl: mockFetch(() => ok(JSON.parse(dl)), calls) }));
+    assert.ok(r.ok);
+  }
+  const dlOver = await deeplink("https://www.coupang.com/vp/products/1", opts({ globalLimited: link, fetchImpl: mockFetch(() => ok(JSON.parse(dl)), calls) }));
+  assert.equal(!dlOver.ok && dlOver.status, 429);
+  assert.equal(calls.length, 50);
 
   resetRateLimits();
   const user = () => sharedLimited(null, "coupang:user-1", COUPANG_LIMITS.userPerMinute, 60_000);

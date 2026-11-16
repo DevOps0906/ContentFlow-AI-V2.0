@@ -26,5 +26,11 @@
   { "name": "vague '받을 수도 있' fails", "title": "추천", "body": "구매 시 수수료를 제공받을 수도 있습니다.\nhttps://coupa.ng/abc", "link": true, "disclosed": false },
   { "name": "vague '받을수 있' without a space fails", "title": "추천", "body": "수수료를 받습니다. 원고료를 받을수 있음.\nhttps://coupa.ng/abc", "link": true, "disclosed": false },
   { "name": "known limit: Kelvin sign U+212A in the host is not detected", "note": "알려진 한계: 링크 아님으로 고정", "title": "T", "body": "https://lin\u212a.coupang.com/a/1", "link": false, "disclosed": false },
-  { "name": "known limit: full-width host is not detected", "note": "알려진 한계: 링크 아님으로 고정", "title": "T", "body": "https://ｃｏｕｐａ．ｎｇ/abc ｌｉｎｋ.ｃｏｕｐａｎｇ.ｃｏｍ/a", "link": false, "disclosed": false }
+  { "name": "known limit: full-width host is not detected", "note": "알려진 한계: 링크 아님으로 고정", "title": "T", "body": "https://ｃｏｕｐａ．ｎｇ/abc ｌｉｎｋ.ｃｏｕｐａｎｇ.ｃｏｍ/a", "link": false, "disclosed": false },
+  { "name": "affiliate mark: naver.me without a disclosure is blocked", "title": "T", "body": "구매 https://naver.me/abc", "link": false, "disclosed": false, "naverMe": true, "affiliate": true, "ok": false },
+  { "name": "affiliate mark: naver.me with the BC disclosure passes", "title": "T", "body": "이 글은 네이버 쇼핑 커넥트 활동으로, 구매 시 판매 수수료를 받습니다.\nhttps://naver.me/abc", "link": false, "disclosed": true, "naverMe": true, "affiliate": true, "ok": true },
+  { "name": "affiliate mark: no link at all still needs a disclosure", "title": "협찬 후기", "body": "제품을 써 봤습니다.", "link": false, "disclosed": false, "affiliate": true, "ok": false },
+  { "name": "affiliate mark: vague wording still fails", "title": "T", "body": "소정의 수수료를 제공받을 수 있습니다.\nhttps://naver.me/abc", "link": false, "disclosed": false, "naverMe": true, "affiliate": true, "ok": false },
+  { "name": "affiliate mark off: naver.me only warns", "title": "T", "body": "지도 https://naver.me/abc", "link": false, "disclosed": false, "naverMe": true, "affiliate": false, "ok": true },
+  { "name": "affiliate mark plus a Coupang link with a disclosure passes", "title": "T", "body": "쿠팡 파트너스 활동으로 수수료를 받습니다.\nhttps://coupa.ng/abc", "link": true, "disclosed": true, "affiliate": true, "ok": true }
 ]

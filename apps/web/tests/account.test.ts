@@ -89,6 +89,7 @@ test("row ↔ article mapping keeps remote info but never writes it from the bro
     title_evaluation: null,
     template_version: null,
     blog_id: null,
+    affiliate: false,
   };
   assert.deepEqual(rowToArticle(row), article);
   assert.equal(rowToArticle({ ...row, published_url: "https://blog.example/p" }).publishedUrl, "https://blog.example/p");
