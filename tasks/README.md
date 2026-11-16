@@ -28,7 +28,8 @@
 | CF-24 | 발행 큐(블로그별 동시 1건·워크스페이스 상한·백오프·Retry-After·idempotency) | 완료 | 0020·0021·rls 시험·단위 355·build. reviewer security·contract 반영. e2e `publish-queue.mjs` 17건 통과(2026-11-15: 중복·취소·WP 중단/복구 재시도·동시 전송·viewer 403·키보드·3구간 넘침 0) |
 | CF-07c | 팀 초대·역할 변경·제거(설정 화면 팀 패널), 비밀번호 재설정·이메일 확인 콜백 | 완료 | 0004 RPC·RLS, `/api/team/*`·`/api/auth/{reset,password}`·`/auth/callback`. W8 e2e(초대·수락, 재설정 메일→새 비밀번호 로그인) 통과. 초대 메일은 보내지 않음(가입·로그인 시 표시) |
 | CF-07b | 광고·분석 API 동기화(GSC → AdSense → GA4, 세션 기반) | 구현 완료(GSC·AdSense·GA4, 실 Google 미검증) | [명세](../docs/01-planning/ANALYTICS_SYNC.md). 0022~0027, OAuth·GSC·AdSense 수집·연결 패널. 단위 439, RLS ALL PASSED, 가짜 Google+브라우저 e2e 46. reviewer security·contract·code 반영. 남은 것: 실제 Google 클라이언트로 검증(사용자 발급) |
-| CF-25 | 네이버 홈판 모듈(글 목적·제목 규칙·키워드 세트·썸네일/본문 점검·지면별 성과 기록) | 기획 초안(구현 전) | [기획](../docs/01-planning/NAVER_HOMEFEED.md) r1, [규칙](../docs/04-content/NAVER_HOMEFEED_RULES.md) v0.1. 열린 질문 §8 |
+| CF-25 | 네이버 홈판 모듈(글 목적·제목 9항목·키워드 세트·썸네일/본문 점검·지면별 성과 기록, 레퍼런스 기반 AI 제목) | 구현(실 네이버·AI 키 미검증) | [기획](../docs/01-planning/NAVER_HOMEFEED.md) r3 §10·§11, `/naver-homefeed`(브라우저 저장), `/api/naver/research`·`titles`. challenger·codex·reviewer(security) 반영, 네이버 API 약관(§11.2·[검토](../docs/01-planning/NAVER_API_TERMS.md)) 반영: 블로그 결과 AI 입력 금지·단일 소유자·화면 고지. 남은 것: 실제 키 검증, DB 저장, H7~H9 |
+| CF-26 | 제휴 커머스 글(쿠팡 파트너스 API·브랜드커넥트 링크·대가 고지 게이트) | C1~C4·C6 구현(쿠팡 실호출 미검증), C5·C7 대기 | [기획](../docs/01-planning/AFFILIATE_COMMERCE.md) r4, [경쟁 조사](../docs/01-planning/AFFILIATE_RESEARCH.md). C1 고지 게이트(0028, 로컬 적용), C2·C3 편집기 쿠팡 패널(`COUPANG_ENABLED` 스위치·단일 소유자). C4 BC 링크 패널·C6 경고 3종. C5는 쿠팡 약관 확인 후 |
 | CF-08 | 브라우저/3구간 시각 검증 | 완료 | W8 e2e 67건(2026-11-12): 500/768/1000/1440px 넘침 0, 키보드·저장 실패·인증 복구·WordPress slug. 스크립트 `apps/web/tests/e2e/` |
 
 현재 작업: [NOW](NOW.md).

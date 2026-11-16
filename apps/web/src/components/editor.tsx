@@ -19,7 +19,11 @@ import {
   approvalBlockers,
   briefErrors,
   contentChanged,
+  COUPANG_DISCLOSURE,
+  disclosureErrors,
   exportHtml,
+  hasAffiliateLink,
+  hasDisclosure,
   isApprovedContent,
   isPublishedUrl,
   REVIEW_STATUSES,
@@ -49,6 +53,7 @@ import { accountDeliveryCheck, fetchStoredArticle, postJson, useIntegrations } f
 import { useBlogs } from "./blog-filter";
 import { blogOptionLabel, selectableBlogs } from "@/lib/blogs";
 import { runQa } from "@/lib/qa";
+import { brandConnectUrl, hasDisclosureAttempt, insertBrandConnectLink } from "@/lib/affiliate";
 import { kindLabels, type ReviewFinding } from "@/lib/review";
 import { runSummary, type RunInfo } from "@/lib/agent-runs";
 import { DeliveryHistory } from "./delivery-history";
@@ -479,6 +484,8 @@ function EditorForm({
     if (target) {
       if (["qa_pending", "approval_pending", "approved"].includes(target))
         issues = reviewErrors(next);
+      // Missing disclosure only blocks approval; before that the notice under the body warns.
+      if (target === "approved") issues.push(...disclosureErrors(next));
       // Same rule as applyBriefRule: without a brief the checklist fails and review is refused.
       if (target === "qa_pending") issues = [...new Set([...issues, ...briefErrors(next)])];
       if (target === "drafting" && next.status === "briefing") issues = briefErrors(next);
@@ -783,6 +790,18 @@ function EditorForm({
                 AI 초안은 참고용입니다. 사실·출처·경험은 직접 확인해야 하며,
                 자동으로 승인하거나 게시하지 않습니다.
               </small>
+              {editable && hasAffiliateLink(form) && !hasDisclosure(form) && (
+                <p role="status" className="metric-note">
+                  쿠팡 파트너스 링크가 있어요. 승인하려면 대가를 받는다는 고지 문구가 글 앞부분에 있어야 해요.{" "}
+                  <button
+                    type="button"
+                    className="button secondary small"
+                    onClick={() => update("body", `${COUPANG_DISCLOSURE}\n\n${form.body}`)}
+                  >
+                    고지 문구 넣기
+                  </button>
+                </p>
+              )}
             </div>
           )}
           <div className="field">
@@ -888,6 +907,8 @@ function EditorForm({
             </ol>
             <p className="evidence-note">필수 근거: {template.evidence}</p>
           </section>
+          {editable && <CoupangPanel form={form} onBody={(body) => update("body", body)} />}
+          {editable && <BrandConnectPanel form={form} onBody={(body) => update("body", body)} />}
           <section className="panel lifecycle-panel">
             <h2>진행 상태</h2>
             <div className="lifecycle-current">
@@ -1173,5 +1194,210 @@ function EditorForm({
         />
       )}
     </>
+  );
+}
+
+type CoupangProduct = { name: string; price: number | null; rocket: boolean; url: string };
+/** C2·C3 (AFFILIATE_COMMERCE.md §4.2): search or convert, then append a [name](link) line to the body. */
+function CoupangPanel({ form, onBody }: { form: Article; onBody: (body: string) => void }) {
+  const [status, setStatus] = useState<{ state: string; message: string } | null>(null);
+  const [keyword, setKeyword] = useState("");
+  const [url, setUrl] = useState("");
+  const [items, setItems] = useState<CoupangProduct[] | null>(null);
+  const [converted, setConverted] = useState("");
+  const [busy, setBusy] = useState<"search" | "link" | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/coupang/status", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((j) => !cancelled && setStatus(typeof j?.state === "string" ? j : { state: "error", message: j?.error ?? "" }))
+      .catch(() => !cancelled && setStatus({ state: "error", message: "연결 상태를 확인하지 못했습니다." }));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const ready = status?.state === "ready";
+  async function search(e: { preventDefault(): void }) {
+    e.preventDefault();
+    if (!ready || busy || !keyword.trim()) return;
+    setBusy("search");
+    setError("");
+    try {
+      setItems((await postJson<{ items: CoupangProduct[] }>("/api/coupang/search", { keyword })).items);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "검색하지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function convert(e: { preventDefault(): void }) {
+    e.preventDefault();
+    if (!ready || busy || !url.trim()) return;
+    setBusy("link");
+    setError("");
+    setConverted("");
+    try {
+      setConverted((await postJson<{ link: string }>("/api/coupang/deeplink", { url })).link);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "링크를 변환하지 못했습니다.");
+    } finally {
+      setBusy(null);
+    }
+  }
+  const insert = (name: string, link: string) =>
+    onBody(`${form.body.trimEnd()}\n\n[${name.replace(/[[\]\\]/g, "")}](${link})\n`);
+  return (
+    <section className="panel cp-panel" aria-labelledby="cp-title">
+      <h2 id="cp-title">쿠팡 상품</h2>
+      {!status ? (
+        <p className="metric-note">연결 상태를 확인하는 중…</p>
+      ) : (
+        !ready && (
+          <p role="status" className="metric-note">
+            {status.message || "사용할 수 없습니다."}
+          </p>
+        )
+      )}
+      <form className="cp-row" onSubmit={search}>
+        <label className="sr-only" htmlFor="cp-keyword">
+          상품 검색어
+        </label>
+        <input
+          id="cp-keyword"
+          value={keyword}
+          maxLength={50}
+          placeholder="상품 검색어"
+          disabled={!ready}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
+        <button type="submit" className="button secondary small" disabled={!ready || !!busy || !keyword.trim()}>
+          {busy === "search" ? "검색 중…" : "검색"}
+        </button>
+      </form>
+      <form className="cp-row" onSubmit={convert}>
+        <label className="sr-only" htmlFor="cp-url">
+          쿠팡 상품 URL
+        </label>
+        <input
+          id="cp-url"
+          type="url"
+          value={url}
+          placeholder="https://www.coupang.com/vp/products/…"
+          disabled={!ready}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button type="submit" className="button secondary small" disabled={!ready || !!busy || !url.trim()}>
+          {busy === "link" ? "변환 중…" : "URL 변환"}
+        </button>
+      </form>
+      {error && (
+        <p role="alert" className="cp-error">
+          {error}
+        </p>
+      )}
+      {converted && (
+        <div className="cp-item">
+          <span className="cp-name">{converted}</span>
+          <button type="button" className="button secondary small" onClick={() => insert("쿠팡 상품", converted)}>
+            링크 넣기
+          </button>
+        </div>
+      )}
+      {items && items.length === 0 && <p className="metric-note">검색 결과가 없습니다.</p>}
+      {items && items.length > 0 && (
+        <ul className="cp-list" aria-live="polite">
+          {items.map((p) => (
+            <li key={p.url} className="cp-item">
+              <span className="cp-name">{p.name}</span>
+              <small>
+                {p.price === null ? "가격 N/A" : `${p.price.toLocaleString("ko-KR")}원`} (조회 시점 기준)
+                {p.rocket && <b className="cp-rocket">로켓배송</b>}
+              </small>
+              <button type="button" className="button secondary small" onClick={() => insert(p.name, p.url)}>
+                링크 넣기
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasAffiliateLink(form) && !hasDisclosure(form) && (
+        <p role="status" className="metric-note">
+          승인하려면 대가를 받는다는 고지 문구가 글 앞부분에 있어야 해요.{" "}
+          <button
+            type="button"
+            className="button secondary small"
+            onClick={() => onBody(`${COUPANG_DISCLOSURE}\n\n${form.body}`)}
+          >
+            고지 문구 넣기
+          </button>
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** C4 (AFFILIATE_COMMERCE.md §4.3): a link the author issued in Brand Connect. No external call, never "connected". */
+function BrandConnectPanel({ form, onBody }: { form: Article; onBody: (body: string) => void }) {
+  const [link, setLink] = useState("");
+  const [name, setName] = useState("");
+  const [share, setShare] = useState("");
+  const [error, setError] = useState("");
+  const [added, setAdded] = useState("");
+  const ready = !!link.trim() && !!name.replace(/[[\]\\]/g, "").trim();
+  function insert(e: { preventDefault(): void }) {
+    e.preventDefault();
+    if (!ready) return;
+    const url = brandConnectUrl(link);
+    if (!url) {
+      setError("https로 시작하는 네이버 브랜드커넥트 링크(naver.me, brandconnect.naver.com 등)만 넣을 수 있어요.");
+      return;
+    }
+    setError("");
+    onBody(insertBrandConnectLink(form, name, url));
+    setAdded(share.trim() ? `${name.trim()} · 수익분배율 ${share.trim()}` : name.trim());
+    setLink("");
+    setName("");
+    setShare("");
+  }
+  return (
+    <section className="panel bc-panel" aria-labelledby="bc-title">
+      <h2 id="bc-title">브랜드커넥트 링크</h2>
+      <p className="metric-note">브랜드커넥트에서 직접 발급한 링크를 넣어요. 고지 문구가 없으면 본문 맨 앞에 함께 넣어요.</p>
+      <form className="bc-form" onSubmit={insert}>
+        <label htmlFor="bc-link">발급 링크</label>
+        <input
+          id="bc-link"
+          type="url"
+          value={link}
+          placeholder="https://naver.me/…"
+          aria-invalid={!!error}
+          aria-describedby={error ? "bc-error" : undefined}
+          onChange={(e) => setLink(e.target.value)}
+        />
+        <label htmlFor="bc-name">상품명</label>
+        <input id="bc-name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        <label htmlFor="bc-share">수익분배율 (선택, 메모)</label>
+        <input id="bc-share" value={share} maxLength={20} placeholder="예: 3%" onChange={(e) => setShare(e.target.value)} />
+        <button type="submit" className="button secondary small" disabled={!ready}>
+          링크 넣기
+        </button>
+      </form>
+      {error && (
+        <p id="bc-error" role="alert" className="bc-error">
+          {error}
+        </p>
+      )}
+      {added && (
+        <p role="status" className="metric-note">
+          넣은 링크: {added}
+        </p>
+      )}
+      {hasDisclosureAttempt(form) && !hasDisclosure(form) && (
+        <p role="status" className="bc-error">
+          기존 고지 문구가 모호합니다 — 확인하세요. 대가를 받는다는 사실을 분명히 적어야 해요.
+        </p>
+      )}
+    </section>
   );
 }

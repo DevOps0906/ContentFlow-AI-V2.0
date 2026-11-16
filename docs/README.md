@@ -7,6 +7,7 @@
 | 01-planning | 제품 전략 및 PRD | PRD.md |
 | 01-planning | 분석·수익화·템플릿·파일럿 실행안 | [MONETIZATION_STRATEGY.md](01-planning/MONETIZATION_STRATEGY.md) |
 | 01-planning | 네이버 홈판 모듈 기획(초안 r1, CF-25 제안) | [NAVER_HOMEFEED.md](01-planning/NAVER_HOMEFEED.md) |
+| 01-planning | 제휴 커머스 글 모듈(브랜드커넥트·쿠팡 파트너스, 초안 r1, CF-26 제안) · 경쟁 조사 | [AFFILIATE_COMMERCE.md](01-planning/AFFILIATE_COMMERCE.md) · [AFFILIATE_RESEARCH.md](01-planning/AFFILIATE_RESEARCH.md) |
 | 02-architecture | 서비스 아키텍처 | SYSTEM_ARCHITECTURE.md |
 | 03-database | Supabase 데이터 모델 | DATABASE_SCHEMA.md |
 | 04-content | 플랫폼별 글쓰기 템플릿 | CONTENT_TEMPLATES.md |

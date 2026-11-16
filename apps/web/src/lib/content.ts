@@ -197,6 +197,8 @@ export function applyReviewRule(next: Article, previous?: Article): Article {
   const result = contentChanged(next, previous) ? withoutReview(next) : next;
   if (next.status === "approved" && previous.status !== "approved") {
     const errors = [...approvalBlockers(result), ...reviewErrors(result)];
+    // Same condition as migration 0028: an article already past approval is not checked again.
+    if (!requiresApproval.includes(previous.status)) errors.push(...disclosureErrors(result));
     if (errors.length) throw new Error(errors[0]);
   }
   return result;
@@ -288,6 +290,41 @@ export function reviewErrors(article: Article): string[] {
     errors.push("근거 자료의 http/https URL을 입력해주세요.");
   }
   return errors;
+}
+// Affiliate disclosure (AFFILIATE_COMMERCE.md §4.1). The same patterns are in migration 0028;
+// tests/affiliate-disclosure.test.ts and supabase/tests run one shared fixture through both.
+// Checked on entering approval only (r4), never in reviewErrors: delivery and export of articles approved
+// earlier do not change. A guardrail that a disclosure phrase is present; it does not judge the meaning.
+export const AFFILIATE_HOST = /(^|[^a-z0-9-])(coupa\.ng|link\.coupang\.com)($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
+export const NAVER_SHORT_HOST = /(^|[^a-z0-9-])naver\.me($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
+const DISCLOSURE_WINDOW = 300;
+export const COUPANG_DISCLOSURE =
+  "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.";
+/** Title, newline and body (CRLF→LF, lines starting with `#` dropped), cut to 300 code points. */
+export function disclosureWindow(article: Pick<Article, "title" | "body">): string {
+  const body = article.body
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => !line.startsWith("#"))
+    .join("\n");
+  return Array.from(`${article.title}\n${body}`).slice(0, DISCLOSURE_WINDOW).join("");
+}
+export function hasAffiliateLink(article: Pick<Article, "title" | "body">): boolean {
+  return AFFILIATE_HOST.test(`${article.title}\n${article.body}`);
+}
+export function hasNaverShortLink(article: Pick<Article, "title" | "body">): boolean {
+  return NAVER_SHORT_HOST.test(`${article.title}\n${article.body}`);
+}
+/** Vague or negated wording (`받을 ?수`, `받지 않`) fails first, even next to a valid phrase. */
+export function hasDisclosure(article: Pick<Article, "title" | "body">): boolean {
+  const text = disclosureWindow(article);
+  return /수수료|대가|원고료/.test(text) && /제공받|지급받|받습니다|받았/.test(text) && !/받을 ?수|받지 않/.test(text);
+}
+/** Checked only when entering approval, never on delivery or export. */
+export function disclosureErrors(article: Pick<Article, "title" | "body">): string[] {
+  return hasAffiliateLink(article) && !hasDisclosure(article)
+    ? ["제휴 링크가 있어요. 대가를 받는다는 고지 문구를 글 앞부분(제목 포함 300자 안)에 넣어주세요."]
+    : [];
 }
 /** Anything that is part of the approved output, including how it is displayed. */
 export function contentChanged(a: Article, b: Article) {

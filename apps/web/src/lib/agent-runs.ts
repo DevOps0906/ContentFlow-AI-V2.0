@@ -72,6 +72,36 @@ async function saveRun(log: RunLog, task: RunTask, run: RunInfo) {
   }
 }
 
+/** Reads at most `max` bytes of the body; null (and the rest cancelled) when it is larger. */
+export async function readCapped(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 /** Calls the chat completion endpoint and records the outcome exactly once, whatever it was. */
 export async function runModel<T>(opts: {
   config: AiConfig;
@@ -82,6 +112,10 @@ export async function runModel<T>(opts: {
   maxTokens: number;
   parse: (json: unknown) => T;
   log: RunLog;
+  /** Defaults: 60 seconds, no size limit (the previous behaviour). */
+  timeoutMs?: number;
+  /** An answer larger than this is a failure (reason "error") without being parsed. */
+  maxBytes?: number;
 }): Promise<{ ok: true; value: T; run: RunInfo } | RunFailure> {
   const { config } = opts;
   const started = Date.now();
@@ -97,12 +131,18 @@ export async function runModel<T>(opts: {
         temperature: opts.temperature,
         max_tokens: opts.maxTokens,
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
     });
     if (!res.ok) {
       result = { ok: false, reason: "http", httpStatus: res.status };
     } else {
-      const data: unknown = await res.json();
+      let data: unknown;
+      if (opts.maxBytes === undefined) data = await res.json();
+      else {
+        const text = await readCapped(res, opts.maxBytes);
+        if (text === null) throw new Error("AI 응답이 너무 큽니다.");
+        data = JSON.parse(text);
+      }
       // Read before parsing: an unusable answer still spent these tokens.
       usage = parseUsage(data);
       result = { ok: true, value: opts.parse(data) };

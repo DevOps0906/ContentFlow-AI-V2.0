@@ -23,10 +23,14 @@
 
 ## 진행 현황 (2026-11-16 기준)
 
-**2026-11-16 추가:** 마이그레이션 0022~0027 로컬 적용.
+**2026-11-16 추가:** 마이그레이션 0022~0027 로컬 적용. 이후 네이버 홈판·제휴 고지(0028, 로컬 Supabase 적용 완료).
 
 | 묶음 | 내용 | 제한 |
 |---|---|---|
+| 네이버 홈판 (CF-25) | 메뉴 "네이버 홈판" `/naver-homefeed`: 글 목적(발견/문제해결/전환), 키워드 세트, 제목 9항목 점검, 썸네일·본문 점검, 지면별 성과 기록(목표 5:3:2), 레퍼런스 분석(네이버 검색결과 10건은 표시만, 검색광고 연관 키워드)→AI 제목 5개(입력: 키워드 세트+연관 키워드만), 화면 내 네이버 API 약관 고지 | 브라우저에만 저장. [약관 검토](docs/01-planning/NAVER_API_TERMS.md)에 따라 블로그 결과는 AI 입력 금지·단일 소유자(`NAVER_OWNER_WORKSPACE_ID` 또는 로컬) 전용. 검색 API 신규 신청 중단(2026-07-30) — 기존 키 필요. 실 키 미검증 |
+| 브랜드커넥트 링크·제휴 저품질 경고 (CF-26 C4·C6) | 편집기 "브랜드커넥트 링크": 직접 발급한 링크(naver.me·brandconnect·shoppingconnect)+상품명 → 본문 끝에 링크, 고지가 없으면 맨 앞에 고지 문구. QA 경고: 제휴 링크 4개 이상, 도입부 300자 안 제휴 링크, 다른 제휴 글과 소제목 구성 동일 | BC 링크는 승인 차단 대상 아님(경고만, 글 단위 제휴 표시는 후속). 외부 호출 없음 |
+| 쿠팡 상품 패널 (CF-26 C2·C3) | 편집기 "쿠팡 상품": 상품 검색·URL→제휴 링크 변환·"링크 넣기", 고지 안내 연결 | `COUPANG_ACCESS_KEY/SECRET_KEY`·`COUPANG_ENABLED=1`·`COUPANG_OWNER_WORKSPACE_ID` 필요, 전역 시간당 10회. API 경로·응답 형식은 2차 자료 기준 — 첫 키 투입 후 실호출 확인 필요 |
+| 제휴 대가 고지 (CF-26 C1, 0028) | 쿠팡 제휴 링크(coupa.ng·link.coupang.com) 글은 승인 시 제목·본문 앞 300자에 대가 고지 필수(모호·부정 표현 불합격), 편집기 "고지 문구 넣기", naver.me는 경고 | 고지 문구 존재만 확인. 기존 승인 글 재검사 안 함 |
 | 광고·분석 API 동기화 (CF-07b, 0022~0027) | 설정 → 일반 "광고·분석 연결": Google OAuth(쿠키 state·PKCE·사용자/권한 재확인)로 Search Console·AdSense·GA4 연결, 토큰 AES-256-GCM 암호문만 DB 저장, 세션 기반 동기화(지금 동기화·화면 열림 시 24시간 경과 자동, 15분 쿨다운, 최초 90일·재조회 3일), API 행은 `gsc-api`·`adsense-api` 출처로 CSV와 합산하지 않음, AdSense는 예상 수익만·통화/시간대 필수·글별 불가 시 사이트 단위, 해제 시 데이터 유지 또는 삭제 선택 | `GOOGLE_OAUTH_CLIENT_ID/SECRET`·`ANALYTICS_TOKEN_KEYS` 미설정 시 "연결 안 됨". 가짜 Google 서버 e2e 46건만 — 실제 Google 계정 미검증. Testing 상태는 7일마다 재연결. GA4 다중 호스트 속성·무인 예약 동기화 후속 |
 | 발행 큐 e2e (CF-24) | `publish-queue.mjs` 17건 통과(중복·취소·WP 중단/복구 재시도·동시·viewer 403·3구간) | — |
 
@@ -195,7 +199,7 @@ AI 초안과 WordPress 전송은 승인을 대신하지 않는다. AI 초안의 
 | 모바일 앱 다운로드 | `/` 대시보드 카드 | [모바일 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) | [mobile-app-card](apps/web/src/components/mobile-app-card.tsx) |
 | 모바일 앱 (Android) | 앱: 로그인·글 목록·상세·승인 대기 | [Capacitor 계획](tasks/PLAN_CAPACITOR_W0.md) | [apps/mobile](apps/mobile/README.md) · [shell-bridge](packages/shell-bridge/src/index.ts) |
 
-[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [발행 큐 명세](docs/06-workflows/PUBLISH_QUEUE.md) · [광고·분석 API 동기화 명세](docs/01-planning/ANALYTICS_SYNC.md) · [네이버 홈판 모듈 기획(초안)](docs/01-planning/NAVER_HOMEFEED.md) · [네이버 홈판 포스팅 규칙](docs/04-content/NAVER_HOMEFEED_RULES.md) · [실결제 명세(보류)](docs/01-planning/PAYMENTS.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
+[전체 문서](docs/README.md) · [다수 블로그·추가 요금 기획](docs/01-planning/MULTI_BLOG_BILLING.md) · [발행 큐 명세](docs/06-workflows/PUBLISH_QUEUE.md) · [광고·분석 API 동기화 명세](docs/01-planning/ANALYTICS_SYNC.md) · [네이버 홈판 모듈 기획(초안)](docs/01-planning/NAVER_HOMEFEED.md) · [네이버 홈판 포스팅 규칙](docs/04-content/NAVER_HOMEFEED_RULES.md) · [제휴 커머스 기획(초안)](docs/01-planning/AFFILIATE_COMMERCE.md) · [실결제 명세(보류)](docs/01-planning/PAYMENTS.md) · [Supabase 환경](docs/08-ops/SUPABASE_ENVIRONMENTS.md) · [로컬 Supabase 사용자 가이드](docs/08-ops/LOCAL_SUPABASE_GUIDE.md) · [모바일 앱 배포](docs/08-ops/MOBILE_APP_DISTRIBUTION.md) · [데스크톱 앱](docs/08-ops/DESKTOP_APP.md) · [오버레이 UX](docs/07-design/OVERLAY_UX.md) · [디자인 시안](docs/07-design/DESIGN_SPEC.md) · [개발 단계·완성도](docs/07-design/IMPLEMENTATION_STATUS.md) · [디자인 요약](DESIGN.md) · [구현 현황](tasks/NOW.md)
 
 ## 연관·참고 저장소
 

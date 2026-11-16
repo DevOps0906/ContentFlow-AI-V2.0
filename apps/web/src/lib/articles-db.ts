@@ -1,6 +1,6 @@
 // Mapping between the app's Article and the `articles` table (migration 0002).
 import { ARCHIVED_BLOG_MESSAGE } from "./blogs-db";
-import { isArticle, isReviewStatus, reviewErrors, type Article, type ReviewStatus } from "./content";
+import { disclosureErrors, isArticle, isReviewStatus, reviewErrors, type Article, type ReviewStatus } from "./content";
 import type { LifecycleState } from "./lifecycle";
 import { afterEdit } from "./lifecycle";
 import { DEFAULT_AD, DEFAULT_LAYOUT, RENDERER_VERSION, type AdProfile, type LayoutProfile } from "./render";
@@ -108,7 +108,9 @@ export function approvalFields(requested: LifecycleState, stored: LifecycleState
 /** States the editor only enters after reviewErrors passes; the API refuses entering them otherwise. */
 const REVIEWED_STATES: LifecycleState[] = ["qa_pending", "approval_pending", "approved"];
 export function approvalRejection(article: Article, stored: LifecycleState | undefined): string | undefined {
-  return REVIEWED_STATES.includes(article.status) && stored !== article.status ? reviewErrors(article)[0] : undefined;
+  if (!REVIEWED_STATES.includes(article.status) || stored === article.status) return undefined;
+  // Disclosure: approved entry only, same as migration 0028 (a presence guardrail, AFFILIATE_COMMERCE.md §4.1 r4).
+  return [...reviewErrors(article), ...(article.status === "approved" ? disclosureErrors(article) : [])][0];
 }
 
 /**
