@@ -39,6 +39,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0025_synced_storage_contract.sql
 \ir ../migrations/0026_replace_synced_range.sql
 \ir ../migrations/0027_credential_store_by_id.sql
+\ir ../migrations/0028_affiliate_disclosure_gate.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -2246,6 +2247,51 @@ select expect_count($$select disconnect_connection(an_conn('a1'), true)$$, 1, 'd
 select expect_count($$select count(*) from analytics_connections where id = an_conn('a1')$$, 0, 'disconnect: purge deletes the connection');
 select expect_count($$select count(*) from blog_metric_snapshots where tool = 'gsc-api'$$, 0, 'disconnect: purge deletes its synced rows');
 select expect_count($$select count(*) from blog_metric_snapshots where tool = 'bseupi' and connection_id is null and metric = 'idx'$$, 1, 'disconnect: hand rows survive');
+reset role;
+
+-- ---- affiliate disclosure (0028) ----
+-- The same fixture runs in apps/web/tests/affiliate-disclosure.test.ts against content.ts.
+create function check_disclosure_fixtures(fx jsonb) returns void language plpgsql as $$
+declare
+  f jsonb;
+  b text;
+begin
+  for f in select * from jsonb_array_elements(fx) loop
+    b := coalesce(repeat(f->'prefix'->>'text', (f->'prefix'->>'times')::int), '') || (f->>'body');
+    if affiliate_link_present(f->>'title', b) <> (f->>'link')::boolean then
+      raise exception 'FAIL: disclosure fixture "%" (link)', f->>'name';
+    end if;
+    if affiliate_disclosure_present(f->>'title', b) <> (f->>'disclosed')::boolean then
+      raise exception 'FAIL: disclosure fixture "%" (disclosure)', f->>'name';
+    end if;
+  end loop;
+  raise notice 'PASS: % disclosure fixtures give the same result as content.ts', jsonb_array_length(fx);
+end $$;
+\set disclosure_fixtures `cat disclosure-fixtures.json`
+select check_disclosure_fixtures(:'disclosure_fixtures'::jsonb);
+
+select as_user('00000000-0000-0000-0000-0000000000a1');
+insert into articles (id, workspace_id, owner_id, state, title, body, source_url) values
+  ('30000000-0000-0000-0000-0000000002c1', '10000000-0000-0000-0000-00000000000a',
+   '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T', E'## 추천\n구매 https://link.coupang.com/a/1', 'https://example.com/x'),
+  ('30000000-0000-0000-0000-0000000002c2', '10000000-0000-0000-0000-00000000000a',
+   '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T', E'## 추천\n구매 https://coupa.ng/b', 'https://example.com/x');
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002c1';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002c1' and state = 'approval_pending'$$, 1, 'disclosure: waiting for approval is not blocked (only approval is)');
+select expect_error($$update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002c1'$$, 'payment disclosure', 'disclosure: an affiliate link without a disclosure can not be approved');
+update articles set body = E'## 추천\n구매 https://link.coupang.com/a/1\n수수료를 받을 수 있습니다.', state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002c1';
+select expect_error($$update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002c1'$$, 'payment disclosure', 'disclosure: vague wording does not count');
+update articles set body = E'이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.\n## 추천\n구매 https://link.coupang.com/a/1', state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002c1';
+update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002c1';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002c1' and state = 'approved'$$, 1, 'disclosure: with the disclosure near the top the article is approved');
+-- An article published before 0028 without a disclosure keeps moving after publication.
+reset role;
+alter table articles disable trigger articles_rules;
+update articles set state = 'published', published_url = 'https://blog.example/aff' where id = '30000000-0000-0000-0000-0000000002c2';
+alter table articles enable trigger articles_rules;
+select as_user('00000000-0000-0000-0000-0000000000a1');
+update articles set state = 'monitoring' where id = '30000000-0000-0000-0000-0000000002c2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002c2' and state = 'monitoring'$$, 1, 'disclosure: an existing published affiliate article still moves to monitoring');
 reset role;
 
 select 'ALL RLS CHECKS PASSED' as result;

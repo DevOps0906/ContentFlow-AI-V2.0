@@ -1,7 +1,7 @@
 // Rule-based QA. `blockers` are exactly the review rules the database also enforces
 // (reviewErrors); `warnings` are advisory checks that a person must weigh but that never
 // block, because they are heuristics and not proof of a problem. This is not a fact check.
-import { reviewErrors, type Article } from "./content";
+import { hasDisclosure, hasNaverShortLink, reviewErrors, type Article } from "./content";
 import { normalizePhrase } from "./keywords";
 
 export type QaFinding = { code: string; message: string };
@@ -64,6 +64,9 @@ export function runQa(article: Article, others: Article[] = []): QaReport {
     (o) => o.id !== article.id && kw && normalizePhrase(o.keyword) === normalizePhrase(kw) && o.status !== "idea",
   );
   if (sameKw.length) add("keyword-overlap", `같은 키워드로 작성된 글이 ${sameKw.length}개 더 있습니다. 서로 검색 의도가 겹치지 않는지 확인하세요.`);
+  // naver.me can not be told apart from map or cafe shares, so it only warns (AFFILIATE_COMMERCE.md §4.1).
+  if (hasNaverShortLink(article) && !hasDisclosure(article))
+    add("naver-me-disclosure", "naver.me 링크가 있습니다. 브랜드커넥트 링크라면 대가를 받는다는 고지 문구가 글 앞부분에 필요합니다.");
 
-  return { blockers: reviewErrors(article), warnings, checked: 8 };
+  return { blockers: reviewErrors(article), warnings, checked: 9 };
 }

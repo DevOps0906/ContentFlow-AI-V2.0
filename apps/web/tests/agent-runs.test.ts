@@ -189,3 +189,58 @@ test("the summary shows N/A for unknown values and labels figures as a reference
   const known = runSummary({ ...run, tokensIn: 1000, tokensOut: 5, costEstimate: 0.0000015, costCurrency: "USD" });
   assert.ok(known.includes("입력 1,000 / 출력 5") && known.includes("0.0000015 USD"));
 });
+
+test("maxBytes: a larger answer fails without parsing and keeps the default otherwise", async () => {
+  respond({ choices: [{ message: { content: "x".repeat(2000) } }], ...usage });
+  const { rows, log } = storage();
+  const result = await runModel({
+    config,
+    task: "draft",
+    promptVersion: "naver-title-v1",
+    messages: [{ role: "user", content: "p" }],
+    temperature: 0,
+    maxTokens: 10,
+    parse,
+    log,
+    maxBytes: 1000,
+  });
+  assert.ok(!result.ok && result.reason === "error");
+  assert.equal(rows[0].status, "failed");
+  const small = await runModel({
+    config,
+    task: "draft",
+    promptVersion: "naver-title-v1",
+    messages: [{ role: "user", content: "p" }],
+    temperature: 0,
+    maxTokens: 10,
+    parse,
+    log,
+    maxBytes: 10_000,
+  });
+  assert.equal(small.ok && small.value.length, 2000);
+});
+
+test("timeoutMs is passed to the request signal", async () => {
+  let signal: AbortSignal | null | undefined;
+  mock.method(globalThis, "fetch", async (_url: string, init?: RequestInit) => {
+    signal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    });
+  });
+  const { rows, log } = storage();
+  const result = await runModel({
+    config,
+    task: "draft",
+    promptVersion: "naver-title-v1",
+    messages: [{ role: "user", content: "p" }],
+    temperature: 0,
+    maxTokens: 10,
+    parse,
+    log,
+    timeoutMs: 20,
+  });
+  assert.ok(signal);
+  assert.deepEqual(result, { ok: false, reason: "timeout" });
+  assert.equal(rows[0].status, "timeout");
+});

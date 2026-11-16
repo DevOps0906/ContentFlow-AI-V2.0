@@ -12,6 +12,8 @@
 | 3. Publisher | WordPress 초안, 수동 패키지, URL 확인 | 부분 | WordPress 초안 전송 구현(실 컨테이너 검증), HTML export. 티스토리/Blogger/네이버 패키지·공개 URL 확인 자동화 없음 |
 | 4. Analytics | 보고서 CSV·원가·개선 큐 | 미착수 | 화면은 N/A 안내만 |
 | 5. Pilot → SaaS | 3~5명 파일럿, 결제 | 미착수 | — |
+| 2b. 네이버 홈판 모듈 (CF-25) | 글 목적·제목 9항목·키워드 세트·썸네일/본문 점검·지면별 성과 기록 (H1~H6) | 구현(실키 미검증) | [기획 §10·§11](../01-planning/NAVER_HOMEFEED.md). `/naver-homefeed` 화면·브라우저 저장, 레퍼런스 분석(네이버 검색·검색광고 API)·AI 제목 5개. DB 저장·H7~H9는 후속 |
+| 2c. 제휴 커머스 (CF-26) | 대가 고지 승인 차단(C1), 쿠팡 API·BC 링크·추천 초안(C2~C7) | C1 구현 | [기획](../01-planning/AFFILIATE_COMMERCE.md). 마이그레이션 0028 |
 
 ## 2. 기능별 구현 수준
 
