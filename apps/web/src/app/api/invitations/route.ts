@@ -16,7 +16,7 @@ export async function GET(req: Request) {
       id: r.id,
       workspaceName: r.organization_name,
       role: r.role,
-      // Core does not return the inviter's email.
+      // nomad_my_invitations returns no inviter (id or email): the screen omits the "invited by" part.
       invitedBy: "",
       createdAt: r.created_at,
     })),

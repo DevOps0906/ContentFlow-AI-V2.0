@@ -196,7 +196,7 @@ const ok = (c, m) => {
   if (!c) throw new Error(m);
 };
 function sql(q) {
-  return execFileSync("docker", ["exec", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" }).trim();
+  return execFileSync("docker", ["exec", "-e", "PGOPTIONS=-c search_path=nomad_contentflow,nomad_core,public", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" }).trim();
 }
 class Client {
   constructor() {
@@ -282,7 +282,7 @@ async function signup(c, email) {
   ok(s.data?.user?.role === "owner", `session ${JSON.stringify(s.data).slice(0, 200)}`);
 }
 const userId = (email) => sql(`select id from auth.users where email = '${email}'`);
-const ownerWs = (email) => sql(`select m.workspace_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${email}' and m.role = 'owner' limit 1`);
+const ownerWs = (email) => sql(`select m.organization_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${email}' and m.role = 'owner' limit 1`);
 
 const emailA = `ga-${stamp}@example.test`; // owner
 const emailB = `gb-${stamp}@example.test`; // attacker (own workspace)
@@ -354,11 +354,11 @@ try {
     ctx.uA = userId(emailA);
     ctx.uB = userId(emailB);
     ctx.uE = userId(emailE);
-    sql(`insert into memberships (workspace_id, user_id, role) values ('${ctx.wsA}', '${ctx.uE}', 'editor')`);
+    sql(`insert into memberships (organization_id, user_id, role) values ('${ctx.wsA}', '${ctx.uE}', 'editor')`);
     const sw = await E.api("POST", "/api/workspaces/active", { id: ctx.wsA });
     ok(sw.status === 200, `switch ${sw.status} ${JSON.stringify(sw.data)}`);
-    ctx.blog1 = sql(`insert into blogs (workspace_id, platform, domain) values ('${ctx.wsA}', 'wordpress', 'one.example.com') returning id`).split("\n")[0];
-    ctx.blog2 = sql(`insert into blogs (workspace_id, platform, domain) values ('${ctx.wsA}', 'wordpress', 'two.example.com') returning id`).split("\n")[0];
+    ctx.blog1 = sql(`insert into blogs (organization_id, platform, domain) values ('${ctx.wsA}', 'wordpress', 'one.example.com') returning id`).split("\n")[0];
+    ctx.blog2 = sql(`insert into blogs (organization_id, platform, domain) values ('${ctx.wsA}', 'wordpress', 'two.example.com') returning id`).split("\n")[0];
     ok(ctx.blog1 && ctx.blog2, "블로그 생성 실패");
   });
 
@@ -407,7 +407,7 @@ try {
   });
 
   await step("공격자 콜백 주입 거부: 쿠키 없음 / state 불일치 / 사용자 불일치, 코드 교환·저장 없음", async () => {
-    const credsBefore = sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`);
+    const credsBefore = sql(`select count(*) from analytics_credentials where organization_id = '${ctx.wsA}'`);
     const hitsBefore = g.tokenHits;
     // B starts a flow in B's own workspace and gets B's cookie + state + a code for B's Google account.
     const bs = await B.api("POST", "/api/integrations/google/start", {});
@@ -429,7 +429,7 @@ try {
     ok(reason(r.location) === "user_mismatch", `3: ${r.location}`);
     ok(g.tokenHits === hitsBefore, "공격 코드가 교환됨");
     ok(g.codes.has(evil.code), "공격 코드가 소비됨");
-    ok(sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`) === credsBefore, "A 워크스페이스에 grant가 생김");
+    ok(sql(`select count(*) from analytics_credentials where organization_id = '${ctx.wsA}'`) === credsBefore, "A 워크스페이스에 grant가 생김");
     ok(sql(`select count(*) from analytics_credentials where google_sub = 'sub-attacker'`) === "0", "공격자 grant 저장됨");
   });
 
@@ -444,11 +444,11 @@ try {
   });
 
   await step("콜백 시점 재확인: 시작 후 owner/admin 아니게 되면 거부(forbidden)", async () => {
-    sql(`update memberships set role = 'admin' where workspace_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
+    sql(`update memberships set role = 'admin' where organization_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
     const s = await E.api("POST", "/api/integrations/google/start", {});
     ok(s.status === 200, `admin start ${s.status}`);
     const { code, state } = consent(s.data.url, "sub-E", "e@google.test");
-    sql(`update memberships set role = 'editor' where workspace_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
+    sql(`update memberships set role = 'editor' where organization_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
     const hitsBefore = g.tokenHits;
     const r = await E.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
     ok(reason(r.location) === "forbidden", r.location);
@@ -456,7 +456,7 @@ try {
   });
 
   await step("강등된 admin의 grant: 속성 목록은 거부(409), 현재 admin(A)의 revoke·삭제는 성공, editor는 거부", async () => {
-    sql(`update memberships set role = 'admin' where workspace_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
+    sql(`update memberships set role = 'admin' where organization_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
     const s = await E.api("POST", "/api/integrations/google/start", {});
     const { code, state } = consent(s.data.url, "sub-E2", "e2@google.test");
     const cb = await E.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
@@ -464,7 +464,7 @@ try {
     ok(gE, `E 연결 실패 ${cb.location}`);
     const live = await E.api("GET", `/api/integrations/google/sites?grant=${gE}`);
     ok(live.status === 200, `admin sites ${live.status}`);
-    sql(`update memberships set role = 'editor' where workspace_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
+    sql(`update memberships set role = 'editor' where organization_id = '${ctx.wsA}' and user_id = '${ctx.uE}'`);
     const r = await A.api("GET", `/api/integrations/google/sites?grant=${gE}`);
     ok(r.status === 409 && r.data.code === "grant_owner_inactive", `sites ${r.status} ${JSON.stringify(r.data)}`);
     const ed = await E.api("POST", `/api/integrations/google/grants/${gE}/revoke`);
@@ -596,14 +596,14 @@ try {
   });
 
   await step("AdSense 동의 거부: 허용된 scope에 adsense.readonly가 없으면 scope_missing, grant 저장 안 됨", async () => {
-    const before = sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`);
+    const before = sql(`select count(*) from analytics_credentials where organization_id = '${ctx.wsA}'`);
     const s = await A.api("POST", "/api/integrations/google/start", { provider: "adsense" });
     const { code, state } = consent(s.data.url, "sub-AS-denied", "asd@google.test");
     g.grantScope = `openid email ${GSC}`;
     const cb = await A.api("GET", `/api/integrations/google/callback?code=${code}&state=${state}`);
     g.grantScope = null;
     ok(reason(cb.location) === "scope_missing", cb.location);
-    ok(sql(`select count(*) from analytics_credentials where workspace_id = '${ctx.wsA}'`) === before, "grant가 저장됨");
+    ok(sql(`select count(*) from analytics_credentials where organization_id = '${ctx.wsA}'`) === before, "grant가 저장됨");
   });
 
   await step("AdSense 계정 목록·연결: editor 거부, 허용 밖 계정 400, 연결 201(blog 없음), 두 번째 계정은 409, 타 워크스페이스는 grant를 못 읽음", async () => {
@@ -690,7 +690,7 @@ try {
     const r = await A.api("POST", `/api/analytics/connections/${ctx.ads}/sync`);
     ok(r.status === 200 && r.data.pageLevel === true, `sync ${r.status} ${JSON.stringify(r.data)}`);
     ok(sql(`select count(*) from revenue_rows where connection_id = '${ctx.ads}' and report_date >= '${r.data.range.start}' and page = ''`) === "0", "사이트 행이 남음");
-    ok(sql(`select count(*) from revenue_rows where workspace_id = '${ctx.wsA}' and source <> 'adsense-api'`) === "0", "다른 source 행이 생김");
+    ok(sql(`select count(*) from revenue_rows where organization_id = '${ctx.wsA}' and source <> 'adsense-api'`) === "0", "다른 source 행이 생김");
   });
 
   await step("AdSense 해제: 마지막 연결이라 Google revoke 후 grant 삭제, 가져온 행은 유지(D4), 목록에서 연결 해제됨", async () => {
@@ -896,7 +896,7 @@ try {
     card = await cardOf();
     // a revived connection keeps its rows: only the re-fetch window (3 days + yesterday) is imported again
     ok(/성공/.test(card) && /\d+행/.test(card), `최근 실행 ${card}`);
-    ctx.cardConn = sql(`select id from analytics_connections where workspace_id = '${ctx.wsA}' and external_ref = 'sc-domain:example.com' and status = 'active'`);
+    ctx.cardConn = sql(`select id from analytics_connections where organization_id = '${ctx.wsA}' and external_ref = 'sc-domain:example.com' and status = 'active'`);
     ok(ctx.cardConn, "DB에 active 연결 없음");
     return card.slice(0, 160);
   });

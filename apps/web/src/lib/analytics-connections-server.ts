@@ -45,7 +45,7 @@ export async function storeGrant(account: Authed, ring: KeyRing, clientId: strin
   const mine = randomUUID();
   const first = encryptToken(ring, refreshToken, { ...ids, grantId: mine });
   const grantId = await call<string>(account.supabase, "store_credential", {
-    p_workspace: account.workspaceId,
+    p_organization: account.workspaceId,
     p_grant_id: mine,
     p_google_sub: googleSub,
     p_client_id: clientId,
@@ -83,7 +83,7 @@ export async function readRefreshToken(db: Rpc, ring: KeyRing, grantId: string, 
 
 /** Key rotation: re-encrypts every grant of the workspace that is not on the newest key. Returns the count. */
 export async function rotateGrants(db: Rpc, ring: KeyRing, workspaceId: string): Promise<{ rotated: number; skipped: number }> {
-  const list = (await call<{ grant_id: string; key_version: number }[]>(db, "list_credential_versions", { p_workspace: workspaceId })) ?? [];
+  const list = (await call<{ grant_id: string; key_version: number }[]>(db, "list_credential_versions", { p_organization: workspaceId })) ?? [];
   let rotated = 0;
   let skipped = 0;
   for (const g of list) {
@@ -192,7 +192,7 @@ export async function listConnections(account: Authed): Promise<{ connections: C
   const connections = (data ?? []) as ConnectionRow[];
   let unusedGrants: string[] = [];
   if (account.role === "owner" || account.role === "admin") {
-    const grants = (await call<{ grant_id: string }[]>(account.supabase, "list_credential_versions", { p_workspace: account.workspaceId })) ?? [];
+    const grants = (await call<{ grant_id: string }[]>(account.supabase, "list_credential_versions", { p_organization: account.workspaceId })) ?? [];
     const used = new Set(connections.map((c) => c.grant_id));
     unusedGrants = grants.map((g) => g.grant_id).filter((g) => !used.has(g));
   }

@@ -103,7 +103,7 @@ const ok = (cond, msg) => {
 
 // ---- helpers --------------------------------------------------------------------------------
 function sql(q) {
-  return execFileSync("docker", ["exec", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" }).trim();
+  return execFileSync("docker", ["exec", "-e", "PGOPTIONS=-c search_path=nomad_contentflow,nomad_core,public", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" }).trim();
 }
 const sqlJson = (q) => JSON.parse(sql(`select coalesce(json_agg(t), '[]') from (${q}) t`) || "[]");
 const jobsOf = (articleId) =>
@@ -195,7 +195,7 @@ try {
     ok(r.status === 200, `signup ${r.status} ${JSON.stringify(r.data)}`);
     const s = await A.api("GET", "/api/session");
     ok(s.data?.user?.role === "owner", JSON.stringify(s.data).slice(0, 200));
-    ctx.wsA = sql(`select m.workspace_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${emailA}' and m.role = 'owner' limit 1`);
+    ctx.wsA = sql(`select m.organization_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${emailA}' and m.role = 'owner' limit 1`);
     ok(ctx.wsA, "워크스페이스 없음");
     return ctx.wsA;
   });
@@ -371,7 +371,7 @@ try {
     ok(s.status === 200, `signup ${s.status}`);
     await B.api("GET", "/api/session");
     const uid = sql(`select id from auth.users where email = '${emailB}'`);
-    sql(`insert into memberships (workspace_id, user_id, role) values ('${ctx.wsA}', '${uid}', 'viewer')`);
+    sql(`insert into memberships (organization_id, user_id, role) values ('${ctx.wsA}', '${uid}', 'viewer')`);
     const sw = await B.api("POST", "/api/workspaces/active", { id: ctx.wsA });
     ok(sw.status === 200, `switch ${sw.status}`);
     ok((await B.api("GET", "/api/session")).data?.user?.role === "viewer", "role != viewer");

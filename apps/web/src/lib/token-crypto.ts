@@ -1,8 +1,8 @@
 // AES-256-GCM for the Google refresh tokens (ANALYTICS_SYNC.md D2). Server-only.
 // Keys come from ANALYTICS_TOKEN_KEYS = "<version>:<base64 32 bytes>,<version>:<base64>": the highest
 // version encrypts, every listed version decrypts (rotation). The database only ever sees the envelope.
-// AAD binds a ciphertext to its grant: [grant_id, workspace_id, google_sub, key_version].
-// Envelope: "v1." + base64url(iv(12) | tag(16) | ciphertext). grant_id, workspace_id, google_sub and key_version
+// AAD binds a ciphertext to its grant: [grant_id, organization_id, google_sub, key_version].
+// Envelope: "v1." + base64url(iv(12) | tag(16) | ciphertext). grant_id, organization_id, google_sub and key_version
 // come from the database row (read_credential / read_grant_credential) and are checked through the AAD.
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 
