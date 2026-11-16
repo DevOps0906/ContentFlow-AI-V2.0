@@ -3,6 +3,7 @@
 // block, because they are heuristics and not proof of a problem. This is not a fact check.
 import { hasDisclosure, hasNaverShortLink, reviewErrors, type Article } from "./content";
 import { normalizePhrase } from "./keywords";
+import { AFFILIATE_LINK_LIMIT, affiliateLinkCount, affiliateLinkInLead, sameShapeAffiliates } from "./affiliate";
 
 export type QaFinding = { code: string; message: string };
 export type QaReport = {
@@ -68,5 +69,15 @@ export function runQa(article: Article, others: Article[] = []): QaReport {
   if (hasNaverShortLink(article) && !hasDisclosure(article))
     add("naver-me-disclosure", "naver.me 링크가 있습니다. 브랜드커넥트 링크라면 대가를 받는다는 고지 문구가 글 앞부분에 필요합니다.");
 
-  return { blockers: reviewErrors(article), warnings, checked: 9 };
+  // C6 (AFFILIATE_COMMERCE.md §4.3): low-quality affiliate signals, warnings only.
+  const links = affiliateLinkCount(article);
+  if (links > AFFILIATE_LINK_LIMIT)
+    add("affiliate-link-count", `제휴 링크가 ${links}개입니다. 글당 ${AFFILIATE_LINK_LIMIT}개 이하를 권장합니다.`);
+  if (affiliateLinkInLead(article))
+    add("affiliate-link-lead", "본문 앞 300자 안에 제휴 링크가 있습니다. 도입부는 정보로 시작하고 상품 링크는 뒤에 두세요.");
+  const sameShape = sameShapeAffiliates(article, others);
+  if (sameShape.length)
+    add("affiliate-same-shape", `소제목 구성이 완전히 같은 다른 제휴 글이 ${sameShape.length}개 있습니다. 같은 형식 반복은 저품질로 보일 수 있습니다.`);
+
+  return { blockers: reviewErrors(article), warnings, checked: 12 };
 }

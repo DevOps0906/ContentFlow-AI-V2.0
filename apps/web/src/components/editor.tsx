@@ -53,6 +53,7 @@ import { accountDeliveryCheck, fetchStoredArticle, postJson, useIntegrations } f
 import { useBlogs } from "./blog-filter";
 import { blogOptionLabel, selectableBlogs } from "@/lib/blogs";
 import { runQa } from "@/lib/qa";
+import { brandConnectUrl, hasDisclosureAttempt, insertBrandConnectLink } from "@/lib/affiliate";
 import { kindLabels, type ReviewFinding } from "@/lib/review";
 import { runSummary, type RunInfo } from "@/lib/agent-runs";
 import { DeliveryHistory } from "./delivery-history";
@@ -907,6 +908,7 @@ function EditorForm({
             <p className="evidence-note">필수 근거: {template.evidence}</p>
           </section>
           {editable && <CoupangPanel form={form} onBody={(body) => update("body", body)} />}
+          {editable && <BrandConnectPanel form={form} onBody={(body) => update("body", body)} />}
           <section className="panel lifecycle-panel">
             <h2>진행 상태</h2>
             <div className="lifecycle-current">
@@ -1329,6 +1331,71 @@ function CoupangPanel({ form, onBody }: { form: Article; onBody: (body: string) 
           >
             고지 문구 넣기
           </button>
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** C4 (AFFILIATE_COMMERCE.md §4.3): a link the author issued in Brand Connect. No external call, never "connected". */
+function BrandConnectPanel({ form, onBody }: { form: Article; onBody: (body: string) => void }) {
+  const [link, setLink] = useState("");
+  const [name, setName] = useState("");
+  const [share, setShare] = useState("");
+  const [error, setError] = useState("");
+  const [added, setAdded] = useState("");
+  const ready = !!link.trim() && !!name.replace(/[[\]\\]/g, "").trim();
+  function insert(e: { preventDefault(): void }) {
+    e.preventDefault();
+    if (!ready) return;
+    const url = brandConnectUrl(link);
+    if (!url) {
+      setError("https로 시작하는 네이버 브랜드커넥트 링크(naver.me, brandconnect.naver.com 등)만 넣을 수 있어요.");
+      return;
+    }
+    setError("");
+    onBody(insertBrandConnectLink(form, name, url));
+    setAdded(share.trim() ? `${name.trim()} · 수익분배율 ${share.trim()}` : name.trim());
+    setLink("");
+    setName("");
+    setShare("");
+  }
+  return (
+    <section className="panel bc-panel" aria-labelledby="bc-title">
+      <h2 id="bc-title">브랜드커넥트 링크</h2>
+      <p className="metric-note">브랜드커넥트에서 직접 발급한 링크를 넣어요. 고지 문구가 없으면 본문 맨 앞에 함께 넣어요.</p>
+      <form className="bc-form" onSubmit={insert}>
+        <label htmlFor="bc-link">발급 링크</label>
+        <input
+          id="bc-link"
+          type="url"
+          value={link}
+          placeholder="https://naver.me/…"
+          aria-invalid={!!error}
+          aria-describedby={error ? "bc-error" : undefined}
+          onChange={(e) => setLink(e.target.value)}
+        />
+        <label htmlFor="bc-name">상품명</label>
+        <input id="bc-name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+        <label htmlFor="bc-share">수익분배율 (선택, 메모)</label>
+        <input id="bc-share" value={share} maxLength={20} placeholder="예: 3%" onChange={(e) => setShare(e.target.value)} />
+        <button type="submit" className="button secondary small" disabled={!ready}>
+          링크 넣기
+        </button>
+      </form>
+      {error && (
+        <p id="bc-error" role="alert" className="bc-error">
+          {error}
+        </p>
+      )}
+      {added && (
+        <p role="status" className="metric-note">
+          넣은 링크: {added}
+        </p>
+      )}
+      {hasDisclosureAttempt(form) && !hasDisclosure(form) && (
+        <p role="status" className="bc-error">
+          기존 고지 문구가 모호합니다 — 확인하세요. 대가를 받는다는 사실을 분명히 적어야 해요.
         </p>
       )}
     </section>

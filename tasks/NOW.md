@@ -7,7 +7,8 @@
 | 진행 중 | CF-07b 실제 Google 검증 — 사용자 OAuth 클라이언트 발급 대기. `.env.local`에 ANALYTICS_TOKEN_KEYS·APP_URL=http://localhost:3410 추가됨(값 비공개) |
 | 최근 작업(2026-11-16) | CF-25 `/naver-homefeed`(H1~H6+레퍼런스·AI 제목, 네이버 약관 반영·화면 고지), CF-26 기획·경쟁 조사·C1 고지 게이트(0028 로컬 적용)·C2·C3 쿠팡 패널. 단위 486, typecheck·build, RLS ALL PASSED |
 | 사용자 필요(추가) | 네이버 검색 API 기존 키 보유 여부(신규 신청 중단), 검색광고 API 약관 원문(광고주센터 로그인), 쿠팡 파트너스 최종 승인·키·호출 제한 공식 확인 후 `COUPANG_ENABLED=1`, 클라우드 투입 전 `rate_limit_hit` RPC 확인 |
-| 다음 | CF-26 C4(브랜드커넥트 링크 입력)·C6(저품질 경고) |
+| 최근 완료 | CF-26 C4(브랜드커넥트 링크 패널)·C6(제휴 저품질 경고 3종) |
+| 다음 | CF-26 C5(추천 글 AI 초안: 쿠팡 약관의 AI 입력 허용 여부 확인 후), BC 링크 글 단위 제휴 표시(마이그레이션, challenger 필요), 3구간 브라우저 시각 검증 |
 | 다음 후보 | CF-23은 착수 보류 — `docs/01-planning/PAYMENTS.md` §12 사용자 결정 7건 후 r2 커밋됨(세션 기반·소유자 수동 결제, D14 팀장 권고 HMAC+정산 대조) |
 | 사용자 필요 | Google Cloud OAuth 클라이언트 발급(실제 연결 검증), CF-06 부 모델 ID, CF-23 결제사·가맹점 테스트 키 |
 | CF-07b 후속 | GA4 다중 호스트 속성, 무인 예약 동기화(새 비밀 주체, challenger 필요), 연속 실패 시 error 전환·지수 백오프 |

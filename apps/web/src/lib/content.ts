@@ -295,8 +295,8 @@ export function reviewErrors(article: Article): string[] {
 // tests/affiliate-disclosure.test.ts and supabase/tests run one shared fixture through both.
 // Checked on entering approval only (r4), never in reviewErrors: delivery and export of articles approved
 // earlier do not change. A guardrail that a disclosure phrase is present; it does not judge the meaning.
-const AFFILIATE_HOST = /(^|[^a-z0-9-])(coupa\.ng|link\.coupang\.com)($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
-const NAVER_SHORT_HOST = /(^|[^a-z0-9-])naver\.me($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
+export const AFFILIATE_HOST = /(^|[^a-z0-9-])(coupa\.ng|link\.coupang\.com)($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
+export const NAVER_SHORT_HOST = /(^|[^a-z0-9-])naver\.me($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
 const DISCLOSURE_WINDOW = 300;
 export const COUPANG_DISCLOSURE =
   "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.";

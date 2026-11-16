@@ -3774,3 +3774,29 @@ footer {
     align-self: flex-start;
   }
 }
+/* 브랜드커넥트 링크 패널 (AFFILIATE_COMMERCE.md §4.3) */
+.bc-form {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 10px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: var(--font-sm);
+}
+.bc-form .button {
+  grid-column: 2;
+  justify-self: start;
+}
+.bc-error {
+  margin: 10px 0 0;
+  color: var(--rose);
+  font-size: var(--font-sm);
+}
+@media (max-width: 767px) {
+  .bc-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bc-form .button {
+    grid-column: 1;
+  }
+}
