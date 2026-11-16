@@ -2,6 +2,7 @@ import {
   ARTICLE_COLUMNS,
   approvalFields,
   approvalRejection,
+  withStoredAffiliate,
   articleToFields,
   dbError,
   isUuid,
@@ -63,7 +64,7 @@ export async function PUT(req: Request, ctx: Ctx) {
 
   const existing = await account.supabase
     .from("articles")
-    .select("id,state,template_id,blog_id")
+    .select("id,state,template_id,blog_id,affiliate")
     .eq("id", id)
     .eq("workspace_id", account.workspaceId)
     .maybeSingle();
@@ -81,7 +82,7 @@ export async function PUT(req: Request, ctx: Ctx) {
       return json({ error: e instanceof Error ? e.message : "블로그 계정을 확인하지 못했습니다." }, 500);
     }
   }
-  const rejection = approvalRejection(article, existing.data?.state);
+  const rejection = approvalRejection(withStoredAffiliate(article, existing.data), existing.data?.state);
   if (rejection) return json({ error: rejection }, 422);
   const fields = articleToFields(article);
   const result = existing.data

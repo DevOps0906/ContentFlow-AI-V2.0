@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /** C3: one coupang.com product URL → its affiliate short link. Nothing is stored. */
 export async function POST(req: Request) {
-  const guard = await coupangGuard(req);
+  const guard = await coupangGuard(req, "deeplink");
   if (!guard.ok) return guard.res;
   let url;
   try {

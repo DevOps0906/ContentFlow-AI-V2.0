@@ -55,6 +55,9 @@ export type Article = {
   titleEvaluation?: TitleEvaluationEntry[];
   /** Pinned when the template is chosen. Absent on older articles and unversioned templates. */
   templateVersion?: string;
+  /** Affiliate or ad article (migration 0029): needs the payment disclosure before approval. Absent reads as
+   *  false and a save without it keeps the stored value. Not part of the approved content (r2). */
+  affiliate?: boolean;
 };
 // Keep in sync with the evidence_status and rights_status checks in migration 0013 (a test compares them).
 export const REVIEW_STATUSES = ["unreviewed", "ok", "blocked"] as const;
@@ -97,7 +100,8 @@ export function isArticle(value: unknown): value is Article {
     (a.evidenceStatus === undefined || isReviewStatus(a.evidenceStatus)) &&
     (a.rightsStatus === undefined || isReviewStatus(a.rightsStatus)) &&
     (a.titleEvaluation === undefined || isTitleEvaluation(a.titleEvaluation)) &&
-    (a.templateVersion === undefined || (typeof a.templateVersion === "string" && a.templateVersion.length <= 32))
+    (a.templateVersion === undefined || (typeof a.templateVersion === "string" && a.templateVersion.length <= 32)) &&
+    (a.affiliate === undefined || typeof a.affiliate === "boolean")
   );
 }
 /** Keep the limit in sync with the brief columns in migration 0013. */
@@ -190,6 +194,8 @@ function withoutReview(article: Article): Article {
  */
 export function applyReviewRule(next: Article, previous?: Article): Article {
   if (!previous) return withoutReview(next);
+  // 0029 r2 ⑤: a save without the mark keeps the stored one; only an explicit false clears it (one local user).
+  if (next.affiliate === undefined && previous.affiliate !== undefined) next = { ...next, affiliate: previous.affiliate };
   const [evidence, rights] = reviewOf(next);
   const [oldEvidence, oldRights] = reviewOf(previous);
   if ((evidence !== oldEvidence || rights !== oldRights) && requiresApproval.includes(previous.status))
@@ -299,7 +305,7 @@ export const AFFILIATE_HOST = /(^|[^a-z0-9-])(coupa\.ng|link\.coupang\.com)($|[^
 export const NAVER_SHORT_HOST = /(^|[^a-z0-9-])naver\.me($|[^a-z0-9.-]|\.($|[^a-z0-9-]))/i;
 const DISCLOSURE_WINDOW = 300;
 export const COUPANG_DISCLOSURE =
-  "이 포스팅은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.";
+  "이 게시물은 쿠팡 파트너스 활동의 일환으로, 이에 따른 일정액의 수수료를 제공받습니다.";
 /** Title, newline and body (CRLF→LF, lines starting with `#` dropped), cut to 300 code points. */
 export function disclosureWindow(article: Pick<Article, "title" | "body">): string {
   const body = article.body
@@ -320,11 +326,15 @@ export function hasDisclosure(article: Pick<Article, "title" | "body">): boolean
   const text = disclosureWindow(article);
   return /수수료|대가|원고료/.test(text) && /제공받|지급받|받습니다|받았/.test(text) && !/받을 ?수|받지 않/.test(text);
 }
-/** Checked only when entering approval, never on delivery or export. */
-export function disclosureErrors(article: Pick<Article, "title" | "body">): string[] {
-  return hasAffiliateLink(article) && !hasDisclosure(article)
-    ? ["제휴 링크가 있어요. 대가를 받는다는 고지 문구를 글 앞부분(제목 포함 300자 안)에 넣어주세요."]
-    : [];
+/** Checked only when entering approval, never on delivery or export. An article marked as affiliate (migration
+ *  0029, §4.4) needs the disclosure even without a Coupang link; same rule as affiliate_disclosure_ok(). */
+export function disclosureErrors(article: Pick<Article, "title" | "body" | "affiliate">): string[] {
+  if (hasDisclosure(article)) return [];
+  if (hasAffiliateLink(article))
+    return ["제휴 링크가 있어요. 대가를 받는다는 고지 문구를 글 앞부분(제목 포함 300자 안)에 넣어주세요."];
+  if (article.affiliate)
+    return ["제휴·광고 글로 표시되어 있어요. 대가를 받는다는 고지 문구를 글 앞부분(제목 포함 300자 안)에 넣어주세요."];
+  return [];
 }
 /** Anything that is part of the approved output, including how it is displayed. */
 export function contentChanged(a: Article, b: Article) {

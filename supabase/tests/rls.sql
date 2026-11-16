@@ -40,6 +40,7 @@ grant usage on schema public, auth to authenticated, anon;
 \ir ../migrations/0026_replace_synced_range.sql
 \ir ../migrations/0027_credential_store_by_id.sql
 \ir ../migrations/0028_affiliate_disclosure_gate.sql
+\ir ../migrations/0029_article_affiliate_flag.sql
 
 -- Test fixture only: most articles below are about other rules and need a filled brief to reach review.
 -- The brief tests set these columns to '' explicitly.
@@ -2264,6 +2265,11 @@ begin
     if affiliate_disclosure_present(f->>'title', b) <> (f->>'disclosed')::boolean then
       raise exception 'FAIL: disclosure fixture "%" (disclosure)', f->>'name';
     end if;
+    -- 0029: the approval gate, with the article-level affiliate mark (absent = false).
+    if affiliate_disclosure_ok(f->>'title', b, coalesce((f->>'affiliate')::boolean, false))
+       <> coalesce((f->>'ok')::boolean, not (f->>'link')::boolean or (f->>'disclosed')::boolean) then
+      raise exception 'FAIL: disclosure fixture "%" (gate)', f->>'name';
+    end if;
   end loop;
   raise notice 'PASS: % disclosure fixtures give the same result as content.ts', jsonb_array_length(fx);
 end $$;
@@ -2292,6 +2298,62 @@ alter table articles enable trigger articles_rules;
 select as_user('00000000-0000-0000-0000-0000000000a1');
 update articles set state = 'monitoring' where id = '30000000-0000-0000-0000-0000000002c2';
 select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002c2' and state = 'monitoring'$$, 1, 'disclosure: an existing published affiliate article still moves to monitoring');
+reset role;
+
+-- ---- article-level affiliate mark (0029, AFFILIATE_COMMERCE.md §4.4 r2) ----
+insert into memberships values (ws_a(), '00000000-0000-0000-0000-0000000000c3', 'admin') on conflict do nothing;
+select expect_count($$select count(*) from memberships where workspace_id = ws_a() and user_id = '00000000-0000-0000-0000-0000000000c3' and role = 'admin'$$, 1, 'affiliate: fixture admin');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+insert into articles (id, workspace_id, owner_id, state, title, body, source_url) values
+  ('30000000-0000-0000-0000-0000000002d1', ws_a(), '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T',
+   E'## 추천\n구매 https://naver.me/abc', 'https://example.com/x'),
+  ('30000000-0000-0000-0000-0000000002d2', ws_a(), '00000000-0000-0000-0000-0000000000a1', 'drafting', 'T',
+   E'## 추천\n지도 https://naver.me/map', 'https://example.com/x');
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d1' and not affiliate$$, 1, 'affiliate: new articles are not marked');
+-- An editor marks it; the mark is not a content change, so the state stays.
+select as_user('00000000-0000-0000-0000-0000000000a2');
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002d1';
+update articles set affiliate = true where id = '30000000-0000-0000-0000-0000000002d1';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d1' and affiliate and state = 'approval_pending'$$, 1, 'affiliate: an editor marks an article without voiding its state');
+select expect_error($$update articles set affiliate = false where id = '30000000-0000-0000-0000-0000000002d1'$$, 'remove the affiliate mark', 'affiliate: an editor can not remove the mark');
+select as_user('00000000-0000-0000-0000-0000000000a4');
+select expect_error($$update articles set affiliate = false where id = '30000000-0000-0000-0000-0000000002d1'$$, 'remove the affiliate mark', 'affiliate: a reviewer can not remove the mark');
+select expect_error($$update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002d1'$$, 'payment disclosure', 'affiliate: a marked article without a disclosure can not be approved (no Coupang link)');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+update articles set body = E'이 글은 네이버 쇼핑 커넥트 활동으로, 구매 시 판매 수수료를 받습니다.\n## 추천\n구매 https://naver.me/abc', state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002d1';
+select as_user('00000000-0000-0000-0000-0000000000a4');
+update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002d1';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d1' and state = 'approved'$$, 1, 'affiliate: with the disclosure a marked article is approved');
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000002d1' and affiliate$$, 1, 'affiliate: the approval snapshot records the mark');
+-- An unmarked naver.me article is not blocked (only a warning), and a reviewer may mark it in any state.
+select as_user('00000000-0000-0000-0000-0000000000a1');
+update articles set state = 'approval_pending' where id = '30000000-0000-0000-0000-0000000002d2';
+update articles set state = 'approved', evidence_status = 'ok', rights_status = 'ok' where id = '30000000-0000-0000-0000-0000000002d2';
+select expect_count($$select count(*) from article_versions where article_id = '30000000-0000-0000-0000-0000000002d2' and affiliate = false$$, 1, 'affiliate: an unmarked naver.me article is approved and recorded as unmarked');
+reset role;
+alter table articles disable trigger articles_rules;
+update articles set state = 'published', published_url = 'https://blog.example/d2' where id = '30000000-0000-0000-0000-0000000002d2';
+alter table articles enable trigger articles_rules;
+select as_user('00000000-0000-0000-0000-0000000000a4');
+select expect_fail($$update articles set title = 'X', affiliate = true where id = '30000000-0000-0000-0000-0000000002d2'$$, 'affiliate: a reviewer can not edit content along with the mark');
+update articles set affiliate = true where id = '30000000-0000-0000-0000-0000000002d2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d2' and affiliate and state = 'published' and published_url = 'https://blog.example/d2'$$, 1, 'affiliate: marking a published article keeps its state and URL');
+select expect_count($$select count(*) from approvals ap join article_versions v on v.id = ap.article_version_id where v.article_id = '30000000-0000-0000-0000-0000000002d2'$$, 1, 'affiliate: ...and its approval');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+update articles set state = 'monitoring' where id = '30000000-0000-0000-0000-0000000002d2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d2' and state = 'monitoring'$$, 1, 'affiliate: a published article marked later still moves to monitoring');
+-- Only owner and admin remove the mark; removing it is not a content change either.
+select as_user('00000000-0000-0000-0000-0000000000c3');
+update articles set affiliate = false where id = '30000000-0000-0000-0000-0000000002d2';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d2' and not affiliate and state = 'monitoring'$$, 1, 'affiliate: an admin removes the mark');
+select as_user('00000000-0000-0000-0000-0000000000a1');
+update articles set affiliate = false where id = '30000000-0000-0000-0000-0000000002d1';
+select expect_count($$select count(*) from articles where id = '30000000-0000-0000-0000-0000000002d1' and not affiliate and state = 'approved'$$, 1, 'affiliate: the owner removes the mark, the approval stays');
+reset role;
+select expect_count($$select count(*) from audit_logs where action = 'article.affiliate_removed'
+  and payload->>'article_id' in ('30000000-0000-0000-0000-0000000002d1', '30000000-0000-0000-0000-0000000002d2')$$, 2, 'affiliate: each removal is in the audit log');
+select expect_count($$select count(*) from audit_logs where action = 'article.affiliate_removed'
+  and payload->>'article_id' = '30000000-0000-0000-0000-0000000002d2' and actor_id = '00000000-0000-0000-0000-0000000000c3'$$, 1, 'affiliate: ...with the admin who removed it');
 reset role;
 
 select 'ALL RLS CHECKS PASSED' as result;

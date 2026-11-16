@@ -1674,6 +1674,7 @@ footer {
   font-size: 11px;
   color: #8e9d96;
   margin: 10px 0 25px;
+  overflow-wrap: anywhere;
 }
 .analytics-empty {
   padding: 35px;
@@ -3461,6 +3462,7 @@ footer {
   margin: 0;
   padding: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .hf-posts li {
@@ -3470,6 +3472,9 @@ footer {
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 4px 6px 4px 4px;
+}
+.hf-posts li {
+  min-width: 0;
 }
 .hf-posts li.active {
   border-color: var(--green);

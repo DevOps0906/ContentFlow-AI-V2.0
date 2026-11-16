@@ -16,11 +16,10 @@ export const COUPANG_LIMITS = {
   results: 10,
   keywordChars: 50,
   urlChars: 2_000,
-  cacheMs: 30 * 60_000,
-  cacheEntries: 200,
-  /** r2 ③: per user per minute, and per key (all instances) per hour. */
+  /** r2 ③: per user per minute; per key (all instances) search per minute, deeplink per hour. */
   userPerMinute: 5,
-  globalPerHour: 10,
+  searchGlobalPerMinute: 40,
+  deeplinkGlobalPerHour: 10,
 } as const;
 const DEFAULT_SUB_ID = "contentflow";
 
@@ -202,20 +201,19 @@ async function call(
 export type CoupangResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 export type CoupangOptions = {
   caller: CoupangCaller;
-  /** Shared hourly limit for the one key (`sharedLimited(…, "coupang:global", 10, 1h)`); true = limited. */
+  /** Shared limit for the one key (search `coupang:global:search` 40/min, deeplink `coupang:global:deeplink` 10/h); true = limited. */
   globalLimited: () => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   now?: number;
 };
 const AVAILABILITY_STATUS = { not_configured: 503, disabled: 503, not_owner: 403 } as const;
-async function run<T>(opts: CoupangOptions, cached: T | undefined, exec: (cfg: CoupangConfig, now: number) => Promise<T>): Promise<CoupangResult<T>> {
+async function run<T>(opts: CoupangOptions, exec: (cfg: CoupangConfig, now: number) => Promise<T>): Promise<CoupangResult<T>> {
   const env = opts.env ?? process.env;
   const available = coupangAvailability(opts.caller, env);
   if (available.state !== "ready") return { ok: false, status: AVAILABILITY_STATUS[available.state], error: available.message };
-  if (cached !== undefined) return { ok: true, value: cached };
   if (await opts.globalLimited())
-    return { ok: false, status: 429, error: "쿠팡 호출이 이번 시간 한도에 도달했습니다. 잠시 후 다시 시도해주세요." };
+    return { ok: false, status: 429, error: "쿠팡 호출이 한도에 도달했습니다. 잠시 후 다시 시도해주세요." };
   try {
     return { ok: true, value: await exec(coupangConfig(env), opts.now ?? Date.now()) };
   } catch (e) {
@@ -223,29 +221,16 @@ async function run<T>(opts: CoupangOptions, cached: T | undefined, exec: (cfg: C
   }
 }
 
-const searchCache = new Map<string, { at: number; items: Product[] }>();
-export function resetCoupangCache() {
-  searchCache.clear();
-}
-/** C2: up to 10 products; a successful search is cached for 30 minutes per keyword. */
-export async function searchProducts(keyword: string, opts: CoupangOptions): Promise<CoupangResult<Product[]>> {
-  const now = opts.now ?? Date.now();
-  const key = keyword.toLowerCase();
-  const hit = searchCache.get(key);
-  const cached = hit && now - hit.at < COUPANG_LIMITS.cacheMs ? hit.items : undefined;
-  const result = await run(opts, cached, (cfg, at) => {
+/** C2: up to 10 products. Every call goes to Coupang; results are never stored. */
+export function searchProducts(keyword: string, opts: CoupangOptions): Promise<CoupangResult<Product[]>> {
+  return run(opts, (cfg, at) => {
     const query = `keyword=${encodeURIComponent(keyword)}&limit=${COUPANG_LIMITS.results}&subId=${cfg.subId}`;
     return call(opts.fetchImpl ?? fetch, cfg, "GET", SEARCH_PATH, query, at).then(parseSearch);
   });
-  if (result.ok && !cached) {
-    if (searchCache.size >= COUPANG_LIMITS.cacheEntries) searchCache.delete(searchCache.keys().next().value as string);
-    searchCache.set(key, { at: now, items: result.value });
-  }
-  return result;
 }
-/** C3: one coupang.com URL → its affiliate short link. Not cached. */
+/** C3: one coupang.com URL → its affiliate short link. Not stored. */
 export function deeplink(url: string, opts: CoupangOptions): Promise<CoupangResult<string>> {
-  return run<string>(opts, undefined, (cfg, at) =>
+  return run<string>(opts, (cfg, at) =>
     call(opts.fetchImpl ?? fetch, cfg, "POST", DEEPLINK_PATH, "", at, { coupangUrls: [url] }).then(parseDeeplink),
   );
 }
