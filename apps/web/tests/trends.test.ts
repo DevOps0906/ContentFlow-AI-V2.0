@@ -29,7 +29,7 @@ import { ALL_BLOGS, UNCLASSIFIED_BLOGS, type Blog } from "../src/lib/blogs";
 import { CategoryBars, TrendsView, TrendTable } from "../src/components/trends";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
-const migration = read("../../../supabase/migrations/0016_keyword_trends.sql");
+const migration = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql");
 const NOW = new Date("2026-11-11T12:00:00Z");
 const B1 = "11111111-1111-4111-8111-111111111111";
 const B2 = "22222222-2222-4222-8222-222222222222";
@@ -113,10 +113,10 @@ test("a hand-typed row keeps blank numbers missing and needs one value", () => {
 
 test("the server checks every row and drops unknown fields", () => {
   const ok = { blogId: B1, keyword: "a", category: "", monthlySearches: 1, growthPct: null, documentCount: null, source: "s", measuredOn: "2026-11-01" };
-  const [row] = parseTrendBatch({ rows: [{ ...ok, workspace_id: B2, created_by: B2, id: B2 }] }, NOW);
+  const [row] = parseTrendBatch({ rows: [{ ...ok, organization_id: B2, created_by: B2, id: B2 }] }, NOW);
   assert.deepEqual(row, ok);
   const db = trendsToDbRows([row], "ws", "user")[0];
-  assert.equal(db.workspace_id, "ws");
+  assert.equal(db.organization_id, "ws");
   assert.equal(db.created_by, "user");
   for (const bad of [
     { ...ok, blogId: "x" },

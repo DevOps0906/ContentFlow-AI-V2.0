@@ -220,7 +220,7 @@ function rig(opts: { rpc?: Record<string, (a: Record<string, unknown>) => unknow
   const calls: { fn: string; args: Record<string, unknown> }[] = [];
   const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     begin_sync_run: () => "run-1",
-    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: enc.ciphertext, key_version: enc.keyVersion, workspace_id: aad.workspaceId, google_sub: aad.googleSub }],
+    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: enc.ciphertext, key_version: enc.keyVersion, organization_id: aad.workspaceId, google_sub: aad.googleSub }],
     replace_synced_range: (a) => (a.p_rows as unknown[]).length,
     finish_sync_run: () => null,
     ...opts.rpc,

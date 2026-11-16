@@ -19,10 +19,10 @@ import {
 
 test("lifecycle states match the article_state enum in the DB migration", () => {
   const sql = readFileSync(
-    new URL("../../../supabase/migrations/0001_core_tenancy.sql", import.meta.url),
+    new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url),
     "utf8",
   );
-  const m = sql.match(/create type article_state as enum \(([^)]*)\)/);
+  const m = sql.match(/create type nomad_contentflow\.article_state as enum \(([^)]*)\)/);
   assert.ok(m, "article_state enum not found");
   const dbStates = [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]);
   assert.deepEqual([...lifecycleStates].sort(), dbStates.sort());
@@ -104,12 +104,12 @@ test("every state belongs to exactly one of the 5 phases", () => {
   );
 });
 
-test("DB transition table (migration 0002) is identical to lifecycle.ts", () => {
+test("DB transition table (nomad_contentflow) is identical to lifecycle.ts", () => {
   const sql = readFileSync(
-    new URL("../../../supabase/migrations/0002_article_content_and_state_rules.sql", import.meta.url),
+    new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url),
     "utf8",
   );
-  const body = sql.match(/create function article_transition_allowed[\s\S]*?\$\$;/)?.[0];
+  const body = sql.match(/create function nomad_contentflow\.article_transition_allowed[\s\S]*?\$\$;/)?.[0];
   assert.ok(body, "article_transition_allowed not found");
   const db = [...body.matchAll(/\('([a-z_]+)', '([a-z_]+)'\)/g)].map((m) => `${m[1]}>${m[2]}`).sort();
   const app = lifecycleStates.flatMap((f) => nextStates(f).map((t) => `${f}>${t}`)).sort();

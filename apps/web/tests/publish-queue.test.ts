@@ -109,7 +109,7 @@ test("idOf accepts a uuid, a row, rows or a job_id object", () => {
 
 test("rowToJob maps the database row (draft_created = done, failure type from last_error)", async () => {
   const { rowToJob } = await import("../src/lib/publish-queue");
-  const base = { id: "j", workspace_id: "w1", article_id: "a", remote_key: "k", created_at: "t", updated_at: "t" };
+  const base = { id: "j", organization_id: "w1", article_id: "a", remote_key: "k", created_at: "t", updated_at: "t" };
   assert.equal(rowToJob({ ...base, status: "draft_created" }).status, "succeeded");
   assert.equal(rowToJob({ ...base, status: "queued" }).workspaceId, "w1");
   const failed = rowToJob({ ...base, status: "failed", attempts: 6, last_error: "QUEUE_EXHAUSTED: timeout" });
@@ -129,12 +129,12 @@ test("canCancel: queued and needs_attention only", async () => {
 test("drainOne reads the article with the job's workspace, not the active one", async () => {
   const { drainOne } = await import("../src/lib/publish-queue-server");
   const seen: string[] = [];
-  const job = { id: "j1", workspace_id: "w-other", article_id: "a1", remote_key: "k", status: "running", attempts: 1, created_at: "t", updated_at: "t" };
+  const job = { id: "j1", organization_id: "w-other", article_id: "a1", remote_key: "k", status: "running", attempts: 1, created_at: "t", updated_at: "t" };
   const query = (table: string) => {
     const q: Record<string, unknown> = {};
     q.select = () => q;
     q.eq = (c: string, v: unknown) => {
-      if (table === "articles" && c === "workspace_id") seen.push(String(v));
+      if (table === "articles" && c === "organization_id") seen.push(String(v));
       return q;
     };
     q.maybeSingle = async () => ({ data: table === "publish_jobs" ? job : null, error: null });

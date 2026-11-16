@@ -274,7 +274,7 @@ export function importGsc(csv: string, existing: MetricInput[], opts: GscImportO
 // ---------- database mapping ----------
 
 export const METRIC_COLUMNS = "id,blog_id,tool,metric,scope,dimension,value,value_label,unit,measured_on,evidence_url,memo,coverage";
-export const METRIC_CONFLICT = "workspace_id,blog_id,tool,metric_key,scope,dimension_key,measured_on";
+export const METRIC_CONFLICT = "organization_id,blog_id,tool,metric_key,scope,dimension_key,measured_on";
 export type MetricDbRow = {
   id: string;
   blog_id: string | null;
@@ -308,7 +308,7 @@ export const dbToMetric = (r: MetricDbRow): MetricSnapshot => ({
 });
 export const metricsToDbRows = (rows: MetricInput[], workspaceId: string, userId: string) =>
   rows.map((r) => ({
-    workspace_id: workspaceId,
+    organization_id: workspaceId,
     blog_id: r.blogId,
     tool: r.tool,
     metric: r.metric,

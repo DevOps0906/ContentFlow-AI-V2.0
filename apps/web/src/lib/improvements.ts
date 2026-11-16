@@ -74,7 +74,7 @@ export function parseImprovementUpdate(input: unknown): ImprovementUpdate {
 }
 
 export const toDbImprovement = (t: ImprovementInput, workspaceId: string, userId: string) => ({
-  workspace_id: workspaceId,
+  organization_id: workspaceId,
   article_id: t.articleId,
   target_url: t.targetUrl,
   evidence: t.evidence,

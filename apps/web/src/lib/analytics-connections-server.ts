@@ -32,8 +32,8 @@ async function call<T>(db: Rpc, fn: string, args: Record<string, unknown>): Prom
   return data as T;
 }
 
-type CredRow = { grant_id: string; ciphertext: string; key_version: number; workspace_id: string; google_sub: string };
-const aadOfRow = (r: CredRow) => ({ grantId: r.grant_id, workspaceId: r.workspace_id, googleSub: r.google_sub });
+type CredRow = { grant_id: string; ciphertext: string; key_version: number; organization_id: string; google_sub: string };
+const aadOfRow = (r: CredRow) => ({ grantId: r.grant_id, workspaceId: r.organization_id, googleSub: r.google_sub });
 
 /**
  * The ciphertext is bound to grant_id, so the app picks the id first. New grant: stored with that id.
@@ -45,7 +45,7 @@ export async function storeGrant(account: Authed, ring: KeyRing, clientId: strin
   const mine = randomUUID();
   const first = encryptToken(ring, refreshToken, { ...ids, grantId: mine });
   const grantId = await call<string>(account.supabase, "store_credential", {
-    p_workspace: account.workspaceId,
+    p_organization: account.workspaceId,
     p_grant_id: mine,
     p_google_sub: googleSub,
     p_client_id: clientId,
@@ -83,7 +83,7 @@ export async function readRefreshToken(db: Rpc, ring: KeyRing, grantId: string, 
 
 /** Key rotation: re-encrypts every grant of the workspace that is not on the newest key. Returns the count. */
 export async function rotateGrants(db: Rpc, ring: KeyRing, workspaceId: string): Promise<{ rotated: number; skipped: number }> {
-  const list = (await call<{ grant_id: string; key_version: number }[]>(db, "list_credential_versions", { p_workspace: workspaceId })) ?? [];
+  const list = (await call<{ grant_id: string; key_version: number }[]>(db, "list_credential_versions", { p_organization: workspaceId })) ?? [];
   let rotated = 0;
   let skipped = 0;
   for (const g of list) {
@@ -169,7 +169,7 @@ export async function adsenseInfos(account: Authed, connectionIds: string[]): Pr
     const { data } = await account.supabase
       .from("revenue_rows")
       .select("report_date, page, currency, timezone")
-      .eq("workspace_id", account.workspaceId)
+      .eq("organization_id", account.workspaceId)
       .eq("connection_id", id)
       .eq("source", "adsense-api")
       .order("report_date", { ascending: false })
@@ -187,12 +187,12 @@ export async function adsenseInfos(account: Authed, connectionIds: string[]): Pr
 
 /** Connections (no token field) and the grants no connection uses: after a failed revoke those need a retry. */
 export async function listConnections(account: Authed): Promise<{ connections: ConnectionRow[]; unusedGrants: string[] }> {
-  const { data, error } = await account.supabase.from("analytics_connections").select(COLUMNS).eq("workspace_id", account.workspaceId).order("created_at");
+  const { data, error } = await account.supabase.from("analytics_connections").select(COLUMNS).eq("organization_id", account.workspaceId).order("created_at");
   if (error) throw new AnalyticsError("연결 목록을 불러오지 못했습니다.", 500, "list_failed");
   const connections = (data ?? []) as ConnectionRow[];
   let unusedGrants: string[] = [];
   if (account.role === "owner" || account.role === "admin") {
-    const grants = (await call<{ grant_id: string }[]>(account.supabase, "list_credential_versions", { p_workspace: account.workspaceId })) ?? [];
+    const grants = (await call<{ grant_id: string }[]>(account.supabase, "list_credential_versions", { p_organization: account.workspaceId })) ?? [];
     const used = new Set(connections.map((c) => c.grant_id));
     unusedGrants = grants.map((g) => g.grant_id).filter((g) => !used.has(g));
   }
@@ -205,7 +205,7 @@ export async function createAdsenseConnection(account: Authed, cfg: GoogleConfig
   const { data: prior, error: priorError } = await account.supabase
     .from("analytics_connections")
     .select(COLUMNS)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .eq("provider", "adsense")
     .eq("external_ref", input.accountName)
     .maybeSingle();
@@ -213,7 +213,7 @@ export async function createAdsenseConnection(account: Authed, cfg: GoogleConfig
   if ((prior as ConnectionRow | null)?.status === "revoked") return reconnectRevoked(account, prior as ConnectionRow, input.grantId, null);
   const { data, error } = await account.supabase
     .from("analytics_connections")
-    .insert({ workspace_id: account.workspaceId, blog_id: null, grant_id: input.grantId, provider: "adsense", external_ref: input.accountName, scopes: [ADSENSE_SCOPE], connected_by: account.user.id })
+    .insert({ organization_id: account.workspaceId, blog_id: null, grant_id: input.grantId, provider: "adsense", external_ref: input.accountName, scopes: [ADSENSE_SCOPE], connected_by: account.user.id })
     .select(COLUMNS)
     .single();
   if (error) {
@@ -232,7 +232,7 @@ export async function createGa4Connection(account: Authed, cfg: GoogleConfig, in
   const { data: prior, error: priorError } = await account.supabase
     .from("analytics_connections")
     .select(COLUMNS)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .eq("provider", "ga4")
     .eq("external_ref", input.propertyName)
     .maybeSingle();
@@ -241,7 +241,7 @@ export async function createGa4Connection(account: Authed, cfg: GoogleConfig, in
   const { data, error } = await account.supabase
     .from("analytics_connections")
     .insert({
-      workspace_id: account.workspaceId,
+      organization_id: account.workspaceId,
       blog_id: input.blogId,
       grant_id: input.grantId,
       provider: "ga4",
@@ -269,7 +269,7 @@ export async function createGscConnection(account: Authed, cfg: GoogleConfig, in
   const { data: prior, error: priorError } = await account.supabase
     .from("analytics_connections")
     .select(COLUMNS)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .eq("provider", "gsc")
     .eq("external_ref", input.siteUrl)
     .maybeSingle();
@@ -278,7 +278,7 @@ export async function createGscConnection(account: Authed, cfg: GoogleConfig, in
   const { data, error } = await account.supabase
     .from("analytics_connections")
     .insert({
-      workspace_id: account.workspaceId,
+      organization_id: account.workspaceId,
       blog_id: input.blogId,
       grant_id: input.grantId,
       provider: "gsc",
@@ -304,7 +304,7 @@ export async function createGscConnection(account: Authed, cfg: GoogleConfig, in
  */
 export async function reconnectRevoked(account: Authed, prior: ConnectionRow, grantId: string, blogId: string | null): Promise<ConnectionRow> {
   if (blogId !== prior.blog_id) {
-    const { error } = await account.supabase.from("analytics_connections").update({ blog_id: blogId }).eq("id", prior.id).eq("workspace_id", account.workspaceId);
+    const { error } = await account.supabase.from("analytics_connections").update({ blog_id: blogId }).eq("id", prior.id).eq("organization_id", account.workspaceId);
     if (error) {
       if ((error.message ?? "").includes("CONNECTION_HAS_DATA") || error.code === "P0001") {
         let name = "다른 블로그";
@@ -342,7 +342,7 @@ export async function revokeGrant(account: Authed, cfg: GoogleConfig | null, gra
 
 export async function disconnect(account: Authed, cfg: GoogleConfig | null, connectionId: string, purge: boolean): Promise<{ revoke: RevokeOutcome; grantId: string | null; remaining: number }> {
   // disconnect_connection releases grant_id on a kept connection, so read it first.
-  const { data, error } = await account.supabase.from("analytics_connections").select("grant_id").eq("id", connectionId).eq("workspace_id", account.workspaceId).maybeSingle();
+  const { data, error } = await account.supabase.from("analytics_connections").select("grant_id").eq("id", connectionId).eq("organization_id", account.workspaceId).maybeSingle();
   if (error) throw new AnalyticsError("연결을 찾지 못했습니다.", 500, "read_failed");
   if (!data) throw new AnalyticsError("연결을 찾을 수 없습니다.", 404, "not_found");
   const grantId = (data as { grant_id: string | null }).grant_id;

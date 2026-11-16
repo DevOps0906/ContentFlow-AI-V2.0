@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 
 const NOW = new Date("2026-11-06T00:00:00Z");
 const valid = { category: "hosting", amount: "1,200.5", currency: "usd", occurredOn: "2026-11-01", note: " 서버 " };
-const sql = readFileSync(new URL("../../../supabase/migrations/0012_costs_improvements_revenue_period.sql", import.meta.url), "utf8");
+const sql = readFileSync(new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url), "utf8");
 
 test("a cost entry is validated and normalized", () => {
   assert.deepEqual(parseCostEntry(valid, NOW), {
@@ -47,14 +47,14 @@ test("a cost entry is validated and normalized", () => {
 
 test("author and workspace come from the session; provenance and AI links can not be supplied", () => {
   const db = toDbCost(
-    parseCostEntry({ ...valid, provenance: "model", agent_run_id: "x", workspace_id: "other", created_by: "other" }, NOW),
+    parseCostEntry({ ...valid, provenance: "model", agent_run_id: "x", organization_id: "other", created_by: "other" }, NOW),
     "ws", "user",
   );
-  assert.equal(db.workspace_id, "ws");
+  assert.equal(db.organization_id, "ws");
   assert.equal(db.created_by, "user");
   assert.ok(!("provenance" in db));
   assert.ok(!JSON.stringify(db).includes("agent_run"));
-  assert.ok(!/agent_run_id/.test(sql.split("create table cost_entries")[1].split(");")[0]), "ledger table has no AI link");
+  assert.ok(!/agent_run_id/.test(sql.split("create table nomad_contentflow.cost_entries")[1].split(");")[0]), "ledger table has no AI link");
 });
 
 test("totals never mix currencies and an empty ledger has no total", () => {

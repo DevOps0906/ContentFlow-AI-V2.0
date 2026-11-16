@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   if (account instanceof Response) return account;
   const { supabase, workspaceId, role } = account;
   const [rows, members] = await Promise.all([
-    supabase.from("site_checks").select(SITE_CHECK_COLUMNS).eq("workspace_id", workspaceId),
+    supabase.from("site_checks").select(SITE_CHECK_COLUMNS).eq("organization_id", workspaceId),
     supabase.rpc("workspace_members", { ws: workspaceId }),
   ]);
   if (rows.error || members.error) return json({ error: "사이트 점검을 불러오지 못했습니다." }, 500);
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
     return json({ error: "요청이 너무 잦습니다." }, 429);
   const { data, error } = await account.supabase
     .from("site_checks")
-    .upsert(toDbSiteCheck(input, account.workspaceId), { onConflict: "workspace_id,check_key" })
+    .upsert(toDbSiteCheck(input, account.workspaceId), { onConflict: "organization_id,check_key" })
     .select(SITE_CHECK_COLUMNS)
     .single();
   if (error) {

@@ -12,7 +12,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (account instanceof Response) return account;
   const { id } = await ctx.params;
   if (!isUuid(id)) return json({ error: "잘못된 초대 ID입니다." }, 400);
-  const { data, error } = await account.supabase.rpc("accept_invitation", { inv: id });
+  // Core accepts by token: look it up among the caller's own invitations.
+  const mine = await account.supabase.schema("public").rpc("nomad_my_invitations");
+  if (mine.error) return json({ error: "초대를 불러오지 못했습니다." }, 500);
+  const token = ((mine.data ?? []) as { id: string; token: string }[]).find((r) => r.id === id)?.token;
+  if (!token) return json({ error: "초대를 찾을 수 없습니다." }, 404);
+  const { data, error } = await account.supabase.schema("public").rpc("nomad_accept_invitation", { invite_token: token });
   if (error) {
     const e = teamError(error);
     return json({ error: e.message }, e.status);

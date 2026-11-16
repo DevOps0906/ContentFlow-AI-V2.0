@@ -38,7 +38,7 @@ export async function GET(req: Request, ctx: Ctx) {
     .from("articles")
     .select(ARTICLE_COLUMNS)
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .maybeSingle();
   if (error) return json({ error: "콘텐츠를 불러오지 못했습니다." }, 500);
   if (!data) return json({ error: "콘텐츠를 찾을 수 없습니다." }, 404);
@@ -66,7 +66,7 @@ export async function PUT(req: Request, ctx: Ctx) {
     .from("articles")
     .select("id,state,template_id,blog_id,affiliate")
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .maybeSingle();
   if (existing.error) return json({ error: "저장소 처리 중 오류가 발생했습니다." }, 500);
 
@@ -94,14 +94,14 @@ export async function PUT(req: Request, ctx: Ctx) {
           ...templateVersionFields(article.templateId, existing.data),
         })
         .eq("id", id)
-        .eq("workspace_id", account.workspaceId)
+        .eq("organization_id", account.workspaceId)
         .select(ARTICLE_COLUMNS)
         .maybeSingle()
     : await account.supabase
         .from("articles")
         .insert({
           id,
-          workspace_id: account.workspaceId,
+          organization_id: account.workspaceId,
           owner_id: account.user.id,
           ...fields,
           ...templateVersionFields(article.templateId),
@@ -126,7 +126,7 @@ export async function DELETE(req: Request, ctx: Ctx) {
     .from("articles")
     .delete()
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select("id");
   if (error) {
     const e = dbError(error);

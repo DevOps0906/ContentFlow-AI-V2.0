@@ -22,7 +22,7 @@ import { canRecordSiteChecks, roles } from "../src/lib/team";
 import { SiteChecks } from "../src/components/site-checks";
 
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
-const sql = read("../../../supabase/migrations/0011_site_checks.sql");
+const sql = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql");
 const quoted = (s: string) => [...s.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
 const valid = { key: "ads_txt", status: "pass", evidenceUrl: "https://a.example/ads.txt", note: "" };
 
@@ -38,11 +38,11 @@ test("items and statuses match the database constraints", () => {
 
 test("workspace, checker and time are never taken from the browser", () => {
   const db = toDbSiteCheck(
-    parseSiteCheck({ ...valid, workspace_id: "other", checkedBy: "x", checkedAt: "2000-01-01", checked_by: "x" }),
+    parseSiteCheck({ ...valid, organization_id: "other", checkedBy: "x", checkedAt: "2000-01-01", checked_by: "x" }),
     "ws",
   );
-  assert.deepEqual(Object.keys(db).sort(), ["check_key", "evidence_url", "note", "status", "workspace_id"]);
-  assert.equal(db.workspace_id, "ws");
+  assert.deepEqual(Object.keys(db).sort(), ["check_key", "evidence_url", "note", "organization_id", "status"]);
+  assert.equal(db.organization_id, "ws");
 });
 
 test("invalid records are rejected", () => {
@@ -104,7 +104,9 @@ test("old records are flagged for another look, unrecorded ones are not", () => 
 });
 
 test("ad status and site checks stay out of the article rules and delivery path", () => {
-  assert.ok(!/\barticles\b/i.test(sql.replace(/--.*$/gm, "")));
+  // One consolidated migration: check the site_checks table definition only.
+  const table = sql.split("create table nomad_contentflow.site_checks")[1].split(");")[0];
+  assert.ok(!/\barticles\b/i.test(table.replace(/--.*$/gm, "")));
   const path = [
     "../src/lib/lifecycle.ts",
     "../src/lib/qa.ts",

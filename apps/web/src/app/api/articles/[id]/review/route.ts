@@ -21,7 +21,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
     .from("articles")
     .update({ evidence_status: decision.evidenceStatus, rights_status: decision.rightsStatus })
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select(ARTICLE_COLUMNS)
     .maybeSingle();
   if (error) {

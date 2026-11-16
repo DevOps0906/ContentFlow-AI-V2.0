@@ -65,7 +65,7 @@ export function parseRevenueBatch(input: unknown): RevenueRow[] {
 }
 export function toDbRows(rows: RevenueRow[], workspaceId: string, userId: string) {
   return rows.map((r) => ({
-    workspace_id: workspaceId,
+    organization_id: workspaceId,
     row_key: rowKey(r),
     source: r.source.trim(),
     status: r.status,

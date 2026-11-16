@@ -105,7 +105,7 @@ export function TeamPanel() {
           {mine.map((i) => (
             <div className="invite-row" key={i.id}>
               <span>
-                <b>{i.workspaceName}</b> · {roleLabels[i.role]} 역할 · {i.invitedBy} 님이 초대
+                <b>{i.workspaceName}</b> · {roleLabels[i.role]} 역할{i.invitedBy && ` · ${i.invitedBy} 님이 초대`}
               </span>
               <span className="table-actions">
                 <button

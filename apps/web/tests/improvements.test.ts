@@ -32,7 +32,7 @@ test("the auto-filled URL follows the article; a typed URL stays", () => {
   assert.equal(targetUrlAfterPick("https://typed.example/x", undefined, undefined), "https://typed.example/x");
 });
 
-const sql = readFileSync(new URL("../../../supabase/migrations/0012_costs_improvements_revenue_period.sql", import.meta.url), "utf8");
+const sql = readFileSync(new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url), "utf8");
 
 test("a task needs evidence, a target, an observation period, an assignee and a review date", () => {
   assert.equal(parseImprovement(valid).evidence, "CTR 0.4%");
@@ -55,10 +55,10 @@ test("a task needs evidence, a target, an observation period, an assignee and a 
 
 test("workspace, author and result are never taken from the browser", () => {
   const db = toDbImprovement(
-    parseImprovement({ ...valid, workspace_id: "other", created_by: "other", state: "done", resultVersion: 9, effect: "CTR up" }),
+    parseImprovement({ ...valid, organization_id: "other", created_by: "other", state: "done", resultVersion: 9, effect: "CTR up" }),
     "ws", "user",
   );
-  assert.equal(db.workspace_id, "ws");
+  assert.equal(db.organization_id, "ws");
   assert.equal(db.created_by, "user");
   assert.ok(!("state" in db));
   assert.ok(!("result_version" in db));
@@ -84,7 +84,7 @@ test("progress updates validate the state and require a version to finish", () =
 });
 
 test("the queue stores no outcome claim and no publishing hook", () => {
-  const table = sql.split("create table improvement_tasks")[1].split(");")[0];
+  const table = sql.split("create table nomad_contentflow.improvement_tasks")[1].split(");")[0];
   assert.doesNotMatch(table, /effect|uplift|impact|publish/i);
 });
 

@@ -134,7 +134,7 @@ test("storeGrant: existing grant returns another id -> re-encrypted for it and s
   let swapped: Record<string, unknown> = {};
   const { account, calls } = fakeAccount({
     store_credential: () => aad.grantId,
-    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: old.ciphertext, key_version: 1, workspace_id: aad.workspaceId, google_sub: aad.googleSub }],
+    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: old.ciphertext, key_version: 1, organization_id: aad.workspaceId, google_sub: aad.googleSub }],
     rotate_credential: (a) => {
       swapped = a;
       return true;
@@ -154,7 +154,7 @@ test("rotateGrants swaps old-version grants (compare-and-set on the old version)
   let swapped: Record<string, unknown> | null = null;
   const { account } = fakeAccount({
     list_credential_versions: () => [{ grant_id: aad.grantId, key_version: 1 }, { grant_id: "x", key_version: 2 }],
-    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: e.ciphertext, key_version: 1, workspace_id: aad.workspaceId, google_sub: aad.googleSub }],
+    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: e.ciphertext, key_version: 1, organization_id: aad.workspaceId, google_sub: aad.googleSub }],
     rotate_credential: (a) => {
       swapped = a;
       return true;
@@ -171,7 +171,7 @@ test("disconnect: other connections left -> no revoke; none left + revoke fails 
   const e = encryptToken(ring1, "tok", aad);
   const handlers = (left: number, deleted: string[]) => ({
     disconnect_connection: () => left,
-    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: e.ciphertext, key_version: 1, workspace_id: aad.workspaceId, google_sub: aad.googleSub }],
+    read_grant_credential: () => [{ grant_id: aad.grantId, ciphertext: e.ciphertext, key_version: 1, organization_id: aad.workspaceId, google_sub: aad.googleSub }],
     delete_credential: (a: Record<string, unknown>) => void deleted.push(a.p_grant as string),
   });
   const deleted: string[] = [];

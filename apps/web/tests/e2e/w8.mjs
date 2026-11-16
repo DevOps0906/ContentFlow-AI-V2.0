@@ -58,7 +58,7 @@ const ok = (cond, msg) => {
 
 // ---- helpers -------------------------------------------------------------------------------
 function sql(q) {
-  const out = execFileSync("docker", ["exec", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" });
+  const out = execFileSync("docker", ["exec", "-e", "PGOPTIONS=-c search_path=nomad_contentflow,nomad_core,public", "supabase_db_ContentFlow-AI-V2.0", "psql", "-U", "postgres", "-tAc", q], { encoding: "utf8" });
   return out.trim();
 }
 const sqlJson = (q) => JSON.parse(sql(`select coalesce(json_agg(t), '[]') from (${q}) t`) || "[]");
@@ -71,7 +71,7 @@ async function wp(path, init = {}) {
 }
 const aiMode = (mode) => fetch(`${AI}/__mode`, { method: "POST", body: JSON.stringify({ mode }) });
 const wsOf = (email) =>
-  sql(`select m.workspace_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${email}' and m.role = 'owner' limit 1`);
+  sql(`select m.organization_id from memberships m join auth.users u on u.id = m.user_id where u.email = '${email}' and m.role = 'owner' limit 1`);
 
 async function signup(page, email, password) {
   await page.goto(`${APP}/login`);
@@ -310,7 +310,7 @@ try {
     return await alertText(A);
   }, { needs: ["drafting"] });
   await step("AI·W1", "agent_runs 기록(성공·실패, 토큰·비용)", async () => {
-    const rows = sqlJson(`select task, model, status, tokens_in, tokens_out, cost_estimate, cost_currency from agent_runs where workspace_id = '${ctx.wsA}' order by created_at`);
+    const rows = sqlJson(`select task, model, status, tokens_in, tokens_out, cost_estimate, cost_currency from agent_runs where organization_id = '${ctx.wsA}' order by created_at`);
     ok(rows.length >= 2, `rows ${rows.length}`);
     const okRow = rows.find((r) => r.status === "succeeded" || r.status === "success" || r.status === "ok");
     const failRow = rows.find((r) => r !== okRow && r.status !== okRow?.status);
@@ -581,7 +581,7 @@ try {
     await A.waitFor(`!!document.querySelector('select[aria-label="${emailB} 역할"]')`, 20000, "role select");
     await A.fill(`select[aria-label="${emailB} 역할"]`, "viewer");
     await A.waitFor(`document.querySelector('select[aria-label="${emailB} 역할"]')?.value === "viewer"`, 15000, "role select value");
-    await A.waitFor(async () => sql(`select m.role from memberships m join auth.users u on u.id = m.user_id where u.email = '${emailB}' and m.workspace_id = '${wsOf(emailA)}'`) === "viewer", 15000, "DB role viewer");
+    await A.waitFor(async () => sql(`select m.role from memberships m join auth.users u on u.id = m.user_id where u.email = '${emailB}' and m.organization_id = '${wsOf(emailA)}'`) === "viewer", 15000, "DB role viewer");
     await B.goto(`${APP}/analytics`, { settle: 2000 });
     await B.waitText("원가는 소유자·관리자만 기록할 수 있어요", 30000);
     ok(!(await B.eval(`!!document.querySelector('#cost-amount')`)), "원가 입력 노출");

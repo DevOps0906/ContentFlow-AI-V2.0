@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   const existing = await account.supabase
     .from("articles")
     .select("id")
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .in("id", valid.map((a) => a.id));
   if (existing.error) return json({ error: "저장소 처리 중 오류가 발생했습니다." }, 500);
   const have = new Set((existing.data ?? []).map((r) => r.id as string));
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     if (have.has(a.id) || !isUuid(a.id)) continue;
     const { error } = await account.supabase.from("articles").insert({
       id: a.id,
-      workspace_id: account.workspaceId,
+      organization_id: account.workspaceId,
       owner_id: account.user.id,
       ...articleToFields(a),
       ...templateVersionFields(a.templateId),

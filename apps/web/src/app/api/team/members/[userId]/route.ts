@@ -18,10 +18,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
     return json({ error: "잘못된 요청입니다." }, 400);
   }
   if (!isRole(role) || role === "owner") return json({ error: "부여할 수 없는 역할입니다." }, 400);
-  const { error } = await account.supabase.rpc("change_member_role", {
-    ws: account.workspaceId,
-    target: userId,
-    p_role: role,
+  const { error } = await account.supabase.schema("public").rpc("nomad_change_member_role", {
+    target_organization: account.workspaceId,
+    target_user: userId,
+    new_role: role,
   });
   if (error) {
     const e = teamError(error);
@@ -36,7 +36,9 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (account instanceof Response) return account;
   const { userId } = await ctx.params;
   if (!isUuid(userId)) return json({ error: "잘못된 사용자 ID입니다." }, 400);
-  const { error } = await account.supabase.rpc("remove_member", { ws: account.workspaceId, target: userId });
+  const { error } = await account.supabase
+    .schema("public")
+    .rpc("nomad_remove_member", { target_organization: account.workspaceId, target_user: userId });
   if (error) {
     const e = teamError(error);
     return json({ error: e.message }, e.status);

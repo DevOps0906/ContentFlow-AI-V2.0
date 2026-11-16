@@ -11,7 +11,7 @@ export async function archivedBlogIds(account: Authed, ids: (string | null)[]): 
   const { data, error } = await account.supabase
     .from("blogs")
     .select("id")
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .eq("status", "archived")
     .in("id", list);
   if (error) throw new Error("블로그 계정을 확인하지 못했습니다.");
@@ -27,7 +27,7 @@ export function storedForBlogs<T>(account: Authed, table: "keyword_trends" | "bl
     account.supabase
       .from(table)
       .select(columns)
-      .eq("workspace_id", account.workspaceId)
+      .eq("organization_id", account.workspaceId)
       .in("blog_id", blogIds)
       .order("id", { ascending: true })
       .range(from, to) as never,

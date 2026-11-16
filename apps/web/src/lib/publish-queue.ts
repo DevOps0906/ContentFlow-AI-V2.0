@@ -11,7 +11,7 @@ export const PUBLISH_RPC = {
 } as const;
 export const PUBLISH_TABLE = "publish_jobs";
 export const PUBLISH_COLUMNS =
-  "id,workspace_id,article_id,approved_version_id,remote_key,status,attempts,max_attempts,next_attempt_at,last_error,created_at,updated_at";
+  "id,organization_id,article_id,approved_version_id,remote_key,status,attempts,max_attempts,next_attempt_at,last_error,created_at,updated_at";
 
 export const BACKOFF_BASE_MS = 30_000;
 export const BACKOFF_CAP_MS = 15 * 60_000;
@@ -155,7 +155,7 @@ export function waitText(iso: string | null, now: number = Date.now()): string {
 
 export type JobRow = {
   id: string;
-  workspace_id: string;
+  organization_id: string;
   article_id: string;
   approved_version_id?: string | null;
   remote_key: string;
@@ -171,7 +171,7 @@ export type JobRow = {
 export function rowToJob(r: JobRow): PublishJob {
   return {
     id: r.id,
-    workspaceId: r.workspace_id,
+    workspaceId: r.organization_id,
     articleId: r.article_id,
     approvedVersionId: r.approved_version_id ?? null,
     remoteKey: r.remote_key,

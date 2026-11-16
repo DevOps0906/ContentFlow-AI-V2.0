@@ -102,7 +102,7 @@ test("row ↔ article mapping keeps remote info but never writes it from the bro
   assert.ok(!("keyword_id" in articleToFields({ ...article, keywordId: "not-a-uuid" })));
   const fields = articleToFields(article);
   assert.ok(!("remote" in fields));
-  assert.ok(!("id" in fields) && !("workspace_id" in fields) && !("owner_id" in fields));
+  assert.ok(!("id" in fields) && !("organization_id" in fields) && !("owner_id" in fields));
   assert.equal(fields.state, "approved");
 });
 

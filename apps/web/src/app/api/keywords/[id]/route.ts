@@ -27,7 +27,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     return json({ error: "요청이 너무 잦습니다." }, 429);
   if (blogId) {
     // Archived accounts take no new links; keeping the current one is fine.
-    const current = await account.supabase.from("keywords").select("blog_id").eq("id", id).eq("workspace_id", account.workspaceId).maybeSingle();
+    const current = await account.supabase.from("keywords").select("blog_id").eq("id", id).eq("organization_id", account.workspaceId).maybeSingle();
     if (current.error) return json({ error: "키워드를 확인하지 못했습니다." }, 500);
     if (current.data?.blog_id !== blogId) {
       try {
@@ -41,7 +41,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     .from("keywords")
     .update({ blog_id: blogId })
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select(KEYWORD_COLUMNS)
     .maybeSingle();
   if (error) {
@@ -63,7 +63,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     .from("keywords")
     .delete()
     .eq("id", id)
-    .eq("workspace_id", account.workspaceId)
+    .eq("organization_id", account.workspaceId)
     .select("id");
   if (error) return json({ error: "삭제하지 못했습니다." }, 500);
   if (!data?.length) return json({ error: "삭제할 수 없거나 이미 삭제된 키워드입니다." }, 404);

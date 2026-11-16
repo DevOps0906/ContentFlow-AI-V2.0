@@ -93,7 +93,7 @@ export function parseCostEntry(input: unknown, now = new Date()): CostInput {
 }
 
 export const toDbCost = (c: CostInput, workspaceId: string, userId: string) => ({
-  workspace_id: workspaceId,
+  organization_id: workspaceId,
   category: c.category,
   amount: c.amount,
   currency: c.currency,

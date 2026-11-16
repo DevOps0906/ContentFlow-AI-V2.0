@@ -53,10 +53,11 @@ test("database errors map to safe messages without leaking internals", () => {
 });
 
 test("the SQL transition and permission rules agree with team.ts", () => {
-  const sql = readFileSync(new URL("../../../supabase/migrations/0004_team_and_roles.sql", import.meta.url), "utf8");
-  // The owner role can never be invited, and memberships are no longer writable by clients.
-  assert.ok(/role <> 'owner'/.test(sql));
-  assert.ok(/drop policy mem_write on memberships/.test(sql));
+  const sql = readFileSync(new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url), "utf8");
+  // The owner role can never be invited, and memberships are not writable by clients (nomad_core).
+  const core = readFileSync(new URL("../../../supabase/migrations/20261114000100_nomad_core_accounts.sql", import.meta.url), "utf8");
+  assert.ok(/invitee_role not in \('admin', 'editor', 'viewer'\)/.test(core));
+  assert.ok(!/grant [a-z, ]*(insert|update|delete)[a-z, ]* on nomad_core\.memberships to authenticated/.test(core + sql));
   // Reviewers may only decide an article waiting for approval.
-  assert.ok(/old\.state = 'approval_pending' and new\.state in \('approved', 'needs_revision'\)/.test(sql));
+  assert.ok(/old\.state = 'approval_pending'\s+and \(new\.state in \('approved', 'needs_revision'\)/.test(sql));
 });

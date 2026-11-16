@@ -212,7 +212,7 @@ export function parseTrendBatch(input: unknown, now = new Date()): KeywordTrendI
 // ---------- database mapping ----------
 
 export const TREND_COLUMNS = "id,blog_id,keyword,category,monthly_searches,growth_pct,document_count,source,measured_on";
-export const TREND_CONFLICT = "workspace_id,blog_id,keyword_key,category_key,source_key,measured_on";
+export const TREND_CONFLICT = "organization_id,blog_id,keyword_key,category_key,source_key,measured_on";
 export type TrendDbRow = {
   id: string;
   blog_id: string | null;
@@ -239,7 +239,7 @@ export const dbToTrend = (r: TrendDbRow): KeywordTrend => ({
 });
 export const trendsToDbRows = (rows: KeywordTrendInput[], workspaceId: string, userId: string) =>
   rows.map((t) => ({
-    workspace_id: workspaceId,
+    organization_id: workspaceId,
     blog_id: t.blogId,
     keyword: t.keyword,
     category: t.category,

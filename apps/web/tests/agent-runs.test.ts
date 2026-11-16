@@ -59,7 +59,7 @@ test("a successful call records one row with usage, cost and no prompt or key", 
   const { duration_ms, ...rest } = rows[0];
   assert.equal(typeof duration_ms, "number");
   assert.deepEqual(rest, {
-    workspace_id: "ws",
+    organization_id: "ws",
     created_by: "u",
     task: "draft",
     model: "m",

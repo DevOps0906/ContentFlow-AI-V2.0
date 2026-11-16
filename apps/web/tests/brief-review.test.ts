@@ -16,7 +16,7 @@ import {
 import { findTemplate, templateVersion } from "../src/lib/templates";
 import { isTitleEvaluation, newTitleEvaluation } from "../src/lib/titles";
 
-const sql = readFileSync(new URL("../../../supabase/migrations/0013_brief_review_title_template.sql", import.meta.url), "utf8");
+const sql = readFileSync(new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url), "utf8");
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 const article: Article = {
@@ -75,8 +75,8 @@ test("every route into review needs the brief", () => {
 });
 
 test("the review gate in the database matches the app rule", () => {
-  const gate = read("../../../supabase/migrations/0014_brief_before_review_keyword_guard.sql");
-  assert.match(gate, /base = 'drafting' and new\.state in \('qa_pending', 'approval_pending'\) and not article_brief_ok\(new\)/);
+  const gate = read("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql");
+  assert.match(gate, /base = 'drafting' and new\.state in \('qa_pending', 'approval_pending'\) and not nomad_contentflow\.article_brief_ok\(new\)/);
   assert.match(gate, /new\.keyword_id is distinct from old\.keyword_id/);
 });
 

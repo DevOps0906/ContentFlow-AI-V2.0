@@ -142,7 +142,7 @@ async function saveAttempt(
   try {
     // The database assigns the attempt number.
     const { error } = await log.client.from("delivery_attempts").insert({
-      workspace_id: log.workspaceId,
+      organization_id: log.workspaceId,
       article_id: articleId,
       created_by: log.userId,
       channel: "wordpress",

@@ -39,7 +39,7 @@ const article: Article = {
 };
 const a01: Article = { ...article, adProfile: "A01" };
 const migration = readFileSync(
-  new URL("../../../supabase/migrations/0010_display_profiles_and_approval_hash.sql", import.meta.url),
+  new URL("../../../supabase/migrations/20261201000801_contentflow_0001_contentflow.sql", import.meta.url),
   "utf8",
 );
 
