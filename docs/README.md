@@ -6,9 +6,11 @@
 |---|---|---|
 | 01-planning | 제품 전략 및 PRD | PRD.md |
 | 01-planning | 분석·수익화·템플릿·파일럿 실행안 | [MONETIZATION_STRATEGY.md](01-planning/MONETIZATION_STRATEGY.md) |
+| 01-planning | 네이버 홈판 모듈 기획(초안 r1, CF-25 제안) | [NAVER_HOMEFEED.md](01-planning/NAVER_HOMEFEED.md) |
 | 02-architecture | 서비스 아키텍처 | SYSTEM_ARCHITECTURE.md |
 | 03-database | Supabase 데이터 모델 | DATABASE_SCHEMA.md |
 | 04-content | 플랫폼별 글쓰기 템플릿 | CONTENT_TEMPLATES.md |
+| 04-content | 네이버 홈판 포스팅 규칙(제목: 메인+세부 키워드 필수) | [NAVER_HOMEFEED_RULES.md](04-content/NAVER_HOMEFEED_RULES.md) |
 | 05-agents | 개발/콘텐츠 에이전트 계약 | AGENTS.md |
 | 06-workflows | n8n 워크플로우 | WORKFLOWS.md |
 | 07-design | 디자인 시안·화면 캡처 | [DESIGN_SPEC.md](07-design/DESIGN_SPEC.md) |
